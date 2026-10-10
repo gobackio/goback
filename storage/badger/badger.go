@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
@@ -14,13 +15,21 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
-// New opens or creates a Store at path.
+// ErrLocked is returned by New when another process has the Store open.
+var ErrLocked = errors.New("another process has the store open")
+
+// New opens or creates a Store at path. It fails with ErrLocked while
+// another process has it open.
 func New(path string, with ...Option) (*Store, error) {
 	opts := badger.DefaultOptions(path).
 		WithCompression(options.Snappy).
 		WithLogger(Logger)
 
 	db, err := badger.Open(opts)
+	if err != nil && strings.Contains(err.Error(), "Another process is using this Badger database") {
+		return nil, fmt.Errorf("%w: %v", ErrLocked, err)
+	}
+
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"strings"
@@ -535,11 +536,14 @@ func NewBucketObjectStore(bucket *blob.Bucket, index pack.ArchiveIndex, cacheDir
 		}
 
 		cache, err := badger.New(cacheDir, badger.WithCapacity(cacheSize))
-		if err != nil {
+		switch {
+		case errors.Is(err, badger.ErrLocked):
+			slog.Warn("running without the metadata cache, which another goback process has open", "dir", cacheDir)
+		case err != nil:
 			return nil, err
+		default:
+			options = append(options, pack.WithMetadataCache(cache))
 		}
-
-		options = append(options, pack.WithMetadataCache(cache))
 	}
 
 	return pack.NewPackStorage(append(options, extra...)...)

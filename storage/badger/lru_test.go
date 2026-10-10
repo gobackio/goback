@@ -185,3 +185,14 @@ func TestABoundedStoreStaysWithinCapacityUnderConcurrentUse(t *testing.T) {
 	}))
 	require.Equal(t, s.lru.order.Len(), stored)
 }
+
+func TestASecondOpenOfAStoreFailsAsLocked(t *testing.T) {
+	dir := t.TempDir()
+
+	first, err := New(dir)
+	require.NoError(t, err)
+	defer first.Close()
+
+	_, err = New(dir)
+	require.ErrorIs(t, err, ErrLocked)
+}
