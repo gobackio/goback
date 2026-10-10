@@ -162,6 +162,25 @@ func TestARestoreWithoutWALRecoversOnlyItsBase(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(dir, "recovery.signal"))
 }
 
+func TestARestoreWithoutAWALSetRestoresTheBaseAlone(t *testing.T) {
+	f := newWALFixture(t)
+
+	_, err := f.runBase(baseTar(t, 42), nil)
+	require.NoError(t, err)
+
+	f.archive(7, 42)
+	_, err = f.run()
+	require.NoError(t, err)
+
+	dir := filepath.Join(t.TempDir(), "data")
+	r := &Restore{Objects: f.index, Latest: func(ctx context.Context, set string) (*proto.Ref, error) { return f.index.LatestCommit(ctx, set) }, BaseSet: "db-base"}
+	result, err := r.Run(f.ctx, dir)
+	require.NoError(t, err)
+	require.Nil(t, result.WAL)
+	require.FileExists(t, filepath.Join(dir, "PG_VERSION"))
+	require.NoFileExists(t, filepath.Join(dir, "recovery.signal"))
+}
+
 func TestARestoreLeavesADirectoryInUseAlone(t *testing.T) {
 	f := newWALFixture(t)
 

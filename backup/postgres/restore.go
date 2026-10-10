@@ -22,8 +22,8 @@ import (
 // asked for.
 var ErrNoBase = errors.New("no base backup to restore from")
 
-// Restore writes a base backup into a data directory and sets the cluster up
-// to recover from the WAL set when Postgres starts on it.
+// Restore writes a base backup into a data directory and, given a WAL set,
+// sets the cluster up to recover from it when Postgres starts on it.
 type Restore struct {
 	Objects backup.ObjectStore
 	Key     *storekey.Key
@@ -31,7 +31,9 @@ type Restore struct {
 	// backup.ErrNotFound for a set without one.
 	Latest  func(ctx context.Context, set string) (*proto.Ref, error)
 	BaseSet string
-	WALSet  string
+	// WALSet, when empty, restores the base alone: Postgres recovers to the
+	// end of the base backup.
+	WALSet string
 	// At, when set, is the moment recovery stops at; zero recovers to the
 	// end of the WAL set.
 	At time.Time
@@ -99,6 +101,10 @@ type walCommit struct {
 }
 
 func (r *Restore) wal(ctx context.Context) (*proto.Ref, *walCommit, error) {
+	if r.WALSet == "" {
+		return nil, nil, nil
+	}
+
 	ref, err := r.Latest(ctx, r.WALSet)
 	if errors.Is(err, backup.ErrNotFound) {
 		return nil, nil, nil

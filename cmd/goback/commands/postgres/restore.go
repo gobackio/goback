@@ -23,7 +23,7 @@ import (
 
 var restoreCmd = cli.Command{
 	Name:      "restore",
-	Usage:     "write a base backup into an empty data directory, set up to recover from the WAL set when Postgres starts on it",
+	Usage:     "write a base backup into an empty data directory, set up to recover from the WAL set, if given, when Postgres starts on it",
 	ArgsUsage: "<data directory>",
 	Description: "restore_command runs goback again for every WAL file Postgres asks for: this binary with the\n" +
 		"global flags given here, unless --goback names another command. Flags end up in\n" +
@@ -36,7 +36,7 @@ var restoreCmd = cli.Command{
 		},
 		cli.StringFlag{
 			Name:  "wal-set",
-			Usage: "set the cluster's WAL goes to; digits name it by id, as --base-set",
+			Usage: "set the cluster's WAL goes to, for recovering past the end of the base; digits name it by id, as --base-set",
 		},
 		cli.StringFlag{
 			Name:  "at",
@@ -51,8 +51,12 @@ var restoreCmd = cli.Command{
 }
 
 func restoreAction(c *cli.Context) error {
-	if c.NArg() != 1 || c.String("base-set") == "" || c.String("wal-set") == "" {
-		return cli.NewExitError("--base-set, --wal-set and the data directory are required", 2)
+	if c.NArg() != 1 || c.String("base-set") == "" {
+		return cli.NewExitError("--base-set and the data directory are required", 2)
+	}
+
+	if c.String("wal-set") == "" && c.String("at") != "" {
+		return cli.NewExitError("--at needs --wal-set to recover to", 2)
 	}
 
 	var at time.Time
@@ -104,7 +108,9 @@ func restoreAction(c *cli.Context) error {
 	}{common.View.Commit(result.Base), views.Hex(result.WAL)}, func() {
 		log.Printf("Restored the base backup of %s (commit %x)", time.Unix(result.Base.GetTimestamp(), 0).UTC().Format(time.RFC3339), result.BaseRef.Hash)
 
-		if result.WAL == nil {
+		if r.WALSet == "" {
+			log.Printf("Postgres recovers to the end of the base backup")
+		} else if result.WAL == nil {
 			log.Printf("The WAL set %s has no commits: Postgres recovers to the end of the base backup", r.WALSet)
 		} else {
 			log.Printf("Postgres recovers from WAL commit %x when it starts", result.WAL.Hash)

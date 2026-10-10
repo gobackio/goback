@@ -18,6 +18,7 @@
 
 Details:
 
+- **Base backups only.** Point-in-time recovery is optional: without `archive_mode` and the `postgres wal` job, the daily base backups restore on their own.
 - **Point-in-time recovery window.** `postgres wal` keeps WAL back to the oldest base backup within `--window` (14 days by default). Base backups are kept by the `db-base` set's retention.
 - **WAL retention during a base backup.** A base backup carries the WAL it needs (`-X fetch`). Postgres must keep that WAL until the backup ends, so `wal_keep_size` has to cover the WAL written while one runs.
 - **Tablespaces.** Clusters with extra tablespaces aren't supported, because `pg_basebackup` writes only a single tablespace to a stream.
@@ -30,6 +31,7 @@ Details:
 
 - **Choosing the base.** It picks the newest base backup that ended before `--at` (or the newest overall, without `--at`) and that the WAL set continues.
 - **Fetching WAL.** It writes `restore_command` into `postgresql.auto.conf`. Postgres then fetches each WAL file it needs with `goback postgres wal-get`, using the global flags given to `restore`, so they must be valid where Postgres runs.
+- **Without `--wal-set`.** It restores the newest base backup alone, and Postgres recovers to the end of that backup. `--at` needs `--wal-set`.
 - **Finishing.** It writes `recovery.signal`. Postgres promotes once recovery reaches `--at`, or the end of the WAL set.
 - **Finding the sets.** It finds them through the index, or through the set heads in the bucket when the index has none, as on a new host.
 
