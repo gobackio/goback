@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"github.com/gobackio/goback/proto"
 )
@@ -25,6 +26,9 @@ type Growing struct {
 	// From names the previous commit's root entry this file continues;
 	// empty means Name.
 	From string
+	// ModTime, when set, is recorded as the file's modification time in
+	// place of the one on disk, which its writer keeps changing.
+	ModTime time.Time
 }
 
 // putGrowing stores each growing file and returns nodes with them in
@@ -91,6 +95,10 @@ func (w *Walker) backupGrowing(ctx context.Context, g Growing, prev *proto.TreeN
 	stat := w.stat(info, "")
 	stat.Name = []byte(g.Name)
 	stat.Size = g.Size
+
+	if !g.ModTime.IsZero() {
+		stat.MtimeNs = g.ModTime.UnixNano()
+	}
 
 	atomic.AddInt64(&w.result.Files, 1)
 	atomic.AddInt64(&w.result.Bytes, g.Size)

@@ -83,9 +83,9 @@ type Walker struct {
 	// Include decides per slash-separated relative path; nil includes all.
 	Include func(rel string) bool
 
-	// Growing are files of the root committed up to a length, continuing
-	// the previous commit's versions; a run with Stream or Subdir takes
-	// none.
+	// Growing are files of the root, or of Subdir when it is set, committed
+	// up to a length, continuing the previous commit's versions; a run with
+	// Stream takes none.
 	Growing []Growing
 
 	// Key seals names and blobs; nil backs up in the clear.
@@ -390,9 +390,9 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 		}
 	}
 
-	if len(w.Growing) > 0 {
-		if w.Stream != nil || w.Subdir != "" {
-			return nil, errors.New("a run with a stream or a subdir takes no growing files")
+	if len(w.Growing) > 0 && w.Subdir == "" {
+		if w.Stream != nil {
+			return nil, errors.New("a run with a stream takes no growing files")
 		}
 
 		var grown bool
@@ -842,6 +842,15 @@ func (w *Walker) walkSubdir(ctx context.Context, base []*proto.TreeNode) ([]*pro
 	children, innerChanged, err := w.walkDir(ctx, w.Root, "", token, inner, true)
 	if err != nil {
 		return nil, false, err
+	}
+
+	if len(w.Growing) > 0 {
+		var grown bool
+		if children, grown, err = w.putGrowing(ctx, children, inner); err != nil {
+			return nil, false, err
+		}
+
+		innerChanged = innerChanged || grown || len(children) != len(inner)
 	}
 
 	stat := w.stat(info, "")

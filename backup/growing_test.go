@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gobackio/goback/backup/chunker"
 	"github.com/gobackio/goback/backup/storekey"
@@ -185,4 +186,30 @@ func TestAGrowingFileShorterOnDiskThanItsLengthFails(t *testing.T) {
 
 	_, err := f.walker.Run(context.Background())
 	require.ErrorContains(t, err, "fewer than")
+}
+
+func TestAGrowingFileGoesIntoTheSubdirWithItsModTime(t *testing.T) {
+	f := newGrowingFixture(t, 1<<20)
+	f.write("whole", []byte("a whole file"))
+	f.walker.Subdir = "chain-1"
+
+	at := time.Date(2026, 10, 12, 1, 2, 3, 0, time.UTC)
+	f.walker.Growing = []Growing{{Name: "open.partial", Path: f.path, Size: 1 << 10, ModTime: at}}
+	result := f.run()
+
+	root := f.tree(result.Commit.Tree)
+	require.Len(t, root, 1)
+
+	tree, err := OpenTree(context.Background(), f.store, root["chain-1"].Ref, f.walker.Key, NameToken(f.walker.Key, nil, []byte("chain-1")))
+	require.NoError(t, err)
+	require.Len(t, tree.Nodes, 2)
+
+	nodes := map[string]*proto.TreeNode{}
+	for _, node := range tree.Nodes {
+		nodes[string(node.Stat.Name)] = node
+	}
+
+	require.EqualValues(t, 1<<10, nodes["open.partial"].Stat.Size)
+	require.Equal(t, at.UnixNano(), nodes["open.partial"].Stat.MtimeNs)
+	require.Contains(t, nodes, "whole")
 }
