@@ -42,7 +42,7 @@ var Command = cli.Command{
 		},
 		{
 			Name:   "check",
-			Usage:  "validate the config, open the store, and print each job's last run and next due time",
+			Usage:  "validate the config, open the store, print each job's last run and next due time, and list what each database lacks",
 			Flags:  []cli.Flag{configFlag},
 			Action: checkAction,
 		},
@@ -157,6 +157,12 @@ func (s *setup) reloadInto(a *agent.Agent, logger *slog.Logger) {
 	a.Reload(tasks)
 }
 
+// database is what check found missing in a backup's database.
+type database struct {
+	Backup   string   `json:"backup"`
+	Problems []string `json:"problems"`
+}
+
 // planned is one job as check reports it.
 type planned struct {
 	Name    string    `json:"name"`
@@ -190,8 +196,12 @@ func checkAction(c *cli.Context) error {
 
 	for _, t := range s.cfg.Tasks() {
 		p := planned{Name: t.Name, Backup: t.Backup, Set: t.Set, Kind: t.Kind}
-		if t.Plan != nil {
+
+		switch {
+		case t.Plan != nil:
 			p.Plan = t.Plan.String()
+		case t.Serve != nil:
+			p.Plan = "always"
 		}
 
 		last, _, err := agent.LastRun(ctx, env.Index, t.Set, now)
@@ -205,10 +215,28 @@ func checkAction(c *cli.Context) error {
 		jobs = append(jobs, p)
 	}
 
+	var databases []database
+
+	for i := range s.cfg.Backups {
+		b := &s.cfg.Backups[i]
+
+		problems := b.CheckDatabase(ctx)
+		if problems == nil {
+			continue
+		}
+
+		databases = append(databases, database{Backup: b.Name, Problems: problems})
+
+		for _, p := range problems {
+			errs = append(errs, fmt.Errorf("%s: %s", b.Name, p))
+		}
+	}
+
 	common.Result(struct {
 		Overrides []override `json:"overrides"`
 		Jobs      []planned  `json:"jobs"`
-	}{s.overrides, jobs}, func() {
+		Databases []database `json:"databases"`
+	}{s.overrides, jobs, databases}, func() {
 		for _, o := range s.overrides {
 			fmt.Printf("%s from %s\n", o.Key, o.Source)
 		}

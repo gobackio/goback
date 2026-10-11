@@ -46,6 +46,8 @@ type JobStatus struct {
 	NextDue     time.Time `json:"next_due,omitzero"`
 	// StaleAfter is how long without a success makes the job unhealthy.
 	StaleAfter int64 `json:"stale_after_seconds,omitempty"`
+	// Details are what a long-running task last reported about itself.
+	Details any `json:"details,omitempty"`
 }
 
 // The states of a task.

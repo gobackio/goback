@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -11,7 +13,9 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/mysql"
+	"github.com/gobackio/goback/backup/postgres"
 
+	"github.com/dustin/go-humanize"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -200,18 +204,25 @@ func (p *PathBackup) tasks(b *Backup) []*Task {
 }
 
 // PostgresBackup backs up a Postgres cluster: base backups and, with
-// PITR, the WAL archive_command copies into Spool.
+// PITR, its WAL streamed through a replication slot, with goback
+// postgres receive's settings.
 type PostgresBackup struct {
-	DBName       string        `yaml:"dbname"`
-	PGBasebackup string        `yaml:"pg-basebackup"`
-	Spool        string        `yaml:"spool"`
-	Window       time.Duration `yaml:"window"`
-	PITR         bool          `yaml:"pitr"`
+	DBName       string `yaml:"dbname"`
+	PGBasebackup string `yaml:"pg-basebackup"`
+	// Spool is where WAL waits for its commit; <state-dir>/spool/<set>
+	// when empty.
+	Spool             string        `yaml:"spool"`
+	Slot              string        `yaml:"slot"`
+	CommitEvery       time.Duration `yaml:"commit-every"`
+	CommitBytes       string        `yaml:"commit-bytes"`
+	AllowUncappedSlot bool          `yaml:"allow-uncapped-slot"`
+	Window            time.Duration `yaml:"window"`
+	PITR              bool          `yaml:"pitr"`
 }
 
 // UnmarshalYAML fills in the postgres commands' defaults before decoding.
 func (p *PostgresBackup) UnmarshalYAML(unmarshal func(any) error) error {
-	*p = PostgresBackup{PGBasebackup: "pg_basebackup", Window: 14 * 24 * time.Hour, PITR: true}
+	*p = PostgresBackup{CommitEvery: postgres.DefaultCommitEvery, CommitBytes: "256MiB", Window: 14 * 24 * time.Hour, PITR: true}
 
 	type plain PostgresBackup
 
@@ -225,15 +236,28 @@ func (p *PostgresBackup) validate(*Backup) []error {
 		errs = append(errs, errors.New("postgres.dbname holds a password; put it in .pgpass or PGPASSFILE"))
 	}
 
-	if p.PITR && p.Spool == "" {
-		errs = append(errs, errors.New("postgres.spool is required for point-in-time recovery: the directory archive_command copies WAL into; or set pitr: false"))
-	}
-
 	if p.Window <= 0 {
 		errs = append(errs, errors.New("postgres.window must be positive"))
 	}
 
+	if p.CommitEvery < postgres.MinCommitEvery {
+		errs = append(errs, fmt.Errorf("postgres.commit-every must be at least %s", postgres.MinCommitEvery))
+	}
+
+	if _, err := humanize.ParseBytes(p.CommitBytes); err != nil {
+		errs = append(errs, fmt.Errorf("postgres.commit-bytes: %w", err))
+	}
+
 	return errs
+}
+
+// slot is the replication slot the backup's receiver streams through.
+func (p *PostgresBackup) slot(b *Backup) string {
+	if p.Slot != "" {
+		return p.Slot
+	}
+
+	return postgres.SlotName(b.Name + "-wal")
 }
 
 func (p *PostgresBackup) tasks(b *Backup) []*Task {
@@ -244,14 +268,56 @@ func (p *PostgresBackup) tasks(b *Backup) []*Task {
 		return job.PostgresBase(ctx, env, baseSettings)
 	})}
 
-	if p.PITR {
-		walSettings := job.PostgresWALSettings{Set: wal, Spool: p.Spool, BaseSet: base, Window: p.Window}
-		tasks = append(tasks, logTask("postgres-wal", wal, base, func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
-			return job.PostgresWAL(ctx, env, walSettings)
-		}))
+	if !p.PITR {
+		return tasks
 	}
 
-	return tasks
+	commitBytes, _ := humanize.ParseBytes(p.CommitBytes)
+	settings := job.PostgresReceiveSettings{
+		Set:               wal,
+		BaseSet:           base,
+		Spool:             p.Spool,
+		DBName:            p.DBName,
+		Slot:              p.slot(b),
+		AllowUncappedSlot: p.AllowUncappedSlot,
+		CommitEvery:       p.CommitEvery,
+		CommitBytes:       int64(commitBytes),
+		Window:            p.Window,
+	}
+
+	// the receiver starts with the agent, not after the first base backup,
+	// so its slot keeps the WAL from that backup's start on
+	return append(tasks, &Task{
+		Name:       wal,
+		Set:        wal,
+		Kind:       "postgres-receive",
+		Log:        true,
+		StaleAfter: 3 * p.CommitEvery,
+		Serve: func(ctx context.Context, env *job.Env, c *Control) error {
+			s := settings
+			if s.Spool == "" {
+				if c.StateDir() == "" {
+					return errors.New("postgres.spool is required without a state dir")
+				}
+
+				s.Spool = filepath.Join(c.StateDir(), "spool", wal)
+			}
+
+			return job.PostgresReceive(ctx, env, s, c.Stop(), c.Committed, func(st postgres.ReceiverStatus) { c.Report(st, st.Healthy) })
+		},
+	})
+}
+
+// CheckDatabase connects to the backup's database and lists what it lacks
+// for the backup as configured; nil for a backup of no database.
+func (b *Backup) CheckDatabase(ctx context.Context) []string {
+	if b.Postgres == nil {
+		return nil
+	}
+
+	p := b.Postgres
+
+	return postgres.Check(ctx, p.DBName, p.slot(b), p.AllowUncappedSlot || !p.PITR)
 }
 
 // holdsPassword reports whether a libpq connection string, as key=value

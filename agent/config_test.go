@@ -21,8 +21,7 @@ store:
   agent-id: db1
 backups:
   - name: db
-    postgres:
-      spool: /var/lib/goback/spool
+    postgres: {}
   - name: shop
     mysql:
       defaults-extra-file: /run/secrets/shop.cnf
@@ -36,6 +35,7 @@ backups:
 	require.Equal(t, 2, cfg.Schedule.Concurrency)
 	require.Equal(t, 30*time.Second, cfg.Schedule.ShutdownGrace)
 	require.True(t, cfg.Backups[0].Postgres.PITR)
+	require.Equal(t, time.Minute, cfg.Backups[0].Postgres.CommitEvery)
 	require.Equal(t, 14*24*time.Hour, cfg.Backups[1].MySQL.Window)
 	require.Equal(t, 3, cfg.Backups[2].Path.ReadRetries)
 	require.Equal(t, 30*time.Minute, cfg.Backups[2].Path.CheckpointInterval)
@@ -53,7 +53,7 @@ backups:
 
 	require.Equal(t, []shape{
 		{"db-base", "postgres-base", "", false, true},
-		{"db-wal", "postgres-wal", "db-base", true, true},
+		{"db-wal", "postgres-receive", "", true, false},
 		{"shop-dump", "mysql-dump", "", false, true},
 		{"shop-binlog", "mysql-binlog", "shop-dump", true, true},
 		{"world", "path", "", false, true},
@@ -121,8 +121,10 @@ backups: [{name: w, cron: "@every 1h", path: {dir: /w}}]`,
 backups: [{name: w, cron: "0 0 3 * * *", path: {dir: /w}}]`,
 		"a cron that never fires": `
 backups: [{name: w, cron: "0 3 30 2 *", path: {dir: /w}}]`,
-		"postgres PITR without a spool": `
-backups: [{name: db, postgres: {}}]`,
+		"postgres commits more often than every 10s": `
+backups: [{name: db, postgres: {commit-every: 5s}}]`,
+		"postgres commit bytes that aren't a size": `
+backups: [{name: db, postgres: {commit-bytes: lots}}]`,
 		"no backups": `
 store: {storage: /backups}`,
 		"zero concurrency": `
@@ -140,7 +142,7 @@ func TestDecodeReportsEveryProblem(t *testing.T) {
 	_, err := decode(t, `
 backups:
   - {name: a, path: {dir: /a}}
-  - {name: b, postgres: {}}
+  - {name: b, postgres: {commit-every: 1s}}
 `)
 	require.Error(t, err)
 

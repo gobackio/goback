@@ -172,10 +172,15 @@ type finished struct {
 	logger  *slog.Logger
 }
 
+// commitEvent is a Serve task's commit, or, with report set, its report.
 type commitEvent struct {
 	e      *entry
 	at     time.Time
 	result *backup.WalkResult
+
+	report  bool
+	details any
+	healthy bool
 }
 
 type loop struct {
@@ -295,6 +300,10 @@ func (l *loop) run(ctx context.Context) error {
 
 		timer.Stop()
 	}
+
+	// the work after a Serve task's last commit may still run
+	l.afterMu.Lock()
+	l.afterMu.Unlock()
 
 	if l.env != nil && l.a.Close != nil {
 		l.a.Close(l.env)
@@ -517,6 +526,19 @@ func (l *loop) runOnce(ctx context.Context, env *job.Env, t *Task, lastEnd time.
 	return t.Run(ctx, env)
 }
 
+// afterCommit runs AfterRun after a Serve task's commit, unless one still
+// runs from an earlier commit.
+func (l *loop) afterCommit(env *job.Env) {
+	if l.a.AfterRun == nil || !l.afterMu.TryLock() {
+		return
+	}
+
+	go func() {
+		defer l.afterMu.Unlock()
+		l.afterRunLocked(env)
+	}()
+}
+
 func (l *loop) afterRun(env *job.Env) {
 	if l.a.AfterRun == nil {
 		return
@@ -525,6 +547,10 @@ func (l *loop) afterRun(env *job.Env) {
 	l.afterMu.Lock()
 	defer l.afterMu.Unlock()
 
+	l.afterRunLocked(env)
+}
+
+func (l *loop) afterRunLocked(env *job.Env) {
 	defer func() {
 		if r := recover(); r != nil {
 			env.Logger.Error("the work after the run panicked", "panic", r, "stack", string(debug.Stack()))
@@ -550,9 +576,15 @@ func (l *loop) serve(e *entry, now time.Time) {
 	env.Stderr = nil
 
 	control := &Control{
-		stop: e.stop,
+		stop:     e.stop,
+		stateDir: l.a.StateDir,
 		committed: func(result *backup.WalkResult) {
 			l.events <- commitEvent{e: e, at: l.a.now(), result: result}
+
+			l.afterCommit(&env)
+		},
+		report: func(details any, healthy bool) {
+			l.events <- commitEvent{e: e, at: l.a.now(), report: true, details: details, healthy: healthy}
 		},
 	}
 
@@ -692,13 +724,29 @@ func (l *loop) finishServe(f finished, now time.Time) {
 
 func (l *loop) committed(c commitEvent) {
 	e := c.e
+	l.dirty = true
+
+	if c.report {
+		e.status.Details = c.details
+
+		if c.healthy {
+			e.status.LastSuccess = c.at
+		}
+
+		return
+	}
+
 	e.committed = true
 	e.failures = 0
 	e.status.Failures = 0
 	e.status.LastResult = ResultOK
 	e.status.LastError = ""
-	e.status.LastSuccess = c.at
-	l.dirty = true
+
+	// a task judged by its reports is healthy when it says so, not when it
+	// commits
+	if e.task.StaleAfter == 0 {
+		e.status.LastSuccess = c.at
+	}
 
 	if c.result != nil {
 		e.status.LastCommit = hex.EncodeToString(c.result.Ref.GetHash())
@@ -848,6 +896,10 @@ func (l *loop) writeStatus() error {
 		if e.known && e.task.Plan != nil {
 			j.NextDue = e.due
 			j.StaleAfter = int64(e.task.Plan.staleAfter(now) / time.Second)
+		}
+
+		if e.task.Serve != nil {
+			j.StaleAfter = int64(e.task.StaleAfter / time.Second)
 		}
 
 		s.Jobs = append(s.Jobs, j)

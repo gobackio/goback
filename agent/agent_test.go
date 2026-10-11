@@ -467,6 +467,55 @@ func TestAServeTaskRestartsWithBackoffAndCommitsOnStop(t *testing.T) {
 	})
 }
 
+func TestAServeTaskIsJudgedByItsHealthReports(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.a.StateDir = t.TempDir()
+
+		var stateDir string
+
+		task := &Task{Name: "db-wal", Set: "db-wal", Kind: "postgres-receive", Log: true, StaleAfter: 3 * time.Minute}
+		task.Serve = func(ctx context.Context, _ *job.Env, c *Control) error {
+			stateDir = c.StateDir()
+
+			for i := 0; ; i++ {
+				c.Report(map[string]int{"lag_seconds": i * 10}, i < 6)
+
+				if i%6 == 0 {
+					c.Committed(&backup.WalkResult{Ref: &proto.Ref{Hash: []byte{1}}})
+				}
+
+				select {
+				case <-time.After(10 * time.Second):
+				case <-c.Stop():
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+
+		h.run(task)
+
+		time.Sleep(55 * time.Second)
+
+		status, err := ReadStatus(h.a.StateDir)
+		require.NoError(t, err)
+		require.Equal(t, h.a.StateDir, stateDir)
+		require.Equal(t, map[string]any{"lag_seconds": float64(50)}, status.Jobs[0].Details)
+		require.EqualValues(t, 180, status.Jobs[0].StaleAfter)
+		require.Empty(t, status.Problems(time.Now()))
+
+		time.Sleep(4 * time.Minute)
+
+		status, err = ReadStatus(h.a.StateDir)
+		require.NoError(t, err)
+		require.Len(t, status.Problems(time.Now()), 1, "lagging since its last healthy report, though it commits")
+
+		h.stop()
+	})
+}
+
 func TestTheStatusFileReportsEachJob(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t)

@@ -31,6 +31,9 @@ type Task struct {
 	Jitter time.Duration
 	// Timeout cancels a run after this long; zero never does.
 	Timeout time.Duration
+	// StaleAfter is how long a Serve task may go without reporting itself
+	// healthy before it counts as unhealthy; zero never judges it.
+	StaleAfter time.Duration
 	// Log marks log capture, which runs outside the concurrency limit.
 	Log bool
 	// After names a set that must hold a complete commit before the task
@@ -56,7 +59,9 @@ func (t *Task) NextDue(agent string, last, now time.Time) time.Time {
 // Control is what the agent hands a ServeFunc.
 type Control struct {
 	stop      <-chan struct{}
+	stateDir  string
 	committed func(*backup.WalkResult)
+	report    func(details any, healthy bool)
 }
 
 // Stop is closed when the agent wants the task to make its last commit
@@ -69,4 +74,17 @@ func (c *Control) Stop() <-chan struct{} {
 // metrics.
 func (c *Control) Committed(result *backup.WalkResult) {
 	c.committed(result)
+}
+
+// Report puts details under the task in the status file. healthy says
+// the task works as it should now; the task's staleness is judged by the
+// last healthy report.
+func (c *Control) Report(details any, healthy bool) {
+	c.report(details, healthy)
+}
+
+// StateDir is the agent's state dir, where a task may keep local state
+// under a name of its own; empty when the agent has none.
+func (c *Control) StateDir() string {
+	return c.stateDir
 }
