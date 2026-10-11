@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"time"
@@ -17,14 +18,15 @@ type PostgresBaseSettings struct {
 	// DBName is the connection string pg_basebackup connects with; empty
 	// leaves it to the PG* variables.
 	DBName string
-	// PGBasebackup is the pg_basebackup to run; its major version must
-	// match the server's.
+	// PGBasebackup, when set, is the pg_basebackup that takes the backup;
+	// its major version must match the server's. When empty, the backup
+	// is taken over a replication connection of its own from Postgres 15
+	// on, and by the pg_basebackup on the PATH before.
 	PGBasebackup string
 }
 
-// PostgresBase takes a base backup with pg_basebackup and commits it to the
-// set. When ctx ends first, pg_basebackup is killed and nothing is
-// committed.
+// PostgresBase takes a base backup and commits it to the set. When ctx ends
+// first, the backup stops and nothing is committed.
 func PostgresBase(ctx context.Context, env *Env, s PostgresBaseSettings) (*backup.WalkResult, error) {
 	run := &postgres.BaseBackup{
 		Walker: &backup.Walker{
@@ -39,6 +41,21 @@ func PostgresBase(ctx context.Context, env *Env, s PostgresBaseSettings) (*backu
 		},
 	}
 
+	program := s.PGBasebackup
+	if program == "" {
+		stream, err := postgres.StartBase(ctx, s.DBName)
+		if err == nil {
+			defer stream.Close()
+			return run.Run(ctx, stream.Tar, stream.Wait)
+		}
+
+		if !errors.Is(err, postgres.ErrNoBaseStream) {
+			return nil, err
+		}
+
+		program = "pg_basebackup"
+	}
+
 	args := []string{"-D", "-", "-Ft", "-X", "fetch", "--checkpoint=fast"}
 	if s.DBName != "" {
 		args = append(args, "--dbname", s.DBName)
@@ -47,7 +64,7 @@ func PostgresBase(ctx context.Context, env *Env, s PostgresBaseSettings) (*backu
 	stderr, flush := env.stderr("pg_basebackup")
 	defer flush()
 
-	cmd := exec.CommandContext(ctx, s.PGBasebackup, args...)
+	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stderr = stderr
 
 	stdout, err := cmd.StdoutPipe()

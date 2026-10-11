@@ -451,10 +451,10 @@ func TestAnOlderTimelinesPartialSegmentStaysBesideTheNewOnes(t *testing.T) {
 	result, err := f.receive(f.receiving(2, 2, 3000))
 	require.NoError(t, err)
 	require.Equal(t, map[string]int64{
-		one:                             41,
-		"00000002.history":              41,
-		walName(1, 2) + partialSuffix:   2000,
-		walName(2, 2) + partialSuffix:   3000,
+		one:                           41,
+		"00000002.history":            41,
+		walName(1, 2) + partialSuffix: 2000,
+		walName(2, 2) + partialSuffix: 3000,
 	}, f.sizes(result))
 	require.Equal(t, "2", result.Commit.Metadata[MetaTimeline])
 	require.Equal(t, FormatLSN(2*segSize+3000), result.Commit.Metadata[MetaEndLSN])

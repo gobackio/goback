@@ -108,12 +108,26 @@ func (x *replica) start(r *Receiver) func() error {
 	}
 }
 
-// base takes a base backup with the cluster's pg_basebackup and commits it.
+// base takes a base backup and commits it: over a replication connection
+// from Postgres 15 on, with the cluster's pg_basebackup before.
 func (x *replica) base() *backup.WalkResult {
 	x.t.Helper()
 
-	result, err := x.f.runBase([]byte(x.pg.run("pg_basebackup", "-D", "-", "-Ft", "-X", "fetch", "--checkpoint=fast")), nil)
+	stream, err := StartBase(x.f.ctx, x.conn)
+	if errors.Is(err, ErrNoBaseStream) {
+		result, err := x.f.runBase([]byte(x.pg.run("pg_basebackup", "-D", "-", "-Ft", "-X", "fetch", "--checkpoint=fast")), nil)
+		require.NoError(x.t, err)
+
+		return result
+	}
+
 	require.NoError(x.t, err)
+	defer stream.Close()
+
+	b := &BaseBackup{Walker: &backup.Walker{Index: x.f.index, Objects: x.f.index, Set: "db-base", AgentID: "a", Workers: 1}}
+	result, err := b.Run(x.f.ctx, stream.Tar, stream.Wait)
+	require.NoError(x.t, err)
+	require.NotEmpty(x.t, result.Commit.GetMetadata()[MetaStopLSN])
 
 	return result
 }
@@ -219,6 +233,7 @@ func (x *replica) restore(at time.Time) string {
 
 	recovered := startPostgres(x.t, testcontainers.ContainerRequest{
 		Image: "postgres:" + x.version + "-alpine",
+		Env:   map[string]string{"PGDATA": "/var/lib/postgresql/data"},
 		Entrypoint: []string{"sh", "-c", "set -e; tar -xf /tmp/restore.tar -C /; chown -R postgres:postgres /var/lib/postgresql/data /wal; " +
 			"chmod 700 /var/lib/postgresql/data; exec docker-entrypoint.sh postgres"},
 		Files: []testcontainers.ContainerFile{{Reader: bytes.NewReader(bundle), ContainerFilePath: "/tmp/restore.tar", FileMode: 0o644}},
@@ -231,7 +246,7 @@ func (x *replica) restore(at time.Time) string {
 }
 
 func TestAPointInTimeRestoreFromReplication(t *testing.T) {
-	for _, version := range []string{"14", "17"} {
+	for _, version := range []string{"14", "17", "18"} {
 		t.Run(version, func(t *testing.T) {
 			x := startReplica(t, version, "max_slot_wal_keep_size=1GB")
 

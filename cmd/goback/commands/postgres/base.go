@@ -13,20 +13,20 @@ import (
 
 var baseCmd = cli.Command{
 	Name:  "base",
-	Usage: "take a base backup with pg_basebackup and commit it to the set named by --set",
-	Description: "pg_basebackup connects as libpq does: through --dbname, or through PGHOST, PGUSER and the\n" +
-		"other PG* variables. The user needs the REPLICATION attribute.",
+	Usage: "take a base backup and commit it to the set named by --set",
+	Description: "base connects as libpq does: through --dbname, or through PGHOST, PGUSER and the other PG*\n" +
+		"variables. The user needs the REPLICATION attribute. From Postgres 15 on, goback takes the backup over\n" +
+		"a replication connection of its own; before that, or with --pg-basebackup, pg_basebackup takes it.",
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:   "dbname",
-			Usage:  "connection string pg_basebackup connects with",
+			Usage:  "connection string the backup connects with",
 			EnvVar: "GOBACK_POSTGRES_DBNAME",
 		},
 		cli.StringFlag{
 			Name:   "pg-basebackup",
-			Usage:  "the pg_basebackup to run; its major version must match the server's",
+			Usage:  "take the backup with this pg_basebackup, whose major version must match the server's",
 			EnvVar: "GOBACK_POSTGRES_BASEBACKUP",
-			Value:  "pg_basebackup",
 		},
 	},
 	Action: baseAction,
