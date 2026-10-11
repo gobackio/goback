@@ -14,6 +14,7 @@ import (
 	"github.com/gobackio/goback/cmd/goback/commands/indexing"
 	"github.com/gobackio/goback/cmd/goback/commands/key"
 	"github.com/gobackio/goback/cmd/goback/commands/maintain"
+	"github.com/gobackio/goback/cmd/goback/commands/mysql"
 	"github.com/gobackio/goback/cmd/goback/commands/object"
 	"github.com/gobackio/goback/cmd/goback/commands/pin"
 	"github.com/gobackio/goback/cmd/goback/commands/postgres"
@@ -40,6 +41,7 @@ func main() {
 		indexing.Command,
 		key.Command,
 		maintain.Command,
+		mysql.Command,
 		object.Command,
 		pin.Command,
 		postgres.Command,
