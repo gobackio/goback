@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/gobackio/goback/cmd/goback/commands/agent"
 	"github.com/gobackio/goback/cmd/goback/commands/commit"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/file"
@@ -34,6 +35,7 @@ func main() {
 	app.Name = "goback"
 	app.Usage = "Take snapshots of your files and restore them."
 	app.Commands = []cli.Command{
+		agent.Command,
 		commit.Command,
 		file.Command,
 		fix.Command,

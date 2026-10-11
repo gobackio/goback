@@ -193,6 +193,7 @@ type loop struct {
 	// active counts running tasks, full the ones the limit applies to.
 	active, full int
 	stopping     bool
+	stopped      bool
 
 	runCtx     context.Context
 	cancelRuns context.CancelFunc
@@ -298,6 +299,8 @@ func (l *loop) run(ctx context.Context) error {
 	if l.env != nil && l.a.Close != nil {
 		l.a.Close(l.env)
 	}
+
+	l.stopped = true
 
 	if err := l.writeStatus(); err != nil {
 		l.a.logger().Warn("writing the status file failed", "error", err)
@@ -798,6 +801,8 @@ func (l *loop) wait(now time.Time) time.Duration {
 
 func (l *loop) state() string {
 	switch {
+	case l.stopped:
+		return AgentStopped
 	case l.stopping:
 		return AgentStopping
 	case l.env == nil:

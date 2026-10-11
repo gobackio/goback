@@ -513,6 +513,10 @@ func TestProblems(t *testing.T) {
 	hung.UpdatedAt = now.Add(-4 * time.Minute)
 	require.Len(t, hung.Problems(now), 1)
 
+	stopped := *healthy
+	stopped.State = AgentStopped
+	require.Len(t, stopped.Problems(now), 1)
+
 	stale := *healthy
 	stale.Jobs = []JobStatus{{Name: "old", StaleAfter: hour, LastSuccess: now.Add(-2 * time.Hour)}}
 	require.Len(t, stale.Problems(now), 1)

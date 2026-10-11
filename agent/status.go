@@ -26,6 +26,7 @@ const (
 	AgentStarting = "starting"
 	AgentRunning  = "running"
 	AgentStopping = "stopping"
+	AgentStopped  = "stopped"
 )
 
 // JobStatus is one task in the status file.
@@ -118,12 +119,16 @@ func ReadStatus(dir string) (*Status, error) {
 	return s, nil
 }
 
-// Problems lists what makes the agent unhealthy at now: a heartbeat older
-// than three minutes, and every job whose last success is older than its
+// Problems lists what makes the agent unhealthy at now: having stopped, a
+// heartbeat older than three minutes, and every job whose last success is older than its
 // bound. A job that never succeeded is stale once the agent has been up
 // for its bound; a blocked one is not judged.
 func (s *Status) Problems(now time.Time) []string {
 	var problems []string
+
+	if s.State == AgentStopped {
+		problems = append(problems, "the agent stopped")
+	}
 
 	if age := now.Sub(s.UpdatedAt); age > heartbeatStale {
 		problems = append(problems, fmt.Sprintf("the agent last wrote its status %s ago", age.Round(time.Second)))

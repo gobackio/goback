@@ -1,0 +1,15 @@
+[Unit]
+Description=goback agent backups
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/goback agent run --config /etc/goback/goback.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=60s
+User=goback
+
+[Install]
+WantedBy=multi-user.target
