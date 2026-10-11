@@ -3,7 +3,6 @@ package job
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"time"
 
@@ -45,8 +44,11 @@ func PostgresBase(ctx context.Context, env *Env, s PostgresBaseSettings) (*backu
 		args = append(args, "--dbname", s.DBName)
 	}
 
+	stderr, flush := env.stderr("pg_basebackup")
+	defer flush()
+
 	cmd := exec.CommandContext(ctx, s.PGBasebackup, args...)
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = stderr
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

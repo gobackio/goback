@@ -2,7 +2,8 @@ package job
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
 	"path/filepath"
 	"time"
 
@@ -50,6 +51,8 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 		return nil, err
 	}
 
+	logger := env.logger()
+
 	objects := backup.ObjectStore(env.Index)
 	if env.ObjectCache != nil {
 		objects = cache.New(cache.InStore(env.ObjectCache), env.Index)
@@ -63,9 +66,9 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 		AgentID:            env.AgentID,
 		Metadata:           s.Meta,
 		Key:                env.Key,
-		Logger:             env.Logger,
+		Logger:             logger,
 		Root:               root,
-		Include:            includeFilter(s.Include, s.Exclude),
+		Include:            includeFilter(logger, s.Include, s.Exclude),
 		Workers:            s.Workers,
 		ForceHashPercent:   s.ForceHash,
 		CheckpointInterval: s.CheckpointInterval,
@@ -78,32 +81,38 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 	}
 
 	if walker.ProgressInterval >= 0 {
-		walker.Progress = logProgress(time.Now())
+		walker.Progress = logProgress(logger, time.Now())
 	}
 
 	if env.StatCache != nil {
 		walker.Cache = env.StatCache
 	}
 
+	stderr, flush := env.stderr("hook")
+	defer flush()
+
 	runner := &hooks.Runner{
 		Pre:     s.PreHook,
 		Post:    s.PostHook,
 		Timeout: s.HookTimeout,
-		Logger:  env.Logger,
+		Stderr:  stderr,
+		Logger:  logger,
 	}
 
 	preOut, err := runner.RunPre(ctx)
+	flush()
+
 	if err != nil {
 		if !s.HookOptional {
 			// the hook may have quiesced the application before failing
 			if postErr := runner.RunPost(ctx); postErr != nil {
-				log.Println(postErr)
+				logger.Info(postErr.Error())
 			}
 
 			return nil, err
 		}
 
-		log.Printf("%v; continuing because --hook-optional is set", err)
+		logger.Info(fmt.Sprintf("%v; continuing because --hook-optional is set", err))
 	}
 
 	walker.Quiesced = runner.Pre != "" && err == nil
@@ -114,13 +123,13 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 			return nil, err
 		}
 
-		log.Printf("Pre hook redirected the walk to %s", walker.Root)
+		logger.Info("Pre hook redirected the walk to " + walker.Root)
 	}
 
 	result, walkErr := walker.Run(ctx)
 
 	if err := runner.RunPost(ctx); err != nil {
-		log.Println(err)
+		logger.Info(err.Error())
 	}
 
 	if walkErr != nil {
@@ -132,12 +141,12 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 
 // includeFilter applies the include and exclude patterns to a path relative
 // to the backup root, written with a leading slash.
-func includeFilter(includes, excludes []string) func(string) bool {
+func includeFilter(logger *slog.Logger, includes, excludes []string) func(string) bool {
 	match := func(patterns []string, name string) bool {
 		for _, pat := range patterns {
 			ok, err := doublestar.Match(pat, name)
 			if err != nil {
-				log.Printf("Malformed pattern: \"%s\" %v", pat, err)
+				logger.Info(fmt.Sprintf("Malformed pattern: \"%s\" %v", pat, err))
 			}
 
 			if ok {
@@ -162,10 +171,10 @@ func includeFilter(includes, excludes []string) func(string) bool {
 // logProgress reports what a walk has covered so far. The files it has
 // covered are not a share of anything yet, because the walk only learns
 // what a directory holds once it reads it.
-func logProgress(started time.Time) func(backup.WalkResult) {
+func logProgress(logger *slog.Logger, started time.Time) func(backup.WalkResult) {
 	return func(r backup.WalkResult) {
-		log.Printf("%s elapsed: %d files (%s) covered, %d read, %d reused, %s uploaded",
+		logger.Info(fmt.Sprintf("%s elapsed: %d files (%s) covered, %d read, %d reused, %s uploaded",
 			time.Since(started).Round(time.Second), r.Files, humanize.Bytes(uint64(r.Bytes)),
-			r.Read, r.Reused, humanize.Bytes(uint64(r.Uploaded)))
+			r.Read, r.Reused, humanize.Bytes(uint64(r.Uploaded))))
 	}
 }

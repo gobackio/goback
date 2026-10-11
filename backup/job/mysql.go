@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -19,11 +20,12 @@ type MySQLClient struct {
 	Mysqldump         string
 }
 
-func (c MySQLClient) exec() *mysql.Exec {
+func (c MySQLClient) exec(stderr io.Writer) *mysql.Exec {
 	return &mysql.Exec{
 		Mysql:        c.Mysql,
 		Mysqldump:    c.Mysqldump,
 		DefaultsFile: c.DefaultsExtraFile,
+		Stderr:       stderr,
 	}
 }
 
@@ -41,6 +43,9 @@ type MySQLDumpSettings struct {
 
 // MySQLDump dumps the server with mysqldump and commits the dump to the set.
 func MySQLDump(ctx context.Context, env *Env, s MySQLDumpSettings) (*backup.WalkResult, error) {
+	stderr, flush := env.stderr("mysqldump")
+	defer flush()
+
 	run := &mysql.Dump{
 		Walker: &backup.Walker{
 			Index:    env.Index,
@@ -52,7 +57,7 @@ func MySQLDump(ctx context.Context, env *Env, s MySQLDumpSettings) (*backup.Walk
 			Logger:   env.Logger,
 			Workers:  4,
 		},
-		Client:     s.Client.exec(),
+		Client:     s.Client.exec(stderr),
 		BinlogSet:  s.BinlogSet,
 		NoPosition: s.NoBinlogPosition,
 		Logger:     env.Logger,
@@ -78,6 +83,9 @@ type MySQLBinlogSettings struct {
 // the closed binlogs to the set. It commits nothing, and returns nil, when
 // there is no new closed binlog.
 func MySQLBinlog(ctx context.Context, env *Env, s MySQLBinlogSettings) (*backup.WalkResult, error) {
+	stderr, flush := env.stderr("mysql")
+	defer flush()
+
 	objects := backup.ObjectStore(env.Index)
 	if env.TreeCache != nil {
 		objects = cache.New(env.TreeCache, env.Index)
@@ -95,7 +103,7 @@ func MySQLBinlog(ctx context.Context, env *Env, s MySQLBinlogSettings) (*backup.
 			Workers:     4,
 			ReadRetries: 3,
 		},
-		Client:  s.Client.exec(),
+		Client:  s.Client.exec(stderr),
 		Dir:     s.BinlogDir,
 		DumpSet: s.DumpSet,
 		Window:  s.Window,

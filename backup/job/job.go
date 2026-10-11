@@ -7,6 +7,7 @@ package job
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 
@@ -28,6 +29,9 @@ type Env struct {
 	AgentID string
 	// Logger is where runs report; nil means slog.Default.
 	Logger *slog.Logger
+	// Stderr, when set, takes the stderr of the programs and hooks runs
+	// start as it comes; nil logs it through Logger line by line.
+	Stderr io.Writer
 
 	// StatCache lets Path skip re-reading files whose stat data match.
 	StatCache *statcache.Cache
@@ -46,6 +50,18 @@ func (e *Env) logger() *slog.Logger {
 	}
 
 	return slog.Default()
+}
+
+// stderr is where program's stderr goes. flush logs what is left of a
+// line once program has exited.
+func (e *Env) stderr(program string) (w io.Writer, flush func()) {
+	if e.Stderr != nil {
+		return e.Stderr, func() {}
+	}
+
+	l := &lines{logger: e.logger(), program: program}
+
+	return l, l.flush
 }
 
 func (e *Env) sessions() backup.SessionStore {
