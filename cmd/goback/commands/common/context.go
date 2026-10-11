@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gobackio/goback/auth"
 
@@ -34,4 +35,30 @@ func AgentID(c *cli.Context) string {
 	host, _ := os.Hostname()
 
 	return host
+}
+
+// Graceful returns a context for a command that runs until SIGTERM: stop
+// closes on the first SIGINT or SIGTERM, and ctx ends on the second or once
+// grace has passed since the first. ctx carries the agent as the principal.
+func Graceful(c *cli.Context, grace time.Duration) (context.Context, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := make(chan struct{})
+
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-signals
+		close(stop)
+
+		select {
+		case <-signals:
+		case <-time.After(grace):
+		}
+
+		cancel()
+		signal.Stop(signals)
+	}()
+
+	return auth.WithPrincipal(ctx, &auth.Principal{AgentID: AgentID(c)}), stop
 }

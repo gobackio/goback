@@ -4,12 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 	"log"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
-	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/postgres"
@@ -106,8 +102,7 @@ func receiveAction(c *cli.Context) error {
 		return cli.NewExitError("--commit-bytes: "+err.Error(), 2)
 	}
 
-	ctx, stop := graceful(c.Duration("shutdown-grace"))
-	ctx = auth.WithPrincipal(ctx, &auth.Principal{AgentID: common.AgentID(c)})
+	ctx, stop := common.Graceful(c, c.Duration("shutdown-grace"))
 
 	env := common.Env(c)
 
@@ -140,29 +135,4 @@ func receiveAction(c *cli.Context) error {
 
 		log.Printf("Commit %s: %d files, %d bytes uploaded", hex.EncodeToString(result.Ref.GetHash()), result.Files, result.Uploaded)
 	}, nil)
-}
-
-// graceful closes stop on the first SIGINT or SIGTERM, and ends ctx on the
-// second or once grace has passed since the first.
-func graceful(grace time.Duration) (context.Context, <-chan struct{}) {
-	ctx, cancel := context.WithCancel(context.Background())
-	stop := make(chan struct{})
-
-	signals := make(chan os.Signal, 2)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		<-signals
-		close(stop)
-
-		select {
-		case <-signals:
-		case <-time.After(grace):
-		}
-
-		cancel()
-		signal.Stop(signals)
-	}()
-
-	return ctx, stop
 }

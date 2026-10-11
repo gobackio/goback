@@ -214,13 +214,13 @@ func (r *Restore) unusable(dump *proto.Commit, binlogs *binlogCommit) ([]*proto.
 		return nil, ""
 	}
 
-	if string(files[i].Stat.Name) != start {
+	if compareBinlogs(string(files[i].Stat.Name), start) != 0 {
 		return nil, gap(start, string(files[i].Stat.Name), true).Error()
 	}
 
 	// a dump's start file closes after the dump began; one that closed
 	// before is another chain's file of the same name
-	if files[i].Stat.GetMtimeNs() < dump.GetScanStartNs()-int64(time.Second) {
+	if _, partial := isPartial(string(files[i].Stat.Name)); !partial && files[i].Stat.GetMtimeNs() < dump.GetScanStartNs()-int64(time.Second) {
 		return nil, fmt.Sprintf("its start file %s in chain %d closed before the dump began: the dump is of another chain", start, chain)
 	}
 
@@ -228,8 +228,15 @@ func (r *Restore) unusable(dump *proto.Commit, binlogs *binlogCommit) ([]*proto.
 
 	reached := r.At.IsZero()
 	for j := i; j < len(files); j++ {
-		if j > i && !follows(string(files[j-1].Stat.Name), string(files[j].Stat.Name)) {
-			return nil, gap(string(files[j-1].Stat.Name), string(files[j].Stat.Name), false).Error()
+		if j > i {
+			prev := string(files[j-1].Stat.Name)
+			if binlog, partial := isPartial(prev); partial {
+				return nil, fmt.Sprintf("the binlog set lacks the end of %s", binlog)
+			}
+
+			if !follows(prev, string(files[j].Stat.Name)) {
+				return nil, gap(prev, string(files[j].Stat.Name), false).Error()
+			}
 		}
 
 		replay = append(replay, files[j])
@@ -353,7 +360,8 @@ func (r *Restore) replay(ctx context.Context, dump *proto.Commit, plan replayPla
 
 	paths := make([]string, 0, len(plan.files))
 	for _, node := range plan.files {
-		name := string(node.Stat.Name)
+		// a partial binlog replays under its binlog's name
+		name, _ := isPartial(string(node.Stat.Name))
 		if !filepath.IsLocal(name) {
 			return fmt.Errorf("the binlog set holds %q", name)
 		}

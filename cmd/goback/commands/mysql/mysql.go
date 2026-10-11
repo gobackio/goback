@@ -61,6 +61,7 @@ var Command = cli.Command{
 	Description: "Back up and restore MySQL 5.5 through 8.4 servers: dumps and the binary log, each in a set of its own",
 	Subcommands: []cli.Command{
 		binlogCmd,
+		receiveCmd,
 		dumpCmd,
 		restoreCmd,
 	},

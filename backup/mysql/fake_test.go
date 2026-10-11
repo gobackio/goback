@@ -48,6 +48,8 @@ type fakeServer struct {
 	databases        []string
 	noBinlog         bool
 	flushes          int
+	// replicas are the rows SHOW REPLICAS returns
+	replicas [][]string
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -149,6 +151,8 @@ func (s *fakeServer) Query(_ context.Context, sql string) ([][]string, error) {
 	case sql == "FLUSH BINARY LOGS":
 		s.flush()
 		return nil, nil
+	case sql == "SHOW REPLICAS", sql == "SHOW SLAVE HOSTS":
+		return s.replicas, nil
 	case sql == "SHOW BINARY LOGS":
 		var rows [][]string
 		for _, name := range s.files {

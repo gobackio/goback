@@ -38,6 +38,21 @@ const (
 	MetaFirstBinlog  = "mysql.first_binlog"
 	MetaLastBinlog   = "mysql.last_binlog"
 	MetaBinlogFormat = "mysql.binlog_format"
+	// MetaEndBinlog and MetaEndPos are where the binlogs a binlog commit
+	// holds of its chain end, its partial binlog included.
+	MetaEndBinlog = "mysql.end_binlog"
+	MetaEndPos    = "mysql.end_pos"
+	// MetaCapture is how a binlog commit's binlogs were collected:
+	// CaptureFiles or CaptureReplication.
+	MetaCapture = "mysql.capture"
+)
+
+// The ways binlogs are collected.
+const (
+	// CaptureFiles copies closed binlogs from the server's binlog directory.
+	CaptureFiles = "files"
+	// CaptureReplication receives them as a replica does.
+	CaptureReplication = "replication"
 )
 
 // DumpFile is the name of the one file a dump commit holds.
@@ -61,12 +76,17 @@ var (
 	ErrMariaDB = errors.New("MariaDB is not supported yet")
 )
 
+// Querier runs SQL against a server.
+type Querier interface {
+	// Query runs sql and returns its rows as mysql --batch
+	// --skip-column-names prints them, NULL as "NULL".
+	Query(ctx context.Context, sql string) ([][]string, error)
+}
+
 // Client runs the MySQL client programs against one server. Exec runs the
 // installed ones.
 type Client interface {
-	// Query runs sql through mysql --batch --skip-column-names and returns
-	// its rows.
-	Query(ctx context.Context, sql string) ([][]string, error)
+	Querier
 	// DumpVersion is the output of mysqldump --version.
 	DumpVersion(ctx context.Context) (string, error)
 	// Dump starts mysqldump with args. Close on the returned reader waits
@@ -99,7 +119,7 @@ type Server struct {
 var versionNumbers = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)`)
 
 // ReadServer reads the server's version and binary log settings.
-func ReadServer(ctx context.Context, c Client) (*Server, error) {
+func ReadServer(ctx context.Context, c Querier) (*Server, error) {
 	row, err := queryRow(ctx, c, "SELECT @@version, @@version_comment, @@log_bin, @@server_id, @@datadir, @@binlog_format", 6)
 	if err != nil {
 		return nil, err
@@ -166,7 +186,7 @@ type Binlog struct {
 
 // BinaryLogs lists the server's binary logs, oldest first; the last one is
 // the one the server writes to.
-func BinaryLogs(ctx context.Context, c Client) ([]Binlog, error) {
+func BinaryLogs(ctx context.Context, c Querier) ([]Binlog, error) {
 	rows, err := c.Query(ctx, "SHOW BINARY LOGS")
 	if err != nil {
 		return nil, err
@@ -190,7 +210,7 @@ func BinaryLogs(ctx context.Context, c Client) ([]Binlog, error) {
 }
 
 // Position is the server's current binary log file and position.
-func Position(ctx context.Context, c Client, s *Server) (string, uint64, error) {
+func Position(ctx context.Context, c Querier, s *Server) (string, uint64, error) {
 	sql := "SHOW MASTER STATUS"
 	if s.atLeast(8, 2, 0) {
 		sql = "SHOW BINARY LOG STATUS"
@@ -213,7 +233,7 @@ func Position(ctx context.Context, c Client, s *Server) (string, uint64, error) 
 	return rows[0][0], pos, nil
 }
 
-func queryRow(ctx context.Context, c Client, sql string, columns int) ([]string, error) {
+func queryRow(ctx context.Context, c Querier, sql string, columns int) ([]string, error) {
 	rows, err := c.Query(ctx, sql)
 	if err != nil {
 		return nil, err
@@ -305,9 +325,22 @@ func parseChainDir(name string) (int, bool) {
 	return n, err == nil && n > 0
 }
 
-// splitBinlog splits a binlog file name into its base and number; ok is
-// false for names that are not a binlog's.
+// partialSuffix marks a binlog the set holds only up to where a receiver
+// had received it.
+const partialSuffix = ".partial"
+
+// isPartial reports whether name is a partial binlog's, and returns the
+// binlog's name.
+func isPartial(name string) (string, bool) {
+	binlog, ok := strings.CutSuffix(name, partialSuffix)
+	return binlog, ok
+}
+
+// splitBinlog splits a binlog file name, whole or partial, into its base
+// and number; ok is false for names that are not a binlog's.
 func splitBinlog(name string) (string, uint64, bool) {
+	name, _ = isPartial(name)
+
 	dot := strings.LastIndexByte(name, '.')
 	if dot <= 0 || len(name)-dot-1 < 6 {
 		return "", 0, false
@@ -342,6 +375,17 @@ func compareBinlogs(a, b string) int {
 	return 0
 }
 
+// lastWhole is the last of names that is a whole binlog's.
+func lastWhole(names []string) string {
+	for i := len(names) - 1; i >= 0; i-- {
+		if _, partial := isPartial(names[i]); !partial {
+			return names[i]
+		}
+	}
+
+	return ""
+}
+
 // follows reports whether b is the binlog right after a.
 func follows(a, b string) bool {
 	baseA, na, okA := splitBinlog(a)
@@ -352,6 +396,7 @@ func follows(a, b string) bool {
 
 // binlogName names binlog n of base, as wide as like's number.
 func binlogName(base string, n uint64, like string) string {
+	like, _ = isPartial(like)
 	width := len(like) - strings.LastIndexByte(like, '.') - 1
 	return fmt.Sprintf("%s.%0*d", base, width, n)
 }

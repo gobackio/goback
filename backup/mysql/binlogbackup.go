@@ -184,13 +184,19 @@ func (b *BinlogBackup) Run(ctx context.Context) (*backup.WalkResult, error) {
 		return nil, nil
 	}
 
+	// a partial binlog a receiver committed gives way to the whole one
+	carried := func(name string) bool {
+		binlog, partial := isPartial(name)
+		return keep(name) && !include[name] && !(partial && include[binlog])
+	}
+
 	names := make([]string, 0, len(include)+len(previous))
 	for name := range include {
 		names = append(names, name)
 	}
 
 	for name := range heldByName {
-		if keep(name) && !include[name] {
+		if carried(name) {
 			names = append(names, name)
 		}
 	}
@@ -209,7 +215,7 @@ func (b *BinlogBackup) Run(ctx context.Context) (*backup.WalkResult, error) {
 			return needed(c)
 		}
 
-		return keep(name)
+		return carried(name)
 	}
 
 	w.Metadata = map[string]string{
@@ -217,12 +223,22 @@ func (b *BinlogBackup) Run(ctx context.Context) (*backup.WalkResult, error) {
 		MetaVersion:      srv.Version,
 		MetaChain:        strconv.Itoa(chain),
 		MetaBinlogFormat: srv.BinlogFormat,
+		MetaCapture:      CaptureFiles,
 	}
 	id.metadata(w.Metadata)
 
 	if len(names) > 0 {
+		last := names[len(names)-1]
+
 		w.Metadata[MetaFirstBinlog] = names[0]
-		w.Metadata[MetaLastBinlog] = names[len(names)-1]
+		w.Metadata[MetaLastBinlog] = lastWhole(names)
+		w.Metadata[MetaEndBinlog], _ = isPartial(last)
+
+		if node := heldByName[last]; node != nil {
+			w.Metadata[MetaEndPos] = strconv.FormatInt(node.Stat.GetSize(), 10)
+		} else if info, err := os.Stat(filepath.Join(dir, last)); err == nil {
+			w.Metadata[MetaEndPos] = strconv.FormatInt(info.Size(), 10)
+		}
 	}
 
 	return w.Run(ctx)
@@ -338,7 +354,9 @@ func nextChain(held *binlogCommit, writing string, recreated bool, dumps []*prot
 			was, _, _ := splitBinlog(last)
 			base, _, _ := splitBinlog(writing)
 
-			if base != was || compareBinlogs(writing, last) <= 0 {
+			// the set may hold the binlog the server writes to as partial
+			_, partial := isPartial(last)
+			if c := compareBinlogs(writing, last); base != was || c < 0 || c == 0 && !partial {
 				chain++
 			}
 		}
@@ -392,7 +410,8 @@ func newestStart(dumps []*proto.Commit, chain int) string {
 }
 
 // checkContiguous reports binlogs missing from names, sorted binlogs of one
-// chain, from start on; over all of names when start is empty.
+// chain, from start on; over all of names when start is empty. A partial
+// binlog lacks its end, so only the last may be one.
 func checkContiguous(names []string, start string) error {
 	i := 0
 	if start != "" {
@@ -401,12 +420,16 @@ func checkContiguous(names []string, start string) error {
 			return nil
 		}
 
-		if names[i] != start {
+		if compareBinlogs(names[i], start) != 0 {
 			return gap(start, names[i], true)
 		}
 	}
 
 	for ; i+1 < len(names); i++ {
+		if binlog, ok := isPartial(names[i]); ok {
+			return fmt.Errorf("%w: the end of %s; the server purged it before goback received it, and a new dump is needed", ErrGap, binlog)
+		}
+
 		if !follows(names[i], names[i+1]) {
 			return gap(names[i], names[i+1], false)
 		}

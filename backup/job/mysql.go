@@ -112,3 +112,66 @@ func MySQLBinlog(ctx context.Context, env *Env, s MySQLBinlogSettings) (*backup.
 
 	return run.Run(ctx)
 }
+
+// MySQLReceiveSettings say how MySQLReceive receives a server's binlogs.
+type MySQLReceiveSettings struct {
+	Set string
+	// DumpSet is the set the server's dumps go to.
+	DumpSet string
+	// Spool is where binlogs wait for their commit.
+	Spool string
+	// DefaultsExtraFile is the option file read before ~/.my.cnf for the
+	// connection and its password.
+	DefaultsExtraFile string
+	// ServerID is the replica server id; mysql.ReplicaServerID of the set
+	// when zero.
+	ServerID    uint32
+	CommitEvery time.Duration
+	CommitBytes int64
+	// Window is how far back point-in-time recovery reaches.
+	Window time.Duration
+}
+
+// MySQLReceive receives the server's binlogs as a replica into the spool
+// and commits them to the set, until stop is closed; then it makes its
+// last commit and returns nil. committed and report, when set, hear of
+// each commit and of how the receiver stands.
+func MySQLReceive(ctx context.Context, env *Env, s MySQLReceiveSettings, stop <-chan struct{},
+	committed func(*backup.WalkResult), report func(mysql.ReceiverStatus),
+) error {
+	spool := mysql.Spool{Dir: s.Spool}
+
+	objects := backup.ObjectStore(env.Index)
+	if env.TreeCache != nil {
+		objects = cache.New(env.TreeCache, env.Index)
+	}
+
+	r := &mysql.Receiver{
+		DefaultsExtraFile: s.DefaultsExtraFile,
+		ServerID:          s.ServerID,
+		Spool:             spool,
+		Walker: func() *backup.Walker {
+			return &backup.Walker{
+				Index:       env.Index,
+				Objects:     objects,
+				Sessions:    env.sessions(),
+				Set:         s.Set,
+				AgentID:     env.AgentID,
+				Key:         env.Key,
+				Logger:      env.Logger,
+				Root:        spool.Dir,
+				Workers:     4,
+				ReadRetries: 3,
+			}
+		},
+		DumpSet:     s.DumpSet,
+		Window:      s.Window,
+		CommitEvery: s.CommitEvery,
+		CommitBytes: s.CommitBytes,
+		Logger:      env.logger(),
+		Committed:   committed,
+		Report:      report,
+	}
+
+	return r.Run(ctx, stop)
+}
