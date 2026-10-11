@@ -311,6 +311,10 @@ func (p *PostgresBackup) tasks(b *Backup) []*Task {
 // CheckDatabase connects to the backup's database and lists what it lacks
 // for the backup as configured; nil for a backup of no database.
 func (b *Backup) CheckDatabase(ctx context.Context) []string {
+	if b.MySQL != nil && b.MySQL.PITR {
+		return mysql.Check(ctx, b.MySQL.DefaultsExtraFile, b.MySQL.serverID(b))
+	}
+
 	if b.Postgres == nil {
 		return nil
 	}
@@ -338,20 +342,25 @@ func holdsPassword(conninfo string) bool {
 	return strings.Contains(lower, "password=")
 }
 
-// MySQLBackup backs up a MySQL server: dumps and, with PITR and log_bin
-// on, its binlogs.
+// MySQLBackup backs up a MySQL server: dumps and, with PITR, its binlogs
+// received as a replica, with goback mysql receive's settings.
 type MySQLBackup struct {
-	DefaultsExtraFile string        `yaml:"defaults-extra-file"`
-	Mysql             string        `yaml:"mysql"`
-	Mysqldump         string        `yaml:"mysqldump"`
-	BinlogDir         string        `yaml:"binlog-dir"`
-	Window            time.Duration `yaml:"window"`
-	PITR              bool          `yaml:"pitr"`
+	DefaultsExtraFile string `yaml:"defaults-extra-file"`
+	Mysql             string `yaml:"mysql"`
+	Mysqldump         string `yaml:"mysqldump"`
+	// Spool is where binlogs wait for their commit; <state-dir>/spool/<set>
+	// when empty.
+	Spool       string        `yaml:"spool"`
+	ServerID    uint32        `yaml:"server-id"`
+	CommitEvery time.Duration `yaml:"commit-every"`
+	CommitBytes string        `yaml:"commit-bytes"`
+	Window      time.Duration `yaml:"window"`
+	PITR        bool          `yaml:"pitr"`
 }
 
 // UnmarshalYAML fills in the mysql commands' defaults before decoding.
 func (m *MySQLBackup) UnmarshalYAML(unmarshal func(any) error) error {
-	*m = MySQLBackup{Mysql: "mysql", Mysqldump: "mysqldump", Window: 14 * 24 * time.Hour, PITR: true}
+	*m = MySQLBackup{Mysql: "mysql", Mysqldump: "mysqldump", CommitEvery: mysql.DefaultCommitEvery, CommitBytes: "256MiB", Window: 14 * 24 * time.Hour, PITR: true}
 
 	type plain MySQLBackup
 
@@ -359,12 +368,35 @@ func (m *MySQLBackup) UnmarshalYAML(unmarshal func(any) error) error {
 }
 
 func (m *MySQLBackup) validate(*Backup) []error {
+	var errs []error
+
 	if m.Window <= 0 {
-		return []error{errors.New("mysql.window must be positive")}
+		errs = append(errs, errors.New("mysql.window must be positive"))
 	}
 
-	return nil
+	if m.CommitEvery < mysql.MinCommitEvery {
+		errs = append(errs, fmt.Errorf("mysql.commit-every must be at least %s", mysql.MinCommitEvery))
+	}
+
+	if _, err := humanize.ParseBytes(m.CommitBytes); err != nil {
+		errs = append(errs, fmt.Errorf("mysql.commit-bytes: %w", err))
+	}
+
+	return errs
 }
+
+// serverID is the replica server id the backup's receiver connects with.
+func (m *MySQLBackup) serverID(b *Backup) uint32 {
+	if m.ServerID != 0 {
+		return m.ServerID
+	}
+
+	return mysql.ReplicaServerID(b.Name + "-binlog")
+}
+
+// noBinlogWait is how long a receiver waits before it looks again at a
+// server whose binary log is off.
+const noBinlogWait = time.Minute
 
 func (m *MySQLBackup) tasks(b *Backup) []*Task {
 	dump, binlog := b.Name+"-dump", b.Name+"-binlog"
@@ -380,18 +412,57 @@ func (m *MySQLBackup) tasks(b *Backup) []*Task {
 		return job.MySQLDump(ctx, env, dumpSettings)
 	})}
 
-	if m.PITR {
-		binlogSettings := job.MySQLBinlogSettings{Set: binlog, Client: client, BinlogDir: m.BinlogDir, DumpSet: dump, Window: m.Window}
-		tasks = append(tasks, logTask("mysql-binlog", binlog, dump, func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
-			result, err := job.MySQLBinlog(ctx, env, binlogSettings)
-			if errors.Is(err, mysql.ErrNoBinlog) {
-				// log capture runs only while log_bin is on
-				return nil, nil
-			}
-
-			return result, err
-		}))
+	if !m.PITR {
+		return tasks
 	}
 
-	return tasks
+	commitBytes, _ := humanize.ParseBytes(m.CommitBytes)
+	settings := job.MySQLReceiveSettings{
+		Set:               binlog,
+		DumpSet:           dump,
+		Spool:             m.Spool,
+		DefaultsExtraFile: m.DefaultsExtraFile,
+		ServerID:          m.serverID(b),
+		CommitEvery:       m.CommitEvery,
+		CommitBytes:       int64(commitBytes),
+		Window:            m.Window,
+	}
+
+	// the receiver starts at a dump's binlog position, so it waits for one
+	return append(tasks, &Task{
+		Name:       binlog,
+		Set:        binlog,
+		Kind:       "mysql-receive",
+		Log:        true,
+		After:      dump,
+		StaleAfter: 3 * m.CommitEvery,
+		Serve: func(ctx context.Context, env *job.Env, c *Control) error {
+			s := settings
+			if s.Spool == "" {
+				if c.StateDir() == "" {
+					return errors.New("mysql.spool is required without a state dir")
+				}
+
+				s.Spool = filepath.Join(c.StateDir(), "spool", binlog)
+			}
+
+			for {
+				err := job.MySQLReceive(ctx, env, s, c.Stop(), c.Committed, func(st mysql.ReceiverStatus) { c.Report(st, st.Healthy) })
+				if !errors.Is(err, mysql.ErrNoBinlog) {
+					return err
+				}
+
+				// log capture runs only while log_bin is on
+				c.Report(map[string]any{"log_bin": false}, true)
+
+				select {
+				case <-c.Stop():
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(noBinlogWait):
+				}
+			}
+		},
+	})
 }

@@ -55,7 +55,7 @@ backups:
 		{"db-base", "postgres-base", "", false, true},
 		{"db-wal", "postgres-receive", "", true, false},
 		{"shop-dump", "mysql-dump", "", false, true},
-		{"shop-binlog", "mysql-binlog", "shop-dump", true, true},
+		{"shop-binlog", "mysql-receive", "shop-dump", true, false},
 		{"world", "path", "", false, true},
 	}, got)
 }
