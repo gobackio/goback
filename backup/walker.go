@@ -74,6 +74,12 @@ type Walker struct {
 	// none.
 	Carry func(name string) bool
 
+	// Subdir, when set, puts Root's entries in the directory of that name
+	// in the commit's root instead of in the root itself. Carry then applies
+	// inside it, and to the previous commit's other root entries. A run with
+	// Subdir writes no checkpoints.
+	Subdir string
+
 	// Include decides per slash-separated relative path; nil includes all.
 	Include func(rel string) bool
 
@@ -364,6 +370,11 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 
 	if w.Stream != nil {
 		nodes, err = w.putStream(ctx)
+		if err != nil {
+			return nil, err
+		}
+	} else if w.Subdir != "" {
+		nodes, changed, err = w.walkSubdir(ctx, baseNodes)
 		if err != nil {
 			return nil, err
 		}
@@ -722,7 +733,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 			}
 		}
 
-		if root && w.checkpointDue() {
+		if root && w.Subdir == "" && w.checkpointDue() {
 			// drain the files in flight so every finished entry has a node;
 			// Wait cancels the group's context, so start a fresh group after
 			err := group.Wait()
@@ -769,6 +780,67 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 	}
 
 	return SortNodes(nodes), changed, nil
+}
+
+// walkSubdir walks Root as the directory Subdir of the root, whose other
+// entries are the previous commit's that Carry keeps.
+func (w *Walker) walkSubdir(ctx context.Context, base []*proto.TreeNode) ([]*proto.TreeNode, bool, error) {
+	info, err := os.Stat(w.Root)
+	if err != nil {
+		return nil, false, err
+	}
+
+	var (
+		nodes   []*proto.TreeNode
+		prev    *proto.TreeNode
+		changed bool
+	)
+
+	for _, node := range base {
+		name := string(node.Stat.Name)
+
+		switch {
+		case name == w.Subdir:
+			prev = node
+		case w.Carry != nil && w.Carry(name):
+			nodes = append(nodes, node)
+		default:
+			changed = true
+		}
+	}
+
+	token := NameToken(w.Key, nil, []byte(w.Subdir))
+
+	var inner []*proto.TreeNode
+	if prev != nil && prev.Stat.IsDir() {
+		tree, err := w.trees.load(ctx, prev.Ref, token)
+		if err != nil {
+			return nil, false, fmt.Errorf("loading the base tree of %s: %w", w.Subdir, err)
+		}
+
+		inner = tree.Nodes
+	}
+
+	children, innerChanged, err := w.walkDir(ctx, w.Root, "", token, inner, true)
+	if err != nil {
+		return nil, false, err
+	}
+
+	stat := w.stat(info, "")
+	stat.Name = []byte(w.Subdir)
+
+	node := &proto.TreeNode{Stat: stat}
+	if !innerChanged && inner != nil {
+		node.Ref = prev.Ref
+	} else if node.Ref, err = PutTree(ctx, w.Objects, children, w.Key, token); err != nil {
+		return nil, false, fmt.Errorf("storing tree for %s: %w", w.Subdir, err)
+	}
+
+	if !nodeEqual(node, prev) {
+		changed = true
+	}
+
+	return SortNodes(append(nodes, node)), changed, nil
 }
 
 func (w *Walker) walkChildDir(ctx context.Context, dir, rel string, token []byte, info os.FileInfo, baseNode *proto.TreeNode) (*proto.TreeNode, bool, error) {

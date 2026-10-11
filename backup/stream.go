@@ -14,10 +14,15 @@ import (
 	"github.com/gobackio/goback/proto"
 )
 
-// Stream is a backup read from a tar stream, such as a command's output,
-// instead of from the disk. Each entry becomes a node of the commit's tree.
+// Stream is a backup read from a stream, such as a command's output,
+// instead of from the disk: either a tar, each entry of which becomes a node
+// of the commit's tree, or a single file.
 type Stream struct {
 	Tar io.Reader
+	// Name and File, set instead of Tar, store File's content as the one
+	// file Name of the commit's tree.
+	Name string
+	File io.Reader
 	// Inspect, when set, sees every entry's header before it is stored; a
 	// writer it returns gets a copy of the entry's content.
 	Inspect func(hdr *tar.Header) io.Writer
@@ -33,6 +38,10 @@ type streamDir struct {
 
 // putStream stores the stream's entries and returns the root's nodes.
 func (w *Walker) putStream(ctx context.Context) ([]*proto.TreeNode, error) {
+	if w.Stream.File != nil {
+		return w.putStreamFile(ctx)
+	}
+
 	dirs := map[string]*streamDir{"": {}}
 
 	var dir func(p string) *streamDir
@@ -123,6 +132,53 @@ func (w *Walker) putStream(ctx context.Context) ([]*proto.TreeNode, error) {
 	}
 
 	return w.putStreamDir(ctx, dirs, "", nil)
+}
+
+// putStreamFile stores the stream's single file and returns its node.
+func (w *Walker) putStreamFile(ctx context.Context) ([]*proto.TreeNode, error) {
+	name := w.Stream.Name
+	if name == "" || strings.Contains(name, "/") || name == "." || name == ".." {
+		return nil, fmt.Errorf("a stream's file needs a plain name, not %q", name)
+	}
+
+	content := &countingReader{r: w.Stream.File}
+
+	ref, err := PutFile(ctx, w.Objects, w.Key, 0, content)
+	if err != nil {
+		return nil, fmt.Errorf("storing %s: %w", name, err)
+	}
+
+	if w.Stream.Finish != nil {
+		if err := w.Stream.Finish(); err != nil {
+			return nil, err
+		}
+	}
+
+	atomic.AddInt64(&w.result.Files, 1)
+	atomic.AddInt64(&w.result.Read, 1)
+	atomic.AddInt64(&w.result.Bytes, content.n)
+
+	stat := &proto.FileInfo{
+		Name:    []byte(name),
+		Type:    proto.NodeType_NODE_FILE,
+		Mode:    0o600,
+		Size:    content.n,
+		MtimeNs: w.now().UnixNano(),
+	}
+
+	return []*proto.TreeNode{{Stat: stat, Ref: ref}}, nil
+}
+
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+
+	return n, err
 }
 
 // putStreamDir stores the trees below p, whose name token is token, and

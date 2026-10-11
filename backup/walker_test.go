@@ -570,6 +570,77 @@ func TestWalkerCarriesWhatLeftTheDiskWhileCarryAllows(t *testing.T) {
 	require.True(t, after["2"].Ref.Equal(f.tree(first.Commit.Tree)["2"].Ref))
 }
 
+func TestWalkerPutsRootInSubdirAndCarriesTheOtherEntries(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.write("1", []byte("one"))
+	f.write("2", []byte("two"))
+	f.walker.Subdir = "a"
+	first := f.run()
+	require.Len(t, f.tree(first.Commit.Tree), 1)
+	require.Len(t, f.tree(f.tree(first.Commit.Tree)["a"].Ref), 2)
+
+	require.NoError(t, os.Remove(filepath.Join(f.root, "1")))
+	require.NoError(t, os.Remove(filepath.Join(f.root, "2")))
+	f.write("3", []byte("three"))
+	f.walker.Carry = func(name string) bool { return name == "a" || name == "2" }
+
+	second := f.run()
+	require.EqualValues(t, 1, second.Read)
+	a := f.tree(f.tree(second.Commit.Tree)["a"].Ref)
+	require.Len(t, a, 2)
+	require.Contains(t, a, "2", "Carry applies inside the subdir")
+
+	f.walker.Subdir = "b"
+	f.walker.Carry = func(name string) bool { return name == "a" }
+
+	third := f.run()
+	root := f.tree(third.Commit.Tree)
+	require.Len(t, root, 2)
+	require.True(t, root["a"].Ref.Equal(f.tree(second.Commit.Tree)["a"].Ref))
+
+	b := f.tree(root["b"].Ref)
+	require.Len(t, b, 1)
+	require.True(t, b["3"].Ref.Equal(f.tree(f.tree(second.Commit.Tree)["a"].Ref)["3"].Ref))
+
+	f.walker.Carry = func(string) bool { return false }
+
+	fourth := f.run()
+	require.Len(t, f.tree(fourth.Commit.Tree), 1, "a is dropped once Carry lets it go")
+}
+
+func TestWalkerCommitsAStreamedFile(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.write("ignored.txt", []byte("not walked"))
+
+	content := f.random(3 << 20)
+	finished := false
+	f.walker.Stream = &Stream{Name: "dump.sql", File: bytes.NewReader(content), Finish: func() error {
+		finished = true
+		return nil
+	}}
+
+	result := f.run()
+	require.True(t, finished)
+
+	root := f.tree(result.Commit.Tree)
+	require.Len(t, root, 1)
+	require.EqualValues(t, len(content), root["dump.sql"].Stat.Size)
+
+	read, err := NewBackupReader(f.store).ReadFile(context.Background(), root["dump.sql"].Ref)
+	require.NoError(t, err)
+	got, err := io.ReadAll(read)
+	require.NoError(t, err)
+	require.Equal(t, content, got)
+
+	f.walker.Stream = &Stream{Name: "dump.sql", File: bytes.NewReader(content), Finish: func() error { return errors.New("cut short") }}
+	_, err = f.walker.Run(context.Background())
+	require.ErrorContains(t, err, "cut short")
+
+	latest, err := f.index.LatestCommit(context.Background(), "test")
+	require.NoError(t, err)
+	require.True(t, latest.Equal(result.Ref), "a failed Finish leaves the set without a commit")
+}
+
 func TestWalkerCommitsATarStreamAsATree(t *testing.T) {
 	f := newWalkerFixture(t)
 	f.write("ignored.txt", []byte("not walked"))
