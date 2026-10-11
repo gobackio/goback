@@ -64,6 +64,7 @@ skips unchanged files with it and a restore downloads less.
 | `scrub`, `repair` | rehash every stored object, and rewrite the archives holding corrupt ones |
 | `fix` | rebuild the index from the store |
 | `postgres` | back up a Postgres cluster with point-in-time recovery |
+| `mysql` | back up a MySQL server with optional point-in-time recovery |
 | `server` | serve one store to many agents over gRPC, with TLS and an operator API |
 
 `goback <command> --help` describes each one.
@@ -102,6 +103,12 @@ intervals.
 a cluster to any moment in between. [contrib/postgres](contrib/postgres/README.md)
 runs it with Docker Compose.
 
+## MySQL
+
+`goback mysql` streams `mysqldump` into one set and, optionally, the closed
+binary logs into another, and restores a server to a dump or to any second
+after it. [contrib/mysql](contrib/mysql/README.md) runs it with Docker Compose.
+
 ## Development
 
 ```sh
@@ -109,4 +116,4 @@ go build ./...
 go test ./...
 ```
 
-Some tests start Postgres and MinIO in Docker through testcontainers.
+Some tests start Postgres, MySQL and MinIO in Docker through testcontainers.

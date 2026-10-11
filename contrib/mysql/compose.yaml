@@ -1,0 +1,81 @@
+name: goback-mysql
+
+services:
+  # copies goback into the volume the MySQL container runs it from, on every
+  # `docker compose up`
+  goback-bin:
+    image: goback
+    build: ../..
+    entrypoint:
+      - sh
+      - -c
+      - cp /root/binary /opt/goback/goback && mkdir -p /var/lib/goback && chown -R 999:999 /var/lib/goback
+    volumes:
+      - goback-bin:/opt/goback
+      - goback:/var/lib/goback
+
+  mysql:
+    image: mysql:8.0
+    # tini as PID 1 reaps what the jobs leave behind
+    init: true
+    depends_on:
+      goback-bin:
+        condition: service_completed_successfully
+    command:
+      - --server-id=1
+      - --log-bin=binlog
+      - --binlog-format=ROW
+      - --sync-binlog=1
+      - --binlog-expire-logs-seconds=604800
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql-root-password
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-credentials
+      # the [client] section the client programs connect with
+      GOBACK_MYSQL_DEFAULTS_EXTRA_FILE: /run/secrets/mysql-client.cnf
+      # mysql binlog keeps the trees it writes here, so the next run reads none
+      GOBACK_CACHE_DIR: /var/lib/goback/cache
+    secrets:
+      - goback-key
+      - gcp-credentials
+      - mysql-root-password
+      - mysql-client.cnf
+    volumes:
+      - mysqldata:/var/lib/mysql
+      - goback-bin:/opt/goback:ro
+      - goback:/var/lib/goback
+    # Ofelia runs these in this container; job names are host-wide
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-exec.mysql-dump.schedule: "@daily"
+      ofelia.job-exec.mysql-dump.user: mysql
+      ofelia.job-exec.mysql-dump.no-overlap: "true"
+      # each job keeps its own copy of the bucket's archive index, so the two
+      # can run at the same time
+      ofelia.job-exec.mysql-dump.command: /opt/goback/goback --storage gcs://BUCKET --index /var/lib/goback/index --store-key /run/secrets/goback-key --agent-id db --set db-dump mysql dump --binlog-set db-binlog
+      ofelia.job-exec.mysql-binlog.schedule: "@every 1m"
+      ofelia.job-exec.mysql-binlog.user: mysql
+      ofelia.job-exec.mysql-binlog.no-overlap: "true"
+      ofelia.job-exec.mysql-binlog.command: /opt/goback/goback --storage gcs://BUCKET --index /var/lib/goback/index --store-key /run/secrets/goback-key --agent-id db --set db-binlog mysql binlog --dump-set db-dump
+
+  ofelia:
+    image: mcuadros/ofelia:latest
+    depends_on:
+      - mysql
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+secrets:
+  goback-key:
+    file: ./goback.key
+  gcp-credentials:
+    file: ./gcp-credentials.json
+  mysql-root-password:
+    file: ./mysql-root-password
+  mysql-client.cnf:
+    file: ./mysql-client.cnf
+
+volumes:
+  mysqldata:
+  goback-bin:
+  goback:
