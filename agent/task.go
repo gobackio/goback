@@ -1,0 +1,72 @@
+package agent
+
+import (
+	"context"
+	"time"
+
+	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/job"
+)
+
+// RunFunc runs a task once. A nil result with a nil error means there was
+// nothing to commit.
+type RunFunc func(ctx context.Context, env *job.Env) (*backup.WalkResult, error)
+
+// ServeFunc runs a task that runs all the time, committing on its own
+// timer, until ctx ends or c.Stop is closed. After Stop it makes its final
+// commit and returns; ctx ends when the shutdown grace runs out.
+type ServeFunc func(ctx context.Context, env *job.Env, c *Control) error
+
+// Task is one thing a backup does on its own timing: its full backups, or
+// its log capture. Exactly one of Run, with a Plan, and Serve is set.
+type Task struct {
+	// Name is unique among an agent's tasks; it names the task in logs,
+	// the status file and metrics.
+	Name   string
+	Set    string
+	Kind   string
+	Backup string
+	Plan   *Plan
+	// Jitter is the window the task's slots move by a fixed offset in.
+	Jitter time.Duration
+	// Timeout cancels a run after this long; zero never does.
+	Timeout time.Duration
+	// Log marks log capture, which runs outside the concurrency limit.
+	Log bool
+	// After names a set that must hold a complete commit before the task
+	// starts.
+	After string
+	// Spec is what the task was built from; a reload replaces a task whose
+	// Spec changed.
+	Spec  string
+	Run   RunFunc
+	Serve ServeFunc
+}
+
+// NextDue is when the task runs next on agent, given when its last run
+// started (zero for never) and the time now.
+func (t *Task) NextDue(agent string, last, now time.Time) time.Time {
+	if t.Plan == nil {
+		return now
+	}
+
+	return t.Plan.due(jitterOffset(agent, t.Name, t.Jitter), last, now)
+}
+
+// Control is what the agent hands a ServeFunc.
+type Control struct {
+	stop      <-chan struct{}
+	committed func(*backup.WalkResult)
+}
+
+// Stop is closed when the agent wants the task to make its last commit
+// and return.
+func (c *Control) Stop() <-chan struct{} {
+	return c.stop
+}
+
+// Committed reports a commit the task made, for the status file and the
+// metrics.
+func (c *Control) Committed(result *backup.WalkResult) {
+	c.committed(result)
+}
