@@ -24,7 +24,7 @@ func TestTheSpoolHoldsOnlyWholeFiles(t *testing.T) {
 	require.NoError(t, spool.Add(segment(t, "zeroth"), "000000010000000000000001"))
 
 	// a copy a crash cut short
-	require.NoError(t, os.WriteFile(filepath.Join(spool.Dir, "000000010000000000000003"+partialSuffix), []byte("fir"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(spool.Dir, "000000010000000000000003"+spoolingSuffix), []byte("fir"), 0o600))
 
 	files, err := spool.Files()
 	require.NoError(t, err)
@@ -53,7 +53,7 @@ func TestArchivingAgainSucceedsOnlyWithTheSameContents(t *testing.T) {
 func TestTheSpoolRefusesNamesOutsideIt(t *testing.T) {
 	spool := Spool{Dir: t.TempDir()}
 
-	for _, name := range []string{"", "../x", "a/b", ".hidden", "x" + partialSuffix} {
+	for _, name := range []string{"", "../x", "a/b", ".hidden", "x" + spoolingSuffix} {
 		require.Error(t, spool.Add(segment(t, "x"), name), name)
 	}
 }

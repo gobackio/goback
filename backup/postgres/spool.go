@@ -17,7 +17,7 @@ import (
 // with other contents.
 var ErrConflict = errors.New("the spool holds a different file of that name")
 
-const partialSuffix = ".spooling"
+const spoolingSuffix = ".spooling"
 
 // Spool is the directory archive_command copies finished WAL files into,
 // and the WAL backup commits from. A file in it is whole: it appears under
@@ -30,7 +30,7 @@ type Spool struct {
 // archive_command does with %p and %f. Adding a file the spool already
 // holds with the same contents succeeds, so Postgres may retry.
 func (s Spool) Add(path, name string) error {
-	if name == "" || name != filepath.Base(name) || strings.HasSuffix(name, partialSuffix) || strings.HasPrefix(name, ".") {
+	if name == "" || name != filepath.Base(name) || strings.HasSuffix(name, spoolingSuffix) || strings.HasPrefix(name, ".") {
 		return fmt.Errorf("%q is not a WAL file name", name)
 	}
 
@@ -51,7 +51,7 @@ func (s Spool) Add(path, name string) error {
 		return err
 	}
 
-	tmp := dst + partialSuffix
+	tmp := dst + spoolingSuffix
 	if err := copyFile(path, tmp); err != nil {
 		_ = os.Remove(tmp)
 		return err
@@ -101,7 +101,7 @@ func (s Spool) Files() ([]string, error) {
 	var names []string
 	for _, e := range entries {
 		name := e.Name()
-		if e.Type().IsRegular() && !strings.HasSuffix(name, partialSuffix) && !strings.HasPrefix(name, ".") {
+		if e.Type().IsRegular() && !strings.HasSuffix(name, spoolingSuffix) && !strings.HasPrefix(name, ".") {
 			names = append(names, name)
 		}
 	}
@@ -113,7 +113,11 @@ func (s Spool) Files() ([]string, error) {
 
 // Open opens a whole file of the spool.
 func (s Spool) Open(name string) (*os.File, error) {
-	return os.Open(filepath.Join(s.Dir, name))
+	return os.Open(s.path(name))
+}
+
+func (s Spool) path(name string) string {
+	return filepath.Join(s.Dir, name)
 }
 
 // Remove deletes files a backup has committed.

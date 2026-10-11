@@ -121,3 +121,69 @@ func PostgresWAL(ctx context.Context, env *Env, s PostgresWALSettings) (*backup.
 
 	return run.Run(ctx)
 }
+
+// PostgresReceiveSettings say how PostgresReceive streams WAL.
+type PostgresReceiveSettings struct {
+	Set string
+	// BaseSet is the set the cluster's base backups go to.
+	BaseSet string
+	// Spool is where WAL waits for its commit.
+	Spool string
+	// DBName is the connection string of the replication and monitoring
+	// connections; empty leaves it to the PG* variables.
+	DBName string
+	// Slot is the replication slot; postgres.SlotName of the set when
+	// empty.
+	Slot string
+	// AllowUncappedSlot streams when max_slot_wal_keep_size is -1.
+	AllowUncappedSlot bool
+	CommitEvery       time.Duration
+	CommitBytes       int64
+	// Window is how far back point-in-time recovery reaches.
+	Window time.Duration
+}
+
+// PostgresReceive streams the cluster's WAL through a replication slot
+// into the spool and commits it to the set, until stop is closed; then it
+// makes its last commit and returns nil. committed and report, when set,
+// hear of each commit and of how the receiver stands.
+func PostgresReceive(ctx context.Context, env *Env, s PostgresReceiveSettings, stop <-chan struct{},
+	committed func(*backup.WalkResult), report func(postgres.ReceiverStatus),
+) error {
+	spool := postgres.Spool{Dir: s.Spool}
+
+	objects := backup.ObjectStore(env.Index)
+	if env.TreeCache != nil {
+		objects = cache.New(env.TreeCache, env.Index)
+	}
+
+	r := &postgres.Receiver{
+		ConnString:        s.DBName,
+		Slot:              s.Slot,
+		AllowUncappedSlot: s.AllowUncappedSlot,
+		Spool:             spool,
+		Walker: func() *backup.Walker {
+			return &backup.Walker{
+				Index:       env.Index,
+				Objects:     objects,
+				Sessions:    env.sessions(),
+				Set:         s.Set,
+				AgentID:     env.AgentID,
+				Key:         env.Key,
+				Logger:      env.Logger,
+				Root:        spool.Dir,
+				Workers:     4,
+				ReadRetries: 3,
+			}
+		},
+		BaseSet:     s.BaseSet,
+		Window:      s.Window,
+		CommitEvery: s.CommitEvery,
+		CommitBytes: s.CommitBytes,
+		Logger:      env.logger(),
+		Committed:   committed,
+		Report:      report,
+	}
+
+	return r.Run(ctx, stop)
+}

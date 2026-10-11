@@ -44,7 +44,7 @@ func newWALFixture(t *testing.T) *walFixture {
 	require.NoError(t, index.Open())
 	t.Cleanup(func() { _ = index.Close() })
 
-	return &walFixture{t: t, ctx: context.Background(), index: index, spool: Spool{Dir: t.TempDir()}, now: time.Now()}
+	return &walFixture{t: t, ctx: context.Background(), index: index, spool: Spool{Dir: t.TempDir()}, now: time.Now().Add(time.Minute)}
 }
 
 // archive spools the segment of the cluster systemID at segment n of
@@ -323,4 +323,150 @@ func TestASealedWALSetsTreeCacheHoldsNoNames(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotZero(t, files)
+}
+
+// receiving writes the first size bytes of segment n of timeline into the
+// spool's receiving directory, as the receiver does.
+func (f *walFixture) receiving(timeline uint32, n uint64, size int) *OpenSegment {
+	f.t.Helper()
+
+	name := walName(timeline, n)
+	dir := filepath.Join(f.spool.Dir, receivingDir)
+	require.NoError(f.t, os.MkdirAll(dir, 0o700))
+
+	path := filepath.Join(dir, name)
+	require.NoError(f.t, os.WriteFile(path, segmentContent(timeline, n, size), 0o600))
+
+	return &OpenSegment{Name: name, Path: path, Size: int64(size)}
+}
+
+// segmentContent is the first size bytes of segment n of timeline.
+func segmentContent(timeline uint32, n uint64, size int) []byte {
+	content := make([]byte, size)
+	for i := range content {
+		content[i] = byte(i * 7)
+	}
+
+	copy(content, header(timeline, n*segSize, 42))
+
+	return content
+}
+
+// put spools the first size bytes of segment n of timeline under name.
+func (f *walFixture) put(name string, timeline uint32, n uint64, size int) {
+	f.t.Helper()
+
+	require.NoError(f.t, f.spool.put(name, segmentContent(timeline, n, size)))
+}
+
+func (f *walFixture) receive(open *OpenSegment) (*backup.WalkResult, error) {
+	files, err := f.spool.Files()
+	require.NoError(f.t, err)
+
+	b := &WALBackup{
+		Walker:  &backup.Walker{Index: f.index, Objects: f.index, Set: "db-wal", AgentID: "a", Root: f.spool.Dir, Workers: 2},
+		Spool:   f.spool,
+		BaseSet: "db-base",
+		Window:  14 * 24 * time.Hour,
+		Now:     func() time.Time { return f.now },
+		Files:   append([]string{}, files...),
+		Open:    open,
+		Capture: CaptureReplication,
+	}
+
+	return b.Run(f.ctx)
+}
+
+func (f *walFixture) sizes(result *backup.WalkResult) map[string]int64 {
+	f.t.Helper()
+
+	tree, err := backup.LoadTree(f.ctx, f.index, result.Commit.Tree)
+	require.NoError(f.t, err)
+
+	sizes := map[string]int64{}
+	for _, node := range tree.Nodes {
+		sizes[string(node.Stat.Name)] = node.Stat.GetSize()
+	}
+
+	return sizes
+}
+
+func TestTheSegmentBeingReceivedIsCommittedAsPartialUntilItIsWhole(t *testing.T) {
+	f := newWALFixture(t)
+
+	one := f.archive(1, 42)
+
+	result, err := f.receive(f.receiving(1, 2, 1000))
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{one: 41, walName(1, 2) + partialSuffix: 1000}, f.sizes(result))
+	require.Equal(t, map[string]string{
+		MetaFirstWALFile: one,
+		MetaLastWALFile:  one,
+		MetaSystemID:     "42",
+		MetaTimeline:     "1",
+		MetaEndLSN:       FormatLSN(2*segSize + 1000),
+		MetaCapture:      CaptureReplication,
+	}, result.Commit.Metadata)
+
+	result, err = f.receive(f.receiving(1, 2, 300<<10))
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{one: 41, walName(1, 2) + partialSuffix: 300 << 10}, f.sizes(result))
+
+	f.put(walName(1, 2), 1, 2, 400<<10)
+
+	result, err = f.receive(f.receiving(1, 3, 100))
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{one: 41, walName(1, 2): 400 << 10, walName(1, 3) + partialSuffix: 100}, f.sizes(result), "a whole segment replaces its partial one")
+	require.Equal(t, walName(1, 2), result.Commit.Metadata[MetaLastWALFile])
+	require.Equal(t, FormatLSN(3*segSize+100), result.Commit.Metadata[MetaEndLSN])
+
+	dst := filepath.Join(t.TempDir(), "RECOVERYXLOG")
+	require.NoError(t, FetchWAL(f.ctx, f.index, nil, result.Ref, walName(1, 2), dst))
+
+	got, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	require.Equal(t, segmentContent(1, 2, 400<<10), got, "the whole segment, from the parts it shares with its partial versions")
+}
+
+func TestAPartialSegmentThatSkipsOneIsRefused(t *testing.T) {
+	f := newWALFixture(t)
+
+	f.archive(1, 42)
+
+	_, err := f.receive(f.receiving(1, 3, 1000))
+	require.ErrorIs(t, err, ErrGap)
+}
+
+func TestAnOlderTimelinesPartialSegmentStaysBesideTheNewOnes(t *testing.T) {
+	f := newWALFixture(t)
+
+	one := f.archive(1, 42)
+
+	_, err := f.receive(f.receiving(1, 2, 1000))
+	require.NoError(t, err)
+
+	f.put(walName(1, 2)+partialSuffix, 1, 2, 2000)
+	require.NoError(t, f.spool.put("00000002.history", []byte("1\t0/2000800\tno recovery target specified\n")))
+
+	result, err := f.receive(f.receiving(2, 2, 3000))
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{
+		one:                             41,
+		"00000002.history":              41,
+		walName(1, 2) + partialSuffix:   2000,
+		walName(2, 2) + partialSuffix:   3000,
+	}, f.sizes(result))
+	require.Equal(t, "2", result.Commit.Metadata[MetaTimeline])
+	require.Equal(t, FormatLSN(2*segSize+3000), result.Commit.Metadata[MetaEndLSN])
+
+	dst := filepath.Join(t.TempDir(), "RECOVERYXLOG")
+	require.NoError(t, FetchWAL(f.ctx, f.index, nil, result.Ref, walName(2, 2), dst))
+
+	got, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	require.Len(t, got, segSize, "padded to the size its header records")
+	require.Equal(t, segmentContent(2, 2, 3000), got[:3000])
+	require.Equal(t, make([]byte, segSize-3000), got[3000:])
+
+	require.ErrorIs(t, FetchWAL(f.ctx, f.index, nil, result.Ref, walName(1, 2), dst), backup.ErrNotFound, "never an older timeline's partial segment")
 }

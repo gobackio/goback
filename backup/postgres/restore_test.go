@@ -278,3 +278,33 @@ func TestFetchWALStreamsFromAStoreThatServesNoParts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 }
+
+func TestOnlyTheNewestTimelinesLastPartialSegmentIsServed(t *testing.T) {
+	names := []string{walName(1, 1), walName(1, 2) + partialSuffix, "00000002.history", walName(2, 2), walName(2, 3) + partialSuffix}
+
+	require.True(t, servesPartial(names, walName(2, 3)))
+	require.False(t, servesPartial(names, walName(1, 2)), "an older timeline's")
+	require.False(t, servesPartial(names, walName(2, 4)), "none held")
+	require.False(t, servesPartial([]string{walName(1, 2) + partialSuffix, walName(1, 3)}, walName(1, 2)), "older than a whole segment")
+	require.False(t, servesPartial([]string{walName(1, 2) + partialSuffix, "00000002.history"}, walName(1, 2)), "a newer timeline began")
+}
+
+func TestARestoreRefusesABaseThatStopsAfterTheWALSetEnds(t *testing.T) {
+	f := newWALFixture(t)
+
+	_, err := f.runBase(baseTar(t, 42), nil)
+	require.NoError(t, err)
+
+	_, err = f.receive(f.receiving(1, 7, 0x100))
+	require.NoError(t, err)
+
+	_, _, err = f.restore(time.Time{})
+	require.ErrorIs(t, err, ErrNoBase)
+	require.ErrorContains(t, err, "stops at 0/7000120, after the WAL set's end at 0/7000100")
+
+	_, err = f.receive(f.receiving(1, 7, 0x200))
+	require.NoError(t, err)
+
+	_, _, err = f.restore(time.Time{})
+	require.NoError(t, err)
+}

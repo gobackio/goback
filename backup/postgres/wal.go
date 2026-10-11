@@ -29,7 +29,22 @@ const (
 	// holds.
 	MetaFirstWALFile = "pg.first_wal_file"
 	MetaLastWALFile  = "pg.last_wal_file"
+	// MetaEndLSN is where the WAL a WAL commit holds ends, its open
+	// segment included; MetaTimeline then names the timeline it ends on.
+	MetaEndLSN = "pg.end_lsn"
+	// MetaCapture says how a WAL commit's WAL was collected: CaptureArchive
+	// or CaptureReplication.
+	MetaCapture = "pg.capture"
 )
+
+// The values of MetaCapture.
+const (
+	CaptureArchive     = "archive"
+	CaptureReplication = "replication"
+)
+
+// partialSuffix marks a segment Postgres or the receiver did not finish.
+const partialSuffix = ".partial"
 
 // ErrForeignSegment is returned for a WAL segment from another cluster than
 // the set's.
@@ -59,6 +74,35 @@ func walPosition(name string) (string, bool) {
 func isSegment(name string) bool {
 	_, ok := walPosition(name)
 	return ok && len(name) == walNameLen
+}
+
+// isPartial reports whether name is a segment's partial file, and names
+// the segment.
+func isPartial(name string) (string, bool) {
+	segment, ok := strings.CutSuffix(name, partialSuffix)
+	return segment, ok && isSegment(segment)
+}
+
+// segmentNumber is the segment's place in the WAL of every timeline.
+func segmentNumber(name string, segSize uint64) uint64 {
+	log, _ := strconv.ParseUint(name[8:16], 16, 32)
+	seg, _ := strconv.ParseUint(name[16:24], 16, 32)
+
+	return log*(0x100000000/segSize) + seg
+}
+
+// segmentTimeline is the timeline a segment's name places it on.
+func segmentTimeline(name string) uint32 {
+	timeline, _ := strconv.ParseUint(name[:8], 16, 32)
+	return uint32(timeline)
+}
+
+// segmentName names the segment of timeline that holds lsn.
+func segmentName(timeline uint32, lsn, segSize uint64) string {
+	n := lsn / segSize
+	perLog := 0x100000000 / segSize
+
+	return fmt.Sprintf("%08X%08X%08X", timeline, n/perLog, n%perLog)
 }
 
 // Cutoff names the WAL file the WAL set must reach back to: the one the
@@ -146,26 +190,44 @@ func checkSegment(name string, r io.Reader, systemID uint64) (uint64, error) {
 }
 
 // checkContiguous reports a gap between consecutive segments of a
-// timeline. names must be sorted; segSize is the cluster's segment size.
-func checkContiguous(names []string, segSize uint64) error {
-	perLog := uint64(0x100000000) / segSize
-
+// timeline, unless a base backup starts in the segment after it, and a
+// timeline's partial segment that is not its only one or skips a segment
+// after its last whole one. names must be sorted; segSize is the cluster's
+// segment size; starts are the segments base backups started in.
+func checkContiguous(names []string, segSize uint64, starts map[string]bool) error {
 	last := make(map[string]uint64)
+	partials := make(map[string]string)
+
 	for _, name := range names {
+		if segment, ok := isPartial(name); ok {
+			timeline := name[:8]
+			if other, ok := partials[timeline]; ok {
+				return fmt.Errorf("%w: %s%s and %s are both open on timeline %s", ErrGap, other, partialSuffix, name, timeline)
+			}
+
+			partials[timeline] = segment
+
+			continue
+		}
+
 		if !isSegment(name) {
 			continue
 		}
 
-		log, _ := strconv.ParseUint(name[8:16], 16, 32)
-		seg, _ := strconv.ParseUint(name[16:24], 16, 32)
-		n := log*perLog + seg
+		n := segmentNumber(name, segSize)
 
 		timeline := name[:8]
-		if prev, ok := last[timeline]; ok && n != prev+1 {
+		if prev, ok := last[timeline]; ok && n != prev+1 && !starts[name] {
 			return fmt.Errorf("%w: %s follows segment %d of timeline %s", ErrGap, name, prev, timeline)
 		}
 
 		last[timeline] = n
+	}
+
+	for timeline, segment := range partials {
+		if prev, ok := last[timeline]; ok && segmentNumber(segment, segSize) > prev+1 && !starts[segment] {
+			return fmt.Errorf("%w: %s%s follows segment %d of timeline %s", ErrGap, segment, partialSuffix, prev, timeline)
+		}
 	}
 
 	return nil

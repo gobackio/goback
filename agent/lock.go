@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/gobackio/goback/backup/lockfile"
 )
 
 // ErrLocked is returned by Lock when another agent holds the state dir.
@@ -18,18 +20,10 @@ func Lock(dir string) (func(), error) {
 		return nil, err
 	}
 
-	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := lockFile(f); err != nil {
-		_ = f.Close()
+	unlock, err := lockfile.Lock(filepath.Join(dir, "lock"))
+	if errors.Is(err, lockfile.ErrLocked) {
 		return nil, fmt.Errorf("%w: %s", ErrLocked, dir)
 	}
 
-	return func() {
-		_ = unlockFile(f)
-		_ = f.Close()
-	}, nil
+	return unlock, err
 }

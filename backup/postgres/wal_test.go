@@ -84,12 +84,46 @@ func TestAGapInATimelineIsFound(t *testing.T) {
 		"00000002.history",
 		"000000020000000100000000.partial",
 		"000000020000000100000001",
-	}, segSize))
+	}, segSize, nil))
 
 	require.ErrorIs(t, checkContiguous([]string{
 		"0000000100000000000000FE",
 		"000000010000000100000000",
-	}, segSize), ErrGap)
+	}, segSize, nil), ErrGap)
+}
+
+func TestAGapIsAcceptedWhereABaseBackupStarts(t *testing.T) {
+	names := []string{"0000000100000000000000FE", "000000010000000100000002", "000000010000000100000003"}
+
+	require.ErrorIs(t, checkContiguous(names, segSize, nil), ErrGap)
+	require.NoError(t, checkContiguous(names, segSize, map[string]bool{"000000010000000100000002": true}))
+}
+
+func TestATimelineHoldsOnePartialSegmentAfterItsLastWholeOne(t *testing.T) {
+	require.NoError(t, checkContiguous([]string{
+		"000000010000000000000001",
+		"000000010000000000000002",
+		"000000010000000000000003.partial",
+		"000000020000000000000003.partial",
+	}, segSize, nil))
+
+	require.ErrorIs(t, checkContiguous([]string{
+		"000000010000000000000001",
+		"000000010000000000000003.partial",
+	}, segSize, nil), ErrGap, "a partial that skips a segment")
+
+	require.ErrorIs(t, checkContiguous([]string{
+		"000000010000000000000001",
+		"000000010000000000000002.partial",
+		"000000010000000000000003.partial",
+	}, segSize, nil), ErrGap, "two partials on one timeline")
+}
+
+func TestSegmentNamesAndNumbers(t *testing.T) {
+	name := segmentName(2, uint64(1)<<32|3*segSize+100, segSize)
+	require.Equal(t, "000000020000000100000003", name)
+	require.Equal(t, uint32(2), segmentTimeline(name))
+	require.Equal(t, (uint64(1)<<32|3*segSize)/segSize, segmentNumber(name, segSize))
 }
 
 func TestLSNsReadAsPostgresPrintsThem(t *testing.T) {

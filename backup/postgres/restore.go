@@ -98,6 +98,9 @@ type walCommit struct {
 	commit   *proto.Commit
 	systemID uint64
 	first    string
+	// end is where its WAL ends, its partial segment included; zero when
+	// it doesn't say.
+	end uint64
 }
 
 func (r *Restore) wal(ctx context.Context) (*proto.Ref, *walCommit, error) {
@@ -124,11 +127,20 @@ func (r *Restore) wal(ctx context.Context) (*proto.Ref, *walCommit, error) {
 		return nil, nil, err
 	}
 
-	return ref, &walCommit{commit: commit, systemID: systemID, first: commit.GetMetadata()[MetaFirstWALFile]}, nil
+	wal := &walCommit{commit: commit, systemID: systemID, first: commit.GetMetadata()[MetaFirstWALFile]}
+
+	if end, ok := commit.GetMetadata()[MetaEndLSN]; ok {
+		if wal.end, err = ParseLSN(end); err != nil {
+			return nil, nil, fmt.Errorf("the WAL commit's end: %w", err)
+		}
+	}
+
+	return ref, wal, nil
 }
 
 // chooseBase picks the newest base backup of the WAL set's cluster that
-// ended before At and whose WAL from its start on the WAL commit holds.
+// ended before At and whose WAL from its start to its stop the WAL commit
+// holds.
 func (r *Restore) chooseBase(ctx context.Context, wal *walCommit) (*proto.Ref, *proto.Commit, error) {
 	ref, err := r.Latest(ctx, r.BaseSet)
 	if errors.Is(err, backup.ErrNotFound) {
@@ -192,6 +204,12 @@ func (r *Restore) unusable(base *proto.Commit, wal *walCommit) string {
 
 	if !Carry(wal.first)(start) {
 		return fmt.Sprintf("starts in %s, before the WAL set's first file %s", start, wal.first)
+	}
+
+	// recovery reads a segment from the WAL set before the base's own
+	// copy, and a padded partial one ends where the WAL set does
+	if stop, err := ParseLSN(base.GetMetadata()[MetaStopLSN]); err == nil && wal.end != 0 && stop > wal.end {
+		return fmt.Sprintf("stops at %s, after the WAL set's end at %s", FormatLSN(stop), FormatLSN(wal.end))
 	}
 
 	return ""
@@ -358,9 +376,10 @@ func confString(s string) string {
 }
 
 // FetchWAL writes the file name of the WAL commit at ref to dst, as
-// restore_command does with %f and %p. It returns backup.ErrNotFound for a
-// file the commit does not hold, which Postgres asks for as a matter of
-// course.
+// restore_command does with %f and %p. A segment the commit holds only as
+// the newest timeline's partial segment is written padded with zeros to
+// its full size. It returns backup.ErrNotFound for a file the commit does
+// not hold, which Postgres asks for as a matter of course.
 func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key, ref *proto.Ref, name, dst string) error {
 	obj, err := objects.Get(ctx, ref)
 	if err != nil {
@@ -377,13 +396,93 @@ func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key
 		return err
 	}
 
-	i := slices.IndexFunc(tree.Nodes, func(n *proto.TreeNode) bool { return string(n.Stat.Name) == name })
+	names := make([]string, len(tree.Nodes))
+	for i, node := range tree.Nodes {
+		names[i] = string(node.Stat.Name)
+	}
+
+	pad := false
+
+	i := slices.Index(names, name)
+	if i < 0 && servesPartial(names, name) {
+		i, pad = slices.Index(names, name+partialSuffix), true
+	}
+
 	if i < 0 {
 		return fmt.Errorf("%w: %s", backup.ErrNotFound, name)
 	}
 
 	restorer := &backup.Restorer{Store: objects, Key: key}
-	_, err = restorer.RestoreFile(ctx, dst, tree.Nodes[i].Stat, tree.Nodes[i].Ref)
+	if _, err := restorer.RestoreFile(ctx, dst, tree.Nodes[i].Stat, tree.Nodes[i].Ref); err != nil {
+		return err
+	}
 
-	return err
+	if pad {
+		return padSegment(dst)
+	}
+
+	return nil
+}
+
+// servesPartial reports whether a commit holding names serves segment from
+// its partial file: one of the newest timeline, newer than every whole
+// segment of it. An older timeline's partial segment ends where the next
+// timeline's first segment goes on, and recovery reads that instead.
+func servesPartial(names []string, segment string) bool {
+	if !isSegment(segment) || !slices.Contains(names, segment+partialSuffix) {
+		return false
+	}
+
+	newest := uint32(0)
+	for _, name := range names {
+		if len(name) >= 8 && (isSegment(name) || strings.HasSuffix(name, partialSuffix) || strings.HasSuffix(name, ".history")) {
+			if t, err := strconv.ParseUint(name[:8], 16, 32); err == nil {
+				newest = max(newest, uint32(t))
+			}
+		}
+	}
+
+	timeline := segment[:8]
+	if segmentTimeline(segment) != newest {
+		return false
+	}
+
+	for _, name := range names {
+		if isSegment(name) && name[:8] == timeline && name[8:] > segment[8:] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// padSegment extends the partial segment at path with zeros to the size
+// its header records: outside standby mode Postgres refuses a restored
+// segment of any other size.
+func padSegment(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+
+	hdr, err := readSegmentHeader(f)
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+
+	if info.Size() < int64(hdr.segSize) {
+		if err := f.Truncate(int64(hdr.segSize)); err != nil {
+			_ = f.Close()
+			return err
+		}
+	}
+
+	return f.Close()
 }
