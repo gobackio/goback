@@ -1,0 +1,106 @@
+name: goback-mysql
+
+services:
+  # copies goback into the volume the MySQL container runs it from, on every
+  # `docker compose up`
+  goback-bin:
+    image: goback
+    build: ../..
+    entrypoint:
+      - sh
+      - -c
+      - cp /root/binary /opt/goback/goback && mkdir -p /var/lib/goback && chown -R 999:999 /var/lib/goback
+    volumes:
+      - goback-bin:/opt/goback
+      - goback:/var/lib/goback
+
+  mysql:
+    image: mysql:8.0
+    # tini as PID 1 reaps what the dump job leaves behind
+    init: true
+    depends_on:
+      goback-bin:
+        condition: service_completed_successfully
+    command:
+      - --server-id=1
+      - --log-bin=binlog
+      - --binlog-format=ROW
+      - --sync-binlog=1
+      - --binlog-expire-logs-seconds=604800
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql-root-password
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-credentials
+      GOBACK_MYSQL_DEFAULTS_EXTRA_FILE: /run/secrets/mysql-client.cnf
+    secrets:
+      - goback-key
+      - gcp-credentials
+      - mysql-root-password
+      - mysql-client.cnf
+    volumes:
+      - mysqldata:/var/lib/mysql
+      - goback-bin:/opt/goback:ro
+      - goback:/var/lib/goback
+    # Ofelia runs the dump in this container, for its mysqldump; job names are
+    # host-wide
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-exec.mysql-dump.schedule: "@daily"
+      ofelia.job-exec.mysql-dump.user: mysql
+      ofelia.job-exec.mysql-dump.no-overlap: "true"
+      ofelia.job-exec.mysql-dump.command: /opt/goback/goback --storage gcs://BUCKET --index /var/lib/goback/index --store-key /run/secrets/goback-key --agent-id db --set db-dump mysql dump --binlog-set db-binlog
+
+  # receives the binlogs as a replica over the network, without the data volume
+  goback-receive:
+    image: goback
+    depends_on:
+      goback-bin:
+        condition: service_completed_successfully
+      mysql:
+        condition: service_started
+    restart: unless-stopped
+    # above --shutdown-grace, so the last commit finishes
+    stop_grace_period: 40s
+    command:
+      - --storage=gcs://BUCKET
+      - --index=/var/lib/goback/index
+      - --store-key=/run/secrets/goback-key
+      - --agent-id=db
+      - --set=db-binlog
+      - mysql
+      - receive
+      - --dump-set=db-dump
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-credentials
+      GOBACK_MYSQL_DEFAULTS_EXTRA_FILE: /run/secrets/mysql-client.cnf
+      GOBACK_MYSQL_SPOOL: /var/lib/goback/spool
+      GOBACK_CACHE_DIR: /var/lib/goback/cache
+    secrets:
+      - goback-key
+      - gcp-credentials
+      - mysql-client.cnf
+    volumes:
+      - goback-receive:/var/lib/goback
+
+  ofelia:
+    image: mcuadros/ofelia:latest
+    depends_on:
+      - mysql
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+secrets:
+  goback-key:
+    file: ./goback.key
+  gcp-credentials:
+    file: ./gcp-credentials.json
+  mysql-root-password:
+    file: ./mysql-root-password
+  mysql-client.cnf:
+    file: ./mysql-client.cnf
+
+volumes:
+  mysqldata:
+  goback-bin:
+  goback:
+  goback-receive:
