@@ -317,7 +317,11 @@ func (b *Backup) CheckDatabase(ctx context.Context) []string {
 
 	p := b.Postgres
 
-	return postgres.Check(ctx, p.DBName, p.slot(b), p.AllowUncappedSlot || !p.PITR)
+	if !p.PITR {
+		return postgres.Check(ctx, p.DBName, "", false)
+	}
+
+	return postgres.Check(ctx, p.DBName, p.slot(b), p.AllowUncappedSlot)
 }
 
 // holdsPassword reports whether a libpq connection string, as key=value

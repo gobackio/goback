@@ -207,9 +207,10 @@ func (m *monitor) checkAsync(ctx context.Context, pid uint32, flush uint64) erro
 
 // Check connects to the cluster at connString as the receiver and the
 // base backups do, and lists what it lacks for replication capture: a
-// supported version, the role's REPLICATION attribute, a capped slot
-// unless allowUncapped, a free slot, and pg_hba.conf entries for both
-// connections. An empty list means nothing is missing.
+// supported version, the role's REPLICATION attribute, pg_hba.conf entries
+// for both connections and, unless slot is empty because nothing streams,
+// a capped slot unless allowUncapped and a free one. An empty list means
+// nothing is missing.
 func Check(ctx context.Context, connString, slot string, allowUncapped bool) []string {
 	m, err := connectMonitor(ctx, connString, "goback")
 	if err != nil {
@@ -242,7 +243,30 @@ func Check(ctx context.Context, connString, slot string, allowUncapped bool) []s
 		problems = append(problems, fmt.Sprintf("the role %s lacks REPLICATION: ALTER ROLE %s REPLICATION", role, role))
 	}
 
-	if s.keepSize < 0 && !allowUncapped {
+	if slot != "" {
+		problems = append(problems, m.checkSlot(ctx, slot, s.keepSize, allowUncapped)...)
+	}
+
+	conn, err := connectReplication(ctx, connString, "goback")
+	if err != nil {
+		problems = append(problems, err.Error()+"; pg_hba.conf needs a host replication line for the role")
+	} else {
+		conn.Close(context.Background())
+	}
+
+	return problems
+}
+
+func versionString(num int) string {
+	return strconv.Itoa(num/10000) + "." + strconv.Itoa(num%10000)
+}
+
+// checkSlot lists what keeps the receiver from streaming through slot: a
+// cap of keepSize -1 unless allowUncapped, and no free slot to create it in.
+func (m *monitor) checkSlot(ctx context.Context, slot string, keepSize int64, allowUncapped bool) []string {
+	var problems []string
+
+	if keepSize < 0 && !allowUncapped {
 		problems = append(problems, ErrUncappedSlot.Error())
 	}
 
@@ -258,16 +282,5 @@ func Check(ctx context.Context, connString, slot string, allowUncapped bool) []s
 		}
 	}
 
-	conn, err := connectReplication(ctx, connString, "goback")
-	if err != nil {
-		problems = append(problems, err.Error()+"; pg_hba.conf needs a host replication line for the role")
-	} else {
-		conn.Close(context.Background())
-	}
-
 	return problems
-}
-
-func versionString(num int) string {
-	return strconv.Itoa(num/10000) + "." + strconv.Itoa(num%10000)
 }

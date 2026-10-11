@@ -74,6 +74,12 @@ func TestASegmentFromAnotherClusterIsRefused(t *testing.T) {
 
 	_, err = checkSegment("000000010000000100000003", bytes.NewReader(header(1, lsn, 42)), 42)
 	require.Error(t, err, "a segment whose header places it elsewhere")
+
+	_, err = checkSegment("000000020000000100000002", bytes.NewReader(header(1, lsn, 42)), 42)
+	require.NoError(t, err, "a new timeline's first segment, begun on the old one")
+
+	_, err = checkSegment(name, bytes.NewReader(header(2, lsn, 42)), 42)
+	require.Error(t, err, "a header of a later timeline than the name's")
 }
 
 func TestAGapInATimelineIsFound(t *testing.T) {

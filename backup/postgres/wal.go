@@ -181,8 +181,10 @@ func checkSegment(name string, r io.Reader, systemID uint64) (uint64, error) {
 		return 0, fmt.Errorf("%s: no segment size in its header", name)
 	}
 
+	// a new timeline's first segment starts with the old timeline's WAL,
+	// under page headers that name the old timeline
 	want := fmt.Sprintf("%08X%08X%08X", hdr.timeline, hdr.pageAddr>>32, (hdr.pageAddr&0xFFFFFFFF)/uint64(hdr.segSize))
-	if want != name {
+	if want[8:] != name[8:] || hdr.timeline > segmentTimeline(name) {
 		return 0, fmt.Errorf("%s: its header places it at %s", name, want)
 	}
 
