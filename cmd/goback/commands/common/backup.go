@@ -68,31 +68,73 @@ func CloseAll(store backup.ObjectStore, index backup.Index) {
 	}
 }
 
-// StoreKey loads the key file named by the global --store-key flag. Without
-// one, a --passphrase opens the escrowed copy the store keeps. It returns
-// nil when the store is written in the clear.
+// StoreSettings name a store and say how to open it, as the global flags
+// do. The zero value of a size is invalid; Settings fills in the flags'
+// defaults.
+type StoreSettings struct {
+	Storage    string
+	Index      string
+	AgentID    string
+	StoreKey   string
+	Passphrase string
+	AtRestKey  string
+	CacheDir   string
+
+	MetadataCacheSize string
+	BlobCacheSize     string
+}
+
+// Settings reads the StoreSettings from the global flags; the agent id
+// defaults to the hostname.
+func Settings(c *cli.Context) StoreSettings {
+	return StoreSettings{
+		Storage:           c.GlobalString("storage"),
+		Index:             c.GlobalString("index"),
+		AgentID:           AgentID(c),
+		StoreKey:          c.GlobalString("store-key"),
+		Passphrase:        c.GlobalString("passphrase"),
+		AtRestKey:         c.GlobalString("at-rest-key"),
+		CacheDir:          c.GlobalString("cache-dir"),
+		MetadataCacheSize: c.GlobalString("metadata-cache-size"),
+		BlobCacheSize:     c.GlobalString("blob-cache-size"),
+	}
+}
+
+// StoreKey loads the key file named by the global --store-key flag, or
+// exits. Without one, a --passphrase opens the escrowed copy the store
+// keeps. It returns nil when the store is written in the clear.
 func StoreKey(c *cli.Context, store backup.ObjectStore) *storekey.Key {
-	path := c.GlobalString("store-key")
-	if path != "" {
-		key, err := storekey.Load(path)
-		if err != nil {
-			Fatalf("Could not load store key: %v", err)
-		}
-
-		return key
-	}
-
-	passphrase := c.GlobalString("passphrase")
-	if passphrase == "" {
-		return nil
-	}
-
-	key, err := escrowedKey(context.Background(), Unwrap(store), passphrase)
+	key, err := Settings(c).Key(context.Background(), store)
 	if err != nil {
-		Fatalf("Could not open the escrowed store key: %v", err)
+		Fatal(err)
 	}
 
 	return key
+}
+
+// Key loads the StoreKey file. Without one, the Passphrase opens the
+// escrowed copy the store keeps. It returns nil when the store is written
+// in the clear.
+func (s StoreSettings) Key(ctx context.Context, store backup.ObjectStore) (*storekey.Key, error) {
+	if s.StoreKey != "" {
+		key, err := storekey.Load(s.StoreKey)
+		if err != nil {
+			return nil, fmt.Errorf("Could not load store key: %w", err)
+		}
+
+		return key, nil
+	}
+
+	if s.Passphrase == "" {
+		return nil, nil
+	}
+
+	key, err := escrowedKey(ctx, Unwrap(store), s.Passphrase)
+	if err != nil {
+		return nil, fmt.Errorf("Could not open the escrowed store key: %w", err)
+	}
+
+	return key, nil
 }
 
 func escrowedKey(ctx context.Context, store any, passphrase string) (*storekey.Key, error) {
@@ -161,7 +203,7 @@ func makeLocation(u *url.URL) (string, error) {
 	return createFolders(u.Host + u.Path)
 }
 
-func initPack(u *url.URL, c *cli.Context) (backup.ObjectStore, error) {
+func initPack(u *url.URL, s StoreSettings) (backup.ObjectStore, error) {
 	archiveLocation, err := makeLocation(u)
 	if err != nil {
 		return nil, err
@@ -172,12 +214,12 @@ func initPack(u *url.URL, c *cli.Context) (backup.ObjectStore, error) {
 		return nil, err
 	}
 
-	options, err := atRest(c)
+	options, err := s.atRest()
 	if err != nil {
 		return nil, err
 	}
 
-	return withIndex(c, func(x *sql.Index) (*pack.PackStorage, error) {
+	return s.withIndex(func(x *sql.Index) (*pack.PackStorage, error) {
 		return pack.NewPackStorage(append(options,
 			pack.WithArchiveStorage(storage.NewBucketStore(file)),
 			pack.WithArchiveIndex(x),
@@ -196,14 +238,14 @@ var storeIndexes = map[backup.ObjectStore]*sql.Index{}
 
 // withIndex opens the --index location as the archive index of the pack
 // store build makes, and records it for OpenIndex. The store closes it.
-func withIndex(c *cli.Context, build func(*sql.Index) (*pack.PackStorage, error)) (backup.ObjectStore, error) {
-	if c.GlobalString("index") == "" {
+func (s StoreSettings) withIndex(build func(*sql.Index) (*pack.PackStorage, error)) (backup.ObjectStore, error) {
+	if s.Index == "" {
 		return nil, errors.New("--index is required: where this store's index lives, a directory for SQLite or a postgres:// url")
 	}
 
-	u, err := parseLocation(c.GlobalString("index"))
+	u, err := parseLocation(s.Index)
 	if err != nil {
-		return nil, fmt.Errorf("invalid index location %s: %w", c.GlobalString("index"), err)
+		return nil, fmt.Errorf("invalid index location %s: %w", s.Index, err)
 	}
 
 	x, err := openSQL(u)
@@ -230,8 +272,8 @@ func withIndex(c *cli.Context, build func(*sql.Index) (*pack.PackStorage, error)
 
 // atRest is the pack options for the global --at-rest-key flag, none
 // without it.
-func atRest(c *cli.Context) ([]pack.PackOption, error) {
-	path := c.GlobalString("at-rest-key")
+func (s StoreSettings) atRest() ([]pack.PackOption, error) {
+	path := s.AtRestKey
 	if path == "" {
 		return nil, nil
 	}
@@ -248,15 +290,15 @@ func atRest(c *cli.Context) ([]pack.PackOption, error) {
 // query parameter (prefix, endpoint, region, ...) goes to the bucket; the
 // archive index is the --index location and the metadata cache sits under
 // --cache-dir.
-func initGCS(u *url.URL, c *cli.Context) (backup.ObjectStore, error) {
-	return initBucket("gs", u, c)
+func initGCS(u *url.URL, s StoreSettings) (backup.ObjectStore, error) {
+	return initBucket("gs", u, s)
 }
 
-func initS3(u *url.URL, c *cli.Context) (backup.ObjectStore, error) {
-	return initBucket("s3", u, c)
+func initS3(u *url.URL, s StoreSettings) (backup.ObjectStore, error) {
+	return initBucket("s3", u, s)
 }
 
-func initBucket(scheme string, u *url.URL, c *cli.Context) (backup.ObjectStore, error) {
+func initBucket(scheme string, u *url.URL, s StoreSettings) (backup.ObjectStore, error) {
 	query := u.Query()
 	if query.Has("index") {
 		return nil, errors.New("a bucket url takes no index; the --index location is the store's index")
@@ -271,13 +313,18 @@ func initBucket(scheme string, u *url.URL, c *cli.Context) (backup.ObjectStore, 
 		return nil, err
 	}
 
-	options, err := atRest(c)
+	options, err := s.atRest()
 	if err != nil {
 		return nil, err
 	}
 
-	return withIndex(c, func(x *sql.Index) (*pack.PackStorage, error) {
-		return storage.NewBucketObjectStore(bucket, x, StoreCache(c, "metadata"), MetadataCacheSize(c), append(options, pack.WithOwned(x))...)
+	return s.withIndex(func(x *sql.Index) (*pack.PackStorage, error) {
+		limit, err := s.MetadataCacheLimit()
+		if err != nil {
+			return nil, unwrapped{err}
+		}
+
+		return storage.NewBucketObjectStore(bucket, x, s.StoreCache("metadata"), limit, append(options, pack.WithOwned(x))...)
 	})
 }
 
@@ -351,7 +398,7 @@ func remoteKey(u *url.URL) (string, error) {
 	return strings.TrimSpace(string(key)), nil
 }
 
-func initRemote(u *url.URL, c *cli.Context) (backup.ObjectStore, error) {
+func initRemote(u *url.URL, s StoreSettings) (backup.ObjectStore, error) {
 	if err := checkRemoteParams(u); err != nil {
 		return nil, err
 	}
@@ -364,7 +411,7 @@ func initRemote(u *url.URL, c *cli.Context) (backup.ObjectStore, error) {
 	}
 
 	ca := u.Query().Get("ca")
-	creds := auth.Credentials{Secret: key, AgentID: AgentID(c)}
+	creds := auth.Credentials{Secret: key, AgentID: s.AgentID}
 
 	if u.Scheme == insecureScheme {
 		if ca != "" {
@@ -388,7 +435,7 @@ func initRemote(u *url.URL, c *cli.Context) (backup.ObjectStore, error) {
 // initSQL opens the index at the --index location: a directory (with or
 // without a sqlite:// or file:// scheme) holds an SQLite database and
 // postgres:// names a database server.
-func initSQL(u *url.URL, c *cli.Context, store backup.ObjectStore) (backup.Index, error) {
+func initSQL(u *url.URL, store backup.ObjectStore) (backup.Index, error) {
 	x, err := openSQL(u)
 	if err != nil {
 		return nil, err
@@ -430,7 +477,7 @@ func indexDialect(scheme string) string {
 	}
 }
 
-var storageDrivers = map[string]func(*url.URL, *cli.Context) (backup.ObjectStore, error){
+var storageDrivers = map[string]func(*url.URL, StoreSettings) (backup.ObjectStore, error){
 	"":                initPack,
 	"gcs":             initGCS,
 	"gs":              initGCS,
@@ -439,7 +486,7 @@ var storageDrivers = map[string]func(*url.URL, *cli.Context) (backup.ObjectStore
 	"goback+insecure": initRemote,
 }
 
-var indexDrivers = map[string]func(*url.URL, *cli.Context, backup.ObjectStore) (backup.Index, error){
+var indexDrivers = map[string]func(*url.URL, backup.ObjectStore) (backup.Index, error){
 	"":           initSQL,
 	"file":       initSQL,
 	"sqlite":     initSQL,
@@ -492,81 +539,104 @@ func Salvage(c *cli.Context, restorer *backup.Restorer) {
 	}
 }
 
+// unwrapped marks a driver error OpenStore reports as it is, without
+// naming the driver.
+type unwrapped struct{ error }
+
 // GetObjectStore opens the store the global --storage location names, or
 // exits.
 func GetObjectStore(c *cli.Context) backup.ObjectStore {
-	location := c.GlobalString("storage")
-	if location == "" {
-		Fatalf("--storage is required: where the objects live")
+	store, err := Settings(c).OpenStore()
+	if err != nil {
+		Fatal(err)
 	}
 
-	u, err := parseLocation(location)
+	return store
+}
+
+// OpenStore opens the store the Storage location names.
+func (s StoreSettings) OpenStore() (backup.ObjectStore, error) {
+	if s.Storage == "" {
+		return nil, errors.New("--storage is required: where the objects live")
+	}
+
+	u, err := parseLocation(s.Storage)
+	if err != nil {
+		return nil, fmt.Errorf("Invalid storage location %s: %w", s.Storage, err)
+	}
+
+	driver, ok := storageDrivers[u.Scheme]
+	if !ok {
+		return nil, fmt.Errorf("No driver for storage location %s", u.String())
+	}
+
+	store, err := driver(u, s)
+	if plain := (unwrapped{}); errors.As(err, &plain) {
+		return nil, plain.error
+	}
 
 	if err != nil {
-		Fatalf("Invalid storage location %s: %v", location, err)
+		return nil, fmt.Errorf("Could not initialise storage driver %s: %w", u.Scheme, err)
 	}
 
-	if driver, ok := storageDrivers[u.Scheme]; ok {
-		store, err := driver(u, c)
-		if err != nil {
-			Fatalf("Could not initialise storage driver %s: %v", u.Scheme, err)
+	if op, ok := store.(Opener); ok {
+		if err := op.Open(); err != nil {
+			return nil, fmt.Errorf("Could not open object store %s: %w", u.Scheme, err)
 		}
-
-		if op, ok := store.(Opener); ok {
-			err := op.Open()
-			if err != nil {
-				Fatalf("Could not open object store %s: %v", u.Scheme, err)
-			}
-		}
-
-		return store
 	}
 
-	Fatalf("No driver for storage location %s", u.String())
-	return nil
+	return store, nil
 }
 
 // OpenIndex opens the index the --index location names, or the store
-// itself when it is one.
+// itself when it is one, or exits.
 func OpenIndex(c *cli.Context, store backup.ObjectStore) backup.Index {
+	idx, err := Settings(c).OpenIndex(store)
+	if err != nil {
+		Fatal(err)
+	}
+
+	return idx
+}
+
+// OpenIndex opens the index of store: the one OpenStore opened with it,
+// the store itself when it is one, else the one the Index location names.
+func (s StoreSettings) OpenIndex(store backup.ObjectStore) (backup.Index, error) {
 	if x, ok := storeIndexes[store]; ok {
-		return x
+		return x, nil
 	}
 
 	if idx, ok := store.(backup.Index); ok {
 		log.Println("Store implements index")
-		return idx
+		return idx, nil
 	}
 
-	location := c.GlobalString("index")
-	if location == "" {
-		Fatalf("--index is required: where the store's index lives")
+	if s.Index == "" {
+		return nil, errors.New("--index is required: where the store's index lives")
 	}
 
-	u, err := parseLocation(location)
-
+	u, err := parseLocation(s.Index)
 	if err != nil {
-		Fatalf("Invalid index location %s: %v", location, err)
+		return nil, fmt.Errorf("Invalid index location %s: %w", s.Index, err)
 	}
 
 	log.Printf("Loading %s index driver", u.Scheme)
 
-	if driver, ok := indexDrivers[u.Scheme]; ok {
-		idx, err := driver(u, c, store)
-		if err != nil {
-			Fatalf("Could not initialise index driver %s: %v", u.Scheme, err)
-		}
-
-		err = idx.Open()
-		if err != nil {
-			Fatalf("Could not open object index %s: %v", u.Scheme, err)
-		}
-
-		return idx
+	driver, ok := indexDrivers[u.Scheme]
+	if !ok {
+		return nil, fmt.Errorf("No driver for storage location %s", u.String())
 	}
 
-	Fatalf("No driver for storage location %s", u.String())
-	return nil
+	idx, err := driver(u, store)
+	if err != nil {
+		return nil, fmt.Errorf("Could not initialise index driver %s: %w", u.Scheme, err)
+	}
+
+	if err := idx.Open(); err != nil {
+		return nil, fmt.Errorf("Could not open object index %s: %w", u.Scheme, err)
+	}
+
+	return idx, nil
 }
 
 func ptr[T any](v T) *T {

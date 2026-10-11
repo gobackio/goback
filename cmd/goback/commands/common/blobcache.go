@@ -1,40 +1,51 @@
 package common
 
 import (
+	"fmt"
 	"log"
 	"path/filepath"
 
 	"github.com/gobackio/goback/backup/blobcache"
 	"github.com/gobackio/goback/backup/storekey"
 
-	"github.com/dustin/go-humanize"
 	"github.com/urfave/cli"
 )
 
 // BlobCache opens the blob cache under --cache-dir for the store the
-// command works against, or returns nil when --cache-dir is unset.
+// command works against, or exits. It returns nil when --cache-dir is
+// unset.
 func BlobCache(c *cli.Context, key *storekey.Key) *blobcache.Cache {
-	dir := c.GlobalString("cache-dir")
-	if dir == "" {
-		return nil
-	}
-
-	limit, err := humanize.ParseBytes(c.GlobalString("blob-cache-size"))
+	cache, err := Settings(c).BlobCache(key)
 	if err != nil {
-		Fatalf("invalid --blob-cache-size: %v", err)
+		Fatal(err)
 	}
 
-	storeID := storageID(c)
+	return cache
+}
+
+// BlobCache opens the blob cache under CacheDir for the store, keyed by
+// key when the store is sealed. It returns nil when CacheDir is unset.
+func (s StoreSettings) BlobCache(key *storekey.Key) (*blobcache.Cache, error) {
+	if s.CacheDir == "" {
+		return nil, nil
+	}
+
+	limit, err := s.BlobCacheLimit()
+	if err != nil {
+		return nil, err
+	}
+
+	storeID := s.storageID()
 	if key != nil {
 		storeID = key.IDString()
 	}
 
-	cache, err := blobcache.Open(filepath.Join(dir, "blobs"), storeID, int64(limit))
+	cache, err := blobcache.Open(filepath.Join(s.CacheDir, "blobs"), storeID, limit)
 	if err != nil {
-		Fatalf("opening blob cache: %v", err)
+		return nil, fmt.Errorf("opening blob cache: %w", err)
 	}
 
-	return cache
+	return cache, nil
 }
 
 // SweepBlobCache trims the cache to its size limit and logs the result.

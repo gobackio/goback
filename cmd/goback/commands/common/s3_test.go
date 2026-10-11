@@ -3,7 +3,6 @@ package common
 import (
 	"bytes"
 	"context"
-	"flag"
 	"io"
 	"path/filepath"
 	"testing"
@@ -12,7 +11,6 @@ import (
 	"github.com/gobackio/goback/testing/tests3"
 
 	"github.com/stretchr/testify/require"
-	"github.com/urfave/cli"
 )
 
 func TestAnS3StoreKeepsItsArchivesInTheIndexAndCachesUnderTheCacheDir(t *testing.T) {
@@ -20,12 +18,7 @@ func TestAnS3StoreKeepsItsArchivesInTheIndexAndCachesUnderTheCacheDir(t *testing
 	u := parse(t, location)
 	cacheDir := t.TempDir()
 
-	global := flag.NewFlagSet("goback", flag.ContinueOnError)
-	global.String("index", t.TempDir(), "")
-	global.String("storage", location, "")
-	global.String("cache-dir", cacheDir, "")
-
-	store, err := initS3(u, cli.NewContext(nil, flag.NewFlagSet("s3", flag.ContinueOnError), cli.NewContext(nil, global, nil)))
+	store, err := initS3(u, StoreSettings{Index: t.TempDir(), Storage: location, CacheDir: cacheDir})
 	require.NoError(t, err)
 	require.Contains(t, storeIndexes, store)
 	t.Cleanup(func() { CloseStore(store) })
@@ -49,9 +42,6 @@ func TestAnS3StoreKeepsItsArchivesInTheIndexAndCachesUnderTheCacheDir(t *testing
 }
 
 func TestABucketURLTakesNoCache(t *testing.T) {
-	global := flag.NewFlagSet("goback", flag.ContinueOnError)
-	global.String("index", t.TempDir(), "")
-
-	_, err := initS3(parse(t, "s3://bucket?cache="+t.TempDir()), cli.NewContext(nil, flag.NewFlagSet("s3", flag.ContinueOnError), cli.NewContext(nil, global, nil)))
+	_, err := initS3(parse(t, "s3://bucket?cache="+t.TempDir()), StoreSettings{Index: t.TempDir()})
 	require.ErrorContains(t, err, "--cache-dir")
 }
