@@ -4,66 +4,19 @@ import (
 	"context"
 	"errors"
 	"log"
-	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime"
 	"time"
 
 	"github.com/gobackio/goback/backup"
-	"github.com/gobackio/goback/backup/hooks"
-	"github.com/gobackio/goback/backup/statcache"
+	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
-	"github.com/gobackio/goback/storage/badger"
-	"github.com/gobackio/goback/storage/cache"
 
-	"github.com/bmatcuk/doublestar"
-	"github.com/dustin/go-humanize"
 	"github.com/urfave/cli"
 )
 
-// includeFilter applies the include and exclude patterns to a path relative
-// to the backup root, written with a leading slash.
-func includeFilter(includes, excludes []string) func(string) bool {
-	match := func(patterns []string, name string) bool {
-		for _, pat := range patterns {
-			ok, err := doublestar.Match(pat, name)
-			if err != nil {
-				log.Printf("Malformed pattern: \"%s\" %v", pat, err)
-			}
-
-			if ok {
-				return true
-			}
-		}
-
-		return false
-	}
-
-	return func(rel string) bool {
-		name := "/" + rel
-
-		if match(includes, name) {
-			return true
-		}
-
-		return !match(excludes, name)
-	}
-}
-
 // errDirty marks a run that committed but recorded torn or unreadable files.
 var errDirty = errors.New("some files were torn or unreadable")
-
-// logProgress reports what a walk has covered so far. The files it has
-// covered are not a share of anything yet, because the walk only learns
-// what a directory holds once it reads it.
-func logProgress(started time.Time) func(backup.WalkResult) {
-	return func(r backup.WalkResult) {
-		log.Printf("%s elapsed: %d files (%s) covered, %d read, %d reused, %s uploaded",
-			time.Since(started).Round(time.Second), r.Files, humanize.Bytes(uint64(r.Bytes)),
-			r.Read, r.Reused, humanize.Bytes(uint64(r.Uploaded)))
-	}
-}
 
 func newAction(c *cli.Context) {
 	err := runNew(c)
@@ -77,82 +30,43 @@ func newAction(c *cli.Context) {
 }
 
 func runNew(c *cli.Context) error {
-	base := "."
+	dir := "."
 	if c.Args().Present() {
-		base = c.Args().First()
+		dir = c.Args().First()
 	}
 
-	root, err := filepath.Abs(base)
-	if err != nil {
-		return err
-	}
-
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	env := common.Env(c)
 
 	defer func() {
-		common.CloseAll(store, index)
+		common.CloseAll(env.Store, env.Index)
 	}()
 
-	objects := backup.ObjectStore(index)
+	if cacheDir := common.StoreCache(c, "backup"); cacheDir != "" {
+		stats, err := job.OpenStatCache(cacheDir, env.Logger)
+		if err != nil {
+			return err
+		}
 
-	var stats *statcache.Cache
-	if dir := common.StoreCache(c, "backup"); dir != "" {
-		stats, err = statcache.Open(filepath.Join(dir, "stat"))
-		switch {
-		case errors.Is(err, statcache.ErrLocked):
-			slog.Warn("running without the stat cache, which another goback process has open", "dir", dir)
-		case err != nil:
-			return errors.Join(errors.New("opening stat cache"), err)
-		default:
+		if stats != nil {
 			defer stats.Close()
+
+			env.StatCache = stats
 		}
 
-		treeCache, err := badger.New(filepath.Join(dir, "objects"))
-		switch {
-		case errors.Is(err, badger.ErrLocked):
-			slog.Warn("running without the object cache, which another goback process has open", "dir", dir)
-		case err != nil:
-			return errors.Join(errors.New("opening object cache"), err)
-		default:
-			defer treeCache.Close()
-
-			objects = cache.New(cache.InStore(treeCache), index)
+		objects, err := job.OpenObjectCache(cacheDir, env.Logger)
+		if err != nil {
+			return err
 		}
-	}
 
-	sessions, _ := store.(backup.SessionStore)
+		if objects != nil {
+			defer objects.Close()
 
-	walker := &backup.Walker{
-		Index:              index,
-		Objects:            objects,
-		Sessions:           sessions,
-		Set:                c.GlobalString("set"),
-		AgentID:            common.AgentID(c),
-		Metadata:           common.Metadata(c),
-		Key:                common.StoreKey(c, store),
-		Root:               root,
-		Include:            includeFilter(c.StringSlice("include"), c.StringSlice("exclude")),
-		Workers:            c.Int("workers"),
-		ForceHashPercent:   c.Int("force-hash"),
-		CheckpointInterval: c.Duration("checkpoint-interval"),
-		ReadRetries:        c.Int("read-retries"),
-		LostRetries:        c.Int("lost-retries"),
-		PrefetchDepth:      2,
-		ProgressInterval:   c.Duration("progress-interval"),
-		ScanWorkers:        c.Int("scan-workers"),
-	}
-
-	if walker.ProgressInterval >= 0 {
-		walker.Progress = logProgress(time.Now())
-	}
-
-	if stats != nil {
-		walker.Cache = stats
+			env.ObjectCache = objects
+		}
 	}
 
 	if c.GlobalBoolT("blob-cache-on-backup") {
-		walker.BlobCache = common.BlobCache(c, walker.Key)
+		env.BlobCache = common.BlobCache(c, env.Key)
 	}
 
 	ctx := common.Context(c)
@@ -162,48 +76,29 @@ func runNew(c *cli.Context) error {
 		defer cancel()
 	}
 
-	runner := &hooks.Runner{
-		Pre:     c.String("pre-hook"),
-		Post:    c.String("post-hook"),
-		Timeout: c.Duration("hook-timeout"),
-	}
-
-	preOut, err := runner.RunPre(ctx)
+	result, err := job.Path(ctx, env, job.PathSettings{
+		Set:                c.GlobalString("set"),
+		Dir:                dir,
+		Include:            c.StringSlice("include"),
+		Exclude:            c.StringSlice("exclude"),
+		Workers:            c.Int("workers"),
+		ForceHash:          c.Int("force-hash"),
+		CheckpointInterval: c.Duration("checkpoint-interval"),
+		ScanWorkers:        c.Int("scan-workers"),
+		ReadRetries:        c.Int("read-retries"),
+		LostRetries:        c.Int("lost-retries"),
+		ProgressInterval:   c.Duration("progress-interval"),
+		Meta:               common.Metadata(c),
+		PreHook:            c.String("pre-hook"),
+		PostHook:           c.String("post-hook"),
+		HookTimeout:        c.Duration("hook-timeout"),
+		HookOptional:       c.Bool("hook-optional"),
+	})
 	if err != nil {
-		if !c.Bool("hook-optional") {
-			// the hook may have quiesced the application before failing
-			if postErr := runner.RunPost(ctx); postErr != nil {
-				log.Println(postErr)
-			}
-
-			return err
-		}
-
-		log.Printf("%v; continuing because --hook-optional is set", err)
+		return err
 	}
 
-	walker.Quiesced = runner.Pre != "" && err == nil
-
-	if dir := hooks.Redirect(preOut); dir != "" {
-		walker.Root, err = filepath.Abs(dir)
-		if err != nil {
-			return err
-		}
-
-		log.Printf("Pre hook redirected the walk to %s", walker.Root)
-	}
-
-	result, walkErr := walker.Run(ctx)
-
-	if err := runner.RunPost(ctx); err != nil {
-		log.Println(err)
-	}
-
-	if walkErr != nil {
-		return walkErr
-	}
-
-	common.SweepBlobCache(walker.BlobCache)
+	common.SweepBlobCache(env.BlobCache)
 
 	common.Result(common.View.Walk(result), func() {
 		log.Printf("Commit %x: %d files, %d reused, %d read, %d checkpoints", result.Ref.Hash, result.Files, result.Reused, result.Read, result.Checkpoints)

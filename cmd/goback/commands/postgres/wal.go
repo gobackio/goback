@@ -1,15 +1,11 @@
 package postgres
 
 import (
-	"fmt"
 	"log"
 	"time"
 
-	"github.com/gobackio/goback/backup"
-	"github.com/gobackio/goback/backup/blobcache"
-	"github.com/gobackio/goback/backup/postgres"
+	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
-	"github.com/gobackio/goback/storage/cache"
 
 	"github.com/urfave/cli"
 )
@@ -18,10 +14,6 @@ var baseSetFlag = cli.StringFlag{
 	Name:  "base-set",
 	Usage: "set the cluster's base backups go to",
 }
-
-// treeCacheSize bounds the commits and trees kept under --cache-dir; the
-// latest commit's are read every run, so they are never the ones let go.
-const treeCacheSize = 256 << 20
 
 var walCmd = cli.Command{
 	Name:  "wal",
@@ -43,53 +35,31 @@ func walAction(c *cli.Context) error {
 		return cli.NewExitError("--set, --spool and --base-set are required", 2)
 	}
 
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	env := common.Env(c)
 
 	defer func() {
-		common.CloseAll(store, index)
+		common.CloseAll(env.Store, env.Index)
 	}()
 
-	sessions, _ := store.(backup.SessionStore)
-	spool := postgres.Spool{Dir: c.String("spool")}
-
-	objects := backup.ObjectStore(index)
-
-	var trees *blobcache.Cache
 	if dir := common.StoreCache(c, "backup"); dir != "" {
 		var err error
-		if trees, err = blobcache.Open(dir, "trees", treeCacheSize); err != nil {
-			return fmt.Errorf("opening the tree cache: %w", err)
+		if env.TreeCache, err = job.OpenTreeCache(dir); err != nil {
+			return err
 		}
-
-		objects = cache.New(trees, index)
 	}
 
-	run := &postgres.WALBackup{
-		Walker: &backup.Walker{
-			Index:       index,
-			Objects:     objects,
-			Sessions:    sessions,
-			Set:         c.GlobalString("set"),
-			AgentID:     common.AgentID(c),
-			Key:         common.StoreKey(c, store),
-			Root:        spool.Dir,
-			Workers:     4,
-			ReadRetries: 3,
-		},
-		Spool:   spool,
+	result, err := job.PostgresWAL(common.Context(c), env, job.PostgresWALSettings{
+		Set:     c.GlobalString("set"),
+		Spool:   c.String("spool"),
 		BaseSet: c.String("base-set"),
 		Window:  c.Duration("window"),
-		Now:     time.Now,
-	}
-
-	result, err := run.Run(common.Context(c))
+	})
 	if err != nil {
 		return err
 	}
 
-	if trees != nil {
-		if _, err := trees.Sweep(); err != nil {
+	if env.TreeCache != nil {
+		if _, err := env.TreeCache.Sweep(); err != nil {
 			log.Printf("sweeping the tree cache: %v", err)
 		}
 	}

@@ -1,12 +1,9 @@
 package postgres
 
 import (
-	"fmt"
 	"log"
-	"os"
-	"os/exec"
 
-	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/postgres"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
@@ -40,65 +37,20 @@ func baseAction(c *cli.Context) error {
 		return cli.NewExitError("--set is required", 2)
 	}
 
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
-
-	defer func() {
-		common.CloseAll(store, index)
-	}()
-
 	// everything that can exit the process comes before pg_basebackup starts:
 	// an orphaned pg_basebackup is reparented to PID 1, which in the Postgres
 	// container is the postmaster, and its death restarts the cluster
-	sessions, _ := store.(backup.SessionStore)
+	env := common.Env(c)
 
-	run := &postgres.BaseBackup{
-		Walker: &backup.Walker{
-			Index:    index,
-			Objects:  index,
-			Sessions: sessions,
-			Set:      c.GlobalString("set"),
-			AgentID:  common.AgentID(c),
-			Key:      common.StoreKey(c, store),
-			Workers:  4,
-		},
-	}
+	defer func() {
+		common.CloseAll(env.Store, env.Index)
+	}()
 
-	ctx := common.Context(c)
-
-	args := []string{"-D", "-", "-Ft", "-X", "fetch", "--checkpoint=fast"}
-	if dbname := c.String("dbname"); dbname != "" {
-		args = append(args, "--dbname", dbname)
-	}
-
-	cmd := exec.CommandContext(ctx, c.String("pg-basebackup"), args...)
-	cmd.Stderr = os.Stderr
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting pg_basebackup: %w", err)
-	}
-
-	waited := false
-	wait := func() error {
-		waited = true
-		if err := cmd.Wait(); err != nil {
-			return fmt.Errorf("pg_basebackup: %w", err)
-		}
-
-		return nil
-	}
-
-	result, err := run.Run(ctx, stdout, wait)
-	if !waited {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	}
-
+	result, err := job.PostgresBase(common.Context(c), env, job.PostgresBaseSettings{
+		Set:          c.GlobalString("set"),
+		DBName:       c.String("dbname"),
+		PGBasebackup: c.String("pg-basebackup"),
+	})
 	if err != nil {
 		return err
 	}

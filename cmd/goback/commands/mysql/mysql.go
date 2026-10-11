@@ -2,6 +2,7 @@
 package mysql
 
 import (
+	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/mysql"
 
 	"github.com/urfave/cli"
@@ -39,6 +40,14 @@ func client(c *cli.Context) *mysql.Exec {
 		Mysqldump:    c.String("mysqldump"),
 		Mysqlbinlog:  c.String("mysqlbinlog"),
 		DefaultsFile: c.String("defaults-extra-file"),
+	}
+}
+
+func jobClient(c *cli.Context) job.MySQLClient {
+	return job.MySQLClient{
+		DefaultsExtraFile: c.String("defaults-extra-file"),
+		Mysql:             c.String("mysql"),
+		Mysqldump:         c.String("mysqldump"),
 	}
 }
 

@@ -1,23 +1,16 @@
 package mysql
 
 import (
-	"fmt"
 	"log"
 	"time"
 
-	"github.com/gobackio/goback/backup"
-	"github.com/gobackio/goback/backup/blobcache"
+	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/mysql"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
-	"github.com/gobackio/goback/storage/cache"
 
 	"github.com/urfave/cli"
 )
-
-// treeCacheSize bounds the commits and trees kept under --cache-dir; the
-// latest commit's are read every run, so they are never the ones let go.
-const treeCacheSize = 256 << 20
 
 var binlogCmd = cli.Command{
 	Name:  "binlog",
@@ -48,52 +41,32 @@ func binlogAction(c *cli.Context) error {
 		return cli.NewExitError("--set and --dump-set are required", 2)
 	}
 
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	env := common.Env(c)
 
 	defer func() {
-		common.CloseAll(store, index)
+		common.CloseAll(env.Store, env.Index)
 	}()
 
-	sessions, _ := store.(backup.SessionStore)
-
-	objects := backup.ObjectStore(index)
-
-	var trees *blobcache.Cache
 	if dir := common.StoreCache(c, "backup"); dir != "" {
 		var err error
-		if trees, err = blobcache.Open(dir, "trees", treeCacheSize); err != nil {
-			return fmt.Errorf("opening the tree cache: %w", err)
+		if env.TreeCache, err = job.OpenTreeCache(dir); err != nil {
+			return err
 		}
-
-		objects = cache.New(trees, index)
 	}
 
-	run := &mysql.BinlogBackup{
-		Walker: &backup.Walker{
-			Index:       index,
-			Objects:     objects,
-			Sessions:    sessions,
-			Set:         c.GlobalString("set"),
-			AgentID:     common.AgentID(c),
-			Key:         common.StoreKey(c, store),
-			Workers:     4,
-			ReadRetries: 3,
-		},
-		Client:  client(c),
-		Dir:     c.String("binlog-dir"),
-		DumpSet: c.String("dump-set"),
-		Window:  c.Duration("window"),
-		Now:     time.Now,
-	}
-
-	result, err := run.Run(common.Context(c))
+	result, err := job.MySQLBinlog(common.Context(c), env, job.MySQLBinlogSettings{
+		Set:       c.GlobalString("set"),
+		Client:    jobClient(c),
+		BinlogDir: c.String("binlog-dir"),
+		DumpSet:   c.String("dump-set"),
+		Window:    c.Duration("window"),
+	})
 	if err != nil {
 		return err
 	}
 
-	if trees != nil {
-		if _, err := trees.Sweep(); err != nil {
+	if env.TreeCache != nil {
+		if _, err := env.TreeCache.Sweep(); err != nil {
 			log.Printf("sweeping the tree cache: %v", err)
 		}
 	}

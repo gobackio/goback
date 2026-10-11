@@ -3,7 +3,7 @@ package mysql
 import (
 	"log"
 
-	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/mysql"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
@@ -34,31 +34,18 @@ func dumpAction(c *cli.Context) error {
 		return cli.NewExitError("--set is required", 2)
 	}
 
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	env := common.Env(c)
 
 	defer func() {
-		common.CloseAll(store, index)
+		common.CloseAll(env.Store, env.Index)
 	}()
 
-	sessions, _ := store.(backup.SessionStore)
-
-	run := &mysql.Dump{
-		Walker: &backup.Walker{
-			Index:    index,
-			Objects:  index,
-			Sessions: sessions,
-			Set:      c.GlobalString("set"),
-			AgentID:  common.AgentID(c),
-			Key:      common.StoreKey(c, store),
-			Workers:  4,
-		},
-		Client:     client(c),
-		BinlogSet:  c.String("binlog-set"),
-		NoPosition: c.Bool("no-binlog-position"),
-	}
-
-	result, err := run.Run(common.Context(c))
+	result, err := job.MySQLDump(common.Context(c), env, job.MySQLDumpSettings{
+		Set:              c.GlobalString("set"),
+		Client:           jobClient(c),
+		BinlogSet:        c.String("binlog-set"),
+		NoBinlogPosition: c.Bool("no-binlog-position"),
+	})
 	if err != nil {
 		return err
 	}
