@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -98,18 +99,26 @@ func runNew(c *cli.Context) error {
 	var stats *statcache.Cache
 	if dir := common.StoreCache(c, "backup"); dir != "" {
 		stats, err = statcache.Open(filepath.Join(dir, "stat"))
-		if err != nil {
+		switch {
+		case errors.Is(err, statcache.ErrLocked):
+			slog.Warn("running without the stat cache, which another goback process has open", "dir", dir)
+		case err != nil:
 			return errors.Join(errors.New("opening stat cache"), err)
+		default:
+			defer stats.Close()
 		}
-		defer stats.Close()
 
 		treeCache, err := badger.New(filepath.Join(dir, "objects"))
-		if err != nil {
+		switch {
+		case errors.Is(err, badger.ErrLocked):
+			slog.Warn("running without the object cache, which another goback process has open", "dir", dir)
+		case err != nil:
 			return errors.Join(errors.New("opening object cache"), err)
-		}
-		defer treeCache.Close()
+		default:
+			defer treeCache.Close()
 
-		objects = cache.New(cache.InStore(treeCache), index)
+			objects = cache.New(cache.InStore(treeCache), index)
+		}
 	}
 
 	sessions, _ := store.(backup.SessionStore)

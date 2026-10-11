@@ -6,7 +6,10 @@ package statcache
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
@@ -33,9 +36,17 @@ type Cache struct {
 
 var _ backup.StatCache = (*Cache)(nil)
 
-// Open opens or creates the cache in dir.
+// ErrLocked is returned by Open when another process has the cache open.
+var ErrLocked = errors.New("another process has the cache open")
+
+// Open opens or creates the cache in dir. It fails with ErrLocked while
+// another process has it open.
 func Open(dir string) (*Cache, error) {
 	db, err := badger.Open(badger.DefaultOptions(dir).WithCompression(options.Snappy).WithLogger(nil))
+	if err != nil && strings.Contains(err.Error(), "Another process is using this Badger database") {
+		return nil, fmt.Errorf("%w: %v", ErrLocked, err)
+	}
+
 	if err != nil {
 		return nil, err
 	}
