@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/storage/pack"
 
@@ -144,4 +145,45 @@ func TestDueRunsEveryJobPastAFailingOne(t *testing.T) {
 	require.Equal(t, 3, ran.Compacted.Candidates, "a failed compaction still reports what it found")
 	require.Equal(t, 2, ran.Retired)
 	require.Len(t, ran.Reindexed, 1, "what the jobs churned is reindexed after them")
+}
+
+type fakeArchives struct {
+	backup.ObjectStore
+	fakeStore
+	fakeCollector
+}
+
+type wrapping struct{ backup.ObjectStore }
+
+func (w wrapping) Unwrap() backup.ObjectStore { return w.ObjectStore }
+
+type fakeIndex struct {
+	backup.Index
+	fakeAttributor
+	fakeReindexer
+	fakeRetirer
+}
+
+func TestNewRunnerFindsTheJobsAndEachReindexesAfter(t *testing.T) {
+	ctx := context.Background()
+	archives, x := &fakeArchives{}, &fakeIndex{}
+
+	r := NewRunner(wrapping{archives}, x, DefaultSchedule)
+	require.NotNil(t, r.Store, "found beneath the wrapping store")
+	require.NotNil(t, r.Collector)
+	require.Nil(t, r.Presence)
+
+	n, err := r.Retire(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.Equal(t, int32(1), x.fakeReindexer.runs.Load())
+
+	_, err = r.Compact(ctx)
+	require.ErrorContains(t, err, "disk full")
+	require.Equal(t, int32(2), x.fakeReindexer.runs.Load(), "a failed compaction may still have churned")
+
+	_, err = Collect(ctx, archives, x, pack.CollectOptions{})
+	require.NoError(t, err)
+	require.Equal(t, int32(1), x.recorded.Load())
+	require.Equal(t, int32(3), x.fakeReindexer.runs.Load())
 }

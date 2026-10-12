@@ -7,14 +7,13 @@ import (
 	"log"
 	"time"
 
-	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
 	"github.com/gobackio/goback/cmd/goback/commands/gc"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/storage/maintenance"
-	"github.com/gobackio/goback/storage/pack"
+	"github.com/gobackio/goback/storage/wrapped"
 
 	"github.com/dustin/go-humanize"
 	"github.com/urfave/cli"
@@ -46,12 +45,15 @@ var Command = cli.Command{
 			Name:  "compact",
 			Usage: "Rewrite small archives into full-sized ones",
 			Action: action(func(m *members) {
-				report, err := m.store().Compact(common.Context(m.c))
+				runner := m.runner(maintenance.DefaultSchedule)
+				if runner.Store == nil {
+					common.Fatalf("storage %s has no archives to maintain", m.c.GlobalString("storage"))
+				}
+
+				report, err := runner.Compact(common.Context(m.c))
 				if err != nil {
 					common.Fatal(err)
 				}
-
-				common.Reindex(m.c, m.index)
 				common.Result(common.View.Compact(report), func() { log.Print(report.Summary()) })
 			}),
 		},
@@ -59,17 +61,15 @@ var Command = cli.Command{
 			Name:  "retire",
 			Usage: "Tombstone every retired commit past its window",
 			Action: action(func(m *members) {
-				retirer, ok := m.index.(backup.Retirer)
-				if !ok {
+				runner := m.runner(maintenance.DefaultSchedule)
+				if runner.Retirer == nil {
 					common.Fatalf("Index %T keeps no retention state", m.index)
 				}
 
-				n, err := retirer.Retire(common.Context(m.c), time.Now())
+				n, err := runner.Retire(common.Context(m.c))
 				if err != nil {
 					common.Fatalf("Retirement failed after %d commits: %v", n, err)
 				}
-
-				common.Reindex(m.c, m.index)
 				common.Result(counted{"retired", n}, func() { log.Printf("Retired %d commits", n) })
 			}),
 		},
@@ -151,17 +151,7 @@ func due(m *members) {
 	schedule := maintenance.DefaultSchedule
 	schedule.Collect = m.c.Duration("gc-interval")
 
-	base := goback.Innermost(m.objects)
-	runner := &maintenance.Runner{Schedule: schedule}
-	runner.Store, _ = base.(maintenance.Store)
-	runner.Collector, _ = base.(pack.Collector)
-	runner.Retirer, _ = m.index.(backup.Retirer)
-	runner.Presence, _ = m.index.(maintenance.Presence)
-	runner.Measurer, _ = m.index.(maintenance.Measurer)
-	runner.Attributor, _ = m.index.(maintenance.Attributor)
-	runner.Reindexer, _ = m.index.(maintenance.Reindexer)
-
-	ran, err := runner.Due(common.Context(m.c))
+	ran, err := m.runner(schedule).Due(common.Context(m.c))
 
 	view := common.View.Maintenance(ran)
 	if ran.Compacted != nil {
@@ -218,8 +208,12 @@ type members struct {
 	index   backup.Index
 }
 
+func (m *members) runner(schedule maintenance.Schedule) *maintenance.Runner {
+	return maintenance.NewRunner(m.objects, m.index, schedule)
+}
+
 func (m *members) store() maintenance.Store {
-	store, ok := goback.Innermost(m.objects).(maintenance.Store)
+	store, ok := wrapped.Innermost(m.objects).(maintenance.Store)
 	if !ok {
 		common.Fatalf("storage %s has no archives to maintain", m.c.GlobalString("storage"))
 	}

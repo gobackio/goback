@@ -6,10 +6,10 @@ import (
 	"os"
 	"sort"
 
-	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
 	"github.com/gobackio/goback/storage/pack"
+	"github.com/gobackio/goback/storage/wrapped"
 
 	"github.com/dustin/go-humanize"
 	"github.com/urfave/cli"
@@ -31,7 +31,7 @@ func scrubAction(c *cli.Context) {
 	repo := common.OpenRepo(c)
 	store := repo.Store
 
-	scrubber, ok := goback.Innermost(store).(Scrubber)
+	scrubber, ok := wrapped.Innermost(store).(Scrubber)
 	if !ok {
 		common.Fatalf("storage %s cannot be scrubbed", c.GlobalString("storage"))
 	}

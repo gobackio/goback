@@ -7,9 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/admin"
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
@@ -21,7 +19,6 @@ import (
 	adminpb "github.com/gobackio/goback/proto/admin"
 	"github.com/gobackio/goback/storage"
 	"github.com/gobackio/goback/storage/maintenance"
-	"github.com/gobackio/goback/storage/pack"
 	"github.com/gobackio/goback/telemetry"
 
 	"github.com/urfave/cli"
@@ -145,31 +142,18 @@ func serverAction(ctx *cli.Context) {
 	probe := &health.Probe{}
 	probe.Register(srv)
 
-	base := goback.Innermost(s)
-	retirer, _ := idx.(backup.Retirer)
-	collector, _ := base.(pack.Collector)
-	attributor, _ := idx.(maintenance.Attributor)
-	runner := &maintenance.Runner{
-		Retirer:    retirer,
-		Collector:  collector,
-		Attributor: attributor,
-		OnCollect:  gc.Log,
-		Schedule: maintenance.Schedule{
-			Sweep:    ctx.Duration("sweep-interval"),
-			Compact:  ctx.Duration("compact-interval"),
-			Collect:  ctx.Duration("gc-interval"),
-			Retire:   ctx.Duration("retire-interval"),
-			Presence: ctx.Duration("presence-interval"),
-		},
-	}
-	runner.Store, _ = base.(maintenance.Store)
-	runner.Presence, _ = idx.(maintenance.Presence)
-	runner.Measurer, _ = idx.(maintenance.Measurer)
-	runner.Reindexer, _ = idx.(maintenance.Reindexer)
+	runner := maintenance.NewRunner(s, idx, maintenance.Schedule{
+		Sweep:    ctx.Duration("sweep-interval"),
+		Compact:  ctx.Duration("compact-interval"),
+		Collect:  ctx.Duration("gc-interval"),
+		Retire:   ctx.Duration("retire-interval"),
+		Presence: ctx.Duration("presence-interval"),
+	})
+	runner.OnCollect = gc.Log
 	go runner.Run(context.Background())
 
 	if x, ok := idx.(*sql.Index); ok {
-		adminpb.RegisterAdminServer(srv, adminServer(x, retirer, collector))
+		adminpb.RegisterAdminServer(srv, adminServer(x, runner))
 	} else {
 		log.Printf("Index %T keeps no sets or policy; the server serves no Admin service", idx)
 	}
@@ -202,33 +186,20 @@ func sharedSecret(ctx *cli.Context) (string, error) {
 	return secret, nil
 }
 
-// adminServer is the Admin service over the index and the store's jobs.
-func adminServer(x *sql.Index, retirer backup.Retirer, collector pack.Collector) *admin.Server {
+// adminServer is the Admin service over the index and the runner's jobs.
+func adminServer(x *sql.Index, runner *maintenance.Runner) *admin.Server {
 	server := &admin.Server{Index: x, Escrow: x}
 
-	if retirer != nil {
-		server.RetireJob = func(ctx context.Context) (int, error) {
-			n, err := retirer.Retire(ctx, time.Now())
-			if err != nil {
-				return n, err
-			}
-
-			_, err = x.ReindexChurned(ctx)
-
-			return n, err
-		}
+	if runner.Retirer != nil {
+		server.RetireJob = runner.Retire
 	}
 
-	if collector != nil {
+	if runner.Collector != nil {
 		server.CollectJob = func(ctx context.Context) (string, error) {
-			report, err := maintenance.Collect(ctx, collector, x, pack.CollectOptions{})
-			if err != nil {
+			report, err := runner.Collect(ctx)
+			if report == nil {
 				return "", err
 			}
-
-			gc.Log(report)
-
-			_, err = x.ReindexChurned(ctx)
 
 			return report.Summary(), err
 		}

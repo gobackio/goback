@@ -12,6 +12,7 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/storage/pack"
+	"github.com/gobackio/goback/storage/wrapped"
 )
 
 // Store is what the runner sweeps and compacts.
@@ -69,10 +70,24 @@ var DefaultSchedule = Schedule{
 	Presence: 30 * time.Second,
 }
 
-// Collect garbage collects the store with opts. When attributor is not
-// nil, what survives is grouped by the set that owns it and what each set
-// takes up is recorded.
-func Collect(ctx context.Context, collector pack.Collector, attributor Attributor, opts pack.CollectOptions) (*pack.CollectReport, error) {
+// Collect garbage collects the store with opts. When idx is an Attributor,
+// what survives is grouped by the set that owns it and what each set takes
+// up is recorded; when it is a Reindexer, the indexes the collection
+// churned are rebuilt. idx may be nil.
+func Collect(ctx context.Context, collector pack.Collector, idx backup.Index, opts pack.CollectOptions) (*pack.CollectReport, error) {
+	attributor, _ := idx.(Attributor)
+	reindexer, _ := idx.(Reindexer)
+
+	return collect(ctx, collector, attributor, reindexer, opts)
+}
+
+func collect(ctx context.Context, collector pack.Collector, attributor Attributor, reindexer Reindexer, opts pack.CollectOptions) (*pack.CollectReport, error) {
+	report, err := attributed(ctx, collector, attributor, opts)
+
+	return report, errors.Join(err, reindex(ctx, reindexer))
+}
+
+func attributed(ctx context.Context, collector pack.Collector, attributor Attributor, opts pack.CollectOptions) (*pack.CollectReport, error) {
 	if attributor != nil {
 		owner, err := attributor.RootOwner(ctx)
 		if err != nil {
@@ -94,6 +109,33 @@ func Collect(ctx context.Context, collector pack.Collector, attributor Attributo
 	}
 
 	return report, nil
+}
+
+func reindex(ctx context.Context, reindexer Reindexer) error {
+	if reindexer == nil {
+		return nil
+	}
+
+	_, err := reindexer.ReindexChurned(ctx)
+
+	return err
+}
+
+// NewRunner is the runner of the jobs store and idx support, found by
+// what the innermost store and the index implement.
+func NewRunner(store backup.ObjectStore, idx backup.Index, schedule Schedule) *Runner {
+	r := &Runner{Schedule: schedule}
+
+	base := wrapped.Innermost(store)
+	r.Store, _ = base.(Store)
+	r.Collector, _ = base.(pack.Collector)
+	r.Retirer, _ = idx.(backup.Retirer)
+	r.Presence, _ = idx.(Presence)
+	r.Measurer, _ = idx.(Measurer)
+	r.Attributor, _ = idx.(Attributor)
+	r.Reindexer, _ = idx.(Reindexer)
+
+	return r
 }
 
 // Runner ticks the jobs of one store. A nil member skips its jobs.
@@ -140,9 +182,9 @@ func (r *Runner) Run(ctx context.Context) {
 		run   func(context.Context)
 	}{
 		{r.Schedule.Sweep, func(context.Context) { r.Sweep() }},
-		{r.Schedule.Compact, func(ctx context.Context) { r.Compact(ctx); r.Reindex(ctx) }},
-		{r.Schedule.Collect, func(ctx context.Context) { r.Collect(ctx); r.Reindex(ctx) }},
-		{r.Schedule.Retire, func(ctx context.Context) { r.Retire(ctx); r.Reindex(ctx) }},
+		{r.Schedule.Compact, r.logCompact},
+		{r.Schedule.Collect, r.logCollect},
+		{r.Schedule.Retire, r.logRetire},
 		{r.Schedule.Presence, func(ctx context.Context) { r.BuildPresence(ctx); r.MeasureSets(ctx) }},
 	}
 
@@ -238,7 +280,7 @@ func (r *Runner) Due(ctx context.Context) (Ran, error) {
 	errs = append(errs, err)
 
 	if due {
-		ran.Collected, err = Collect(ctx, r.Collector, r.Attributor, pack.CollectOptions{})
+		ran.Collected, err = attributed(ctx, r.Collector, r.Attributor, pack.CollectOptions{})
 		errs = append(errs, err)
 	}
 
@@ -275,31 +317,42 @@ func (r *Runner) Sweep() {
 	}
 }
 
-// Compact rewrites small archives.
-func (r *Runner) Compact(ctx context.Context) {
+// Compact rewrites small archives and rebuilds the indexes that churned.
+// Without a Store it does nothing.
+func (r *Runner) Compact(ctx context.Context) (*pack.CompactReport, error) {
 	if r.Store == nil {
-		return
+		return &pack.CompactReport{}, nil
 	}
 
-	if _, err := r.Store.Compact(ctx); err != nil {
+	report, err := r.Store.Compact(ctx)
+
+	return report, errors.Join(err, reindex(ctx, r.Reindexer))
+}
+
+func (r *Runner) logCompact(ctx context.Context) {
+	if _, err := r.Compact(ctx); err != nil {
 		r.logger().Error("compaction failed", "err", err)
 	}
 }
 
-// Collect garbage collects the store.
-func (r *Runner) Collect(ctx context.Context) {
+// Collect garbage collects the store, hands the report to OnCollect and
+// rebuilds the indexes that churned. Without a Collector it returns nil.
+func (r *Runner) Collect(ctx context.Context) (*pack.CollectReport, error) {
 	if r.Collector == nil {
-		return
+		return nil, nil
 	}
 
-	report, err := Collect(ctx, r.Collector, r.Attributor, pack.CollectOptions{})
-	if err != nil {
-		r.logger().Error("garbage collection failed", "err", err)
-		return
-	}
-
-	if r.OnCollect != nil {
+	report, err := collect(ctx, r.Collector, r.Attributor, r.Reindexer, pack.CollectOptions{})
+	if report != nil && r.OnCollect != nil {
 		r.OnCollect(report)
+	}
+
+	return report, err
+}
+
+func (r *Runner) logCollect(ctx context.Context) {
+	if _, err := r.Collect(ctx); err != nil {
+		r.logger().Error("garbage collection failed", "err", err)
 	}
 }
 
@@ -325,13 +378,20 @@ func (r *Runner) MeasureSets(ctx context.Context) {
 	}
 }
 
-// Retire tombstones every retired commit past its window.
-func (r *Runner) Retire(ctx context.Context) {
+// Retire tombstones every retired commit past its window and rebuilds the
+// indexes that churned. Without a Retirer it does nothing.
+func (r *Runner) Retire(ctx context.Context) (int, error) {
 	if r.Retirer == nil {
-		return
+		return 0, nil
 	}
 
 	n, err := r.Retirer.Retire(ctx, r.now())
+
+	return n, errors.Join(err, reindex(ctx, r.Reindexer))
+}
+
+func (r *Runner) logRetire(ctx context.Context) {
+	n, err := r.Retire(ctx)
 	if err != nil {
 		r.logger().Error("retirement failed", "retired", n, "err", err)
 		return
@@ -339,16 +399,5 @@ func (r *Runner) Retire(ctx context.Context) {
 
 	if n > 0 {
 		r.logger().Info("retired commits", "count", n)
-	}
-}
-
-// Reindex rebuilds the indexes the jobs churned.
-func (r *Runner) Reindex(ctx context.Context) {
-	if r.Reindexer == nil {
-		return
-	}
-
-	if _, err := r.Reindexer.ReindexChurned(ctx); err != nil {
-		r.logger().Error("reindexing failed", "err", err)
 	}
 }

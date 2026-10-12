@@ -10,7 +10,6 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
-	"github.com/gobackio/goback/storage/maintenance"
 
 	"github.com/urfave/cli"
 )
@@ -117,18 +116,5 @@ func Salvage(c *cli.Context, restorer *backup.Restorer) {
 	restorer.Salvage = true
 	restorer.OnHole = func(hole backup.Hole) {
 		log.Printf("missing %d bytes at offset %d of %s (%x)", hole.Length, hole.Offset, hole.Path, hole.Ref.GetHash())
-	}
-}
-
-// Reindex rebuilds the indexes of the tables a maintenance operation
-// churned, when idx keeps any, and exits on failure.
-func Reindex(c *cli.Context, idx backup.Index) {
-	r, ok := idx.(maintenance.Reindexer)
-	if !ok {
-		return
-	}
-
-	if _, err := r.ReindexChurned(Context(c)); err != nil {
-		Fatalf("Reindexing failed: %v", err)
 	}
 }

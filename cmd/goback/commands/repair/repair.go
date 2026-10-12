@@ -4,13 +4,13 @@ import (
 	"context"
 	"log"
 
-	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage/pack"
+	"github.com/gobackio/goback/storage/wrapped"
 
 	"github.com/urfave/cli"
 )
@@ -41,7 +41,7 @@ func repairAction(c *cli.Context) {
 
 	idx := repo.Index
 
-	repairer, ok := goback.Innermost(store).(Repairer)
+	repairer, ok := wrapped.Innermost(store).(Repairer)
 	if !ok {
 		common.Fatalf("storage %s cannot be repaired", c.GlobalString("storage"))
 	}

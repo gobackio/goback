@@ -128,9 +128,9 @@ func (r *Repo) Key(ctx context.Context) (*storekey.Key, error) {
 				r.keyErr = fmt.Errorf("loading the store key: %w", r.keyErr)
 			}
 		case r.settings.Passphrase != "":
-			escrow, ok := Innermost(r.Store).(backup.EscrowLister)
+			escrow, ok := wrapped.Innermost(r.Store).(backup.EscrowLister)
 			if !ok {
-				r.keyErr = fmt.Errorf("store %T keeps no escrowed key", Innermost(r.Store))
+				r.keyErr = fmt.Errorf("store %T keeps no escrowed key", wrapped.Innermost(r.Store))
 				return
 			}
 
@@ -222,13 +222,4 @@ func (r *Repo) Close() error {
 	}
 
 	return errors.Join(errs...)
-}
-
-// Innermost peels caching and wrapping stores off store.
-func Innermost(store backup.ObjectStore) backup.ObjectStore {
-	for inner := wrapped.Unwrap(store); inner != nil; inner = wrapped.Unwrap(store) {
-		store = inner
-	}
-
-	return store
 }

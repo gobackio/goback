@@ -17,3 +17,12 @@ func Unwrap(store backup.ObjectStore) backup.ObjectStore {
 
 	return nil
 }
+
+// Innermost peels every wrapping store off store.
+func Innermost(store backup.ObjectStore) backup.ObjectStore {
+	for inner := Unwrap(store); inner != nil; inner = Unwrap(store) {
+		store = inner
+	}
+
+	return store
+}

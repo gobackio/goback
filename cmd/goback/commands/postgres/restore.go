@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/postgres"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
 	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage/pack"
+	"github.com/gobackio/goback/storage/wrapped"
 
 	"github.com/urfave/cli"
 )
@@ -132,7 +132,7 @@ func latest(index backup.Index, store backup.ObjectStore) func(context.Context, 
 			return ref, err
 		}
 
-		ps, ok := goback.Innermost(store).(*pack.PackStorage)
+		ps, ok := wrapped.Innermost(store).(*pack.PackStorage)
 		if !ok {
 			return nil, err
 		}
@@ -159,7 +159,7 @@ func latest(index backup.Index, store backup.ObjectStore) func(context.Context, 
 
 // headOf is the newest commit of the set with id.
 func headOf(store backup.ObjectStore, id uint64) (*proto.Ref, error) {
-	ps, ok := goback.Innermost(store).(*pack.PackStorage)
+	ps, ok := wrapped.Innermost(store).(*pack.PackStorage)
 	if !ok {
 		return nil, fmt.Errorf("store %T keeps no set heads to find set %d in", store, id)
 	}

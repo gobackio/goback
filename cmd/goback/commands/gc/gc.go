@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/storage/maintenance"
 	"github.com/gobackio/goback/storage/pack"
+	"github.com/gobackio/goback/storage/wrapped"
 
 	"github.com/urfave/cli"
 )
@@ -55,14 +55,10 @@ func gcAction(c *cli.Context) {
 	repo := common.OpenRepo(c)
 	store := repo.Store
 
-	collector, ok := goback.Innermost(store).(pack.Collector)
+	collector, ok := wrapped.Innermost(store).(pack.Collector)
 	if !ok {
 		common.Fatalf("storage %s cannot be garbage collected", c.GlobalString("storage"))
 	}
-
-	index := repo.Index
-
-	attributor, _ := index.(maintenance.Attributor)
 
 	opts := pack.CollectOptions{
 		Readers:      c.Int("readers"),
@@ -73,12 +69,10 @@ func gcAction(c *cli.Context) {
 		TempDir:      c.String("temp-dir"),
 	}
 
-	report, err := maintenance.Collect(ctx, collector, attributor, opts)
+	report, err := maintenance.Collect(ctx, collector, repo.Index, opts)
 	if err != nil {
 		common.Fatal(err)
 	}
-
-	common.Reindex(c, index)
 
 	common.Result(common.View.Report(report), func() { Log(report) })
 
