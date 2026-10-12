@@ -60,6 +60,25 @@ type SessionStore interface {
 	EndSession(ctx context.Context) error
 }
 
+// HoldRestore opens a restore session naming ref when store keeps
+// sessions, so retirement and garbage collection keep it until end is
+// called; read through held meanwhile. Without sessions it holds nothing.
+func HoldRestore(ctx context.Context, store ObjectStore, set string, ref *proto.Ref) (held context.Context, end func(), err error) {
+	sessions, ok := store.(SessionStore)
+	if !ok {
+		return ctx, func() {}, nil
+	}
+
+	held, err = sessions.BeginSession(ctx, &Session{Set: set, Restore: ref})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// what was read stays read, and a session that outlived its lease is
+	// gone already
+	return held, func() { _ = sessions.EndSession(held) }, nil
+}
+
 // Leased is a session store that ends sessions after a lease without a
 // write.
 type Leased interface {

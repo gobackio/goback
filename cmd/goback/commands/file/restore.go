@@ -28,7 +28,7 @@ func (f *file) restore() error {
 
 	log.Printf("name: %s, size: %d, mod: %s", info.Name, info.Size, info.ModTime())
 
-	ctx, done, err := common.RestoreSession(f.ctx, f.store, f.set, files[0].Ref)
+	ctx, done, err := backup.HoldRestore(f.ctx, f.store, f.set, files[0].Ref)
 	if err != nil {
 		return err
 	}

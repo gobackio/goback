@@ -9,7 +9,6 @@ import (
 	"github.com/gobackio/goback/agent"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/storekey"
-	"github.com/gobackio/goback/proto"
 
 	"github.com/urfave/cli"
 )
@@ -72,27 +71,6 @@ func StoreKey(c *cli.Context, repo *goback.Repo) *storekey.Key {
 	}
 
 	return key
-}
-
-// RestoreSession opens a session naming the object a restore reads, when
-// the store has sessions, so retirement and garbage collection keep it
-// while the restore runs. The returned func ends the session.
-func RestoreSession(ctx context.Context, store backup.ObjectStore, set string, ref *proto.Ref) (context.Context, func(), error) {
-	sessions, ok := store.(backup.SessionStore)
-	if !ok {
-		return ctx, func() {}, nil
-	}
-
-	sctx, err := sessions.BeginSession(ctx, &backup.Session{Set: set, Restore: ref})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return sctx, func() {
-		if err := sessions.EndSession(sctx); err != nil {
-			log.Printf("Failed ending restore session: %v", err)
-		}
-	}, nil
 }
 
 // RechunkFlag turns --rechunk on a restore command.

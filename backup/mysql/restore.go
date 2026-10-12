@@ -34,10 +34,7 @@ type Restore struct {
 	BinlogSet string
 	// At, when set, is the moment the restore stops at; zero replays to the
 	// end of the binlog set.
-	At time.Time
-	// Hold, when set, keeps a commit from being collected while the restore
-	// reads it, until the returned func is called.
-	Hold   func(ctx context.Context, set string, ref *proto.Ref) (context.Context, func(), error)
+	At     time.Time
 	Client Client
 	// WorkDir is where the binlogs are fetched to before the replay.
 	WorkDir string
@@ -290,15 +287,11 @@ func (r *Restore) checkTarget(ctx context.Context, replay bool) error {
 
 // load streams the dump into the server, or writes it into To.
 func (r *Restore) load(ctx context.Context, dump *proto.Commit, ref *proto.Ref, result *RestoreResult) error {
-	if r.Hold != nil {
-		held, release, err := r.Hold(ctx, r.DumpSet, ref)
-		if err != nil {
-			return err
-		}
-		defer release()
-
-		ctx = held
+	ctx, end, err := backup.HoldRestore(ctx, r.Objects, r.DumpSet, ref)
+	if err != nil {
+		return err
 	}
+	defer end()
 
 	reader, err := backup.NewBackupReader(r.Objects).WithKey(r.Key).ForCommit(ctx, dump)
 	if err != nil {
@@ -337,15 +330,11 @@ func (r *Restore) load(ctx context.Context, dump *proto.Commit, ref *proto.Ref, 
 // replay fetches the planned binlogs and replays them from the dump's
 // position up to At.
 func (r *Restore) replay(ctx context.Context, dump *proto.Commit, plan replayPlan, result *RestoreResult) error {
-	if r.Hold != nil {
-		held, release, err := r.Hold(ctx, r.BinlogSet, result.Binlog)
-		if err != nil {
-			return err
-		}
-		defer release()
-
-		ctx = held
+	ctx, end, err := backup.HoldRestore(ctx, r.Objects, r.BinlogSet, result.Binlog)
+	if err != nil {
+		return err
 	}
+	defer end()
 
 	dir := r.To
 	if dir == "" {

@@ -1,7 +1,6 @@
 package mysql
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"github.com/gobackio/goback/backup/mysql"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
-	"github.com/gobackio/goback/proto"
 
 	"github.com/urfave/cli"
 )
@@ -84,13 +82,10 @@ func restoreAction(c *cli.Context) error {
 		DumpSet:   c.String("dump-set"),
 		BinlogSet: c.String("binlog-set"),
 		At:        at,
-		Hold: func(ctx context.Context, set string, ref *proto.Ref) (context.Context, func(), error) {
-			return common.RestoreSession(ctx, store, set, ref)
-		},
-		Client:  exec,
-		WorkDir: c.String("work-dir"),
-		To:      c.String("to"),
-		Force:   c.Bool("force"),
+		Client:    exec,
+		WorkDir:   c.String("work-dir"),
+		To:        c.String("to"),
+		Force:     c.Bool("force"),
 	}
 
 	if r.WorkDir == "" {

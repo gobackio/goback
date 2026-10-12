@@ -63,16 +63,11 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 		return err
 	}
 
-	if sessions, ok := r.Store.(SessionStore); ok {
-		ctx, err = sessions.BeginSession(ctx, &Session{Set: commit.GetBackupSet(), Restore: proto.NewObject(commit).Ref()})
-		if err != nil {
-			return err
-		}
-
-		// the files are restored either way, and a session that outlived
-		// its lease is gone already
-		defer func() { _ = sessions.EndSession(ctx) }()
+	ctx, end, err := HoldRestore(ctx, r.Store, commit.GetBackupSet(), proto.NewObject(commit).Ref())
+	if err != nil {
+		return err
 	}
+	defer end()
 
 	tree, parent := commit.GetTree(), []byte(nil)
 	if opts.From != "" {

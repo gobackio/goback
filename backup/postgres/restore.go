@@ -14,7 +14,6 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
-
 )
 
 // ErrNoBase is returned when no base backup can be restored to the moment
@@ -370,6 +369,12 @@ func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key
 	if commit == nil {
 		return fmt.Errorf("%x is not a commit", ref.Hash)
 	}
+
+	ctx, end, err := backup.HoldRestore(ctx, objects, commit.GetBackupSet(), ref)
+	if err != nil {
+		return err
+	}
+	defer end()
 
 	tree, err := openWALTree(ctx, objects, objects, commit, key)
 	if err != nil {

@@ -242,13 +242,7 @@ func walGetAction(c *cli.Context) error {
 
 	ref := &proto.Ref{Hash: hash}
 
-	ctx, done, err := common.RestoreSession(common.Context(c), store, c.String("wal-set"), ref)
-	if err != nil {
-		return err
-	}
-	defer done()
-
-	err = postgres.FetchWAL(ctx, store, common.StoreKey(c, repo), ref, c.Args().Get(0), c.Args().Get(1))
+	err = postgres.FetchWAL(common.Context(c), store, common.StoreKey(c, repo), ref, c.Args().Get(0), c.Args().Get(1))
 	if errors.Is(err, backup.ErrNotFound) {
 		return cli.NewExitError("", 1)
 	}
