@@ -107,78 +107,6 @@ func TestRestoreTarget(t *testing.T) {
 	require.Error(t, err)
 }
 
-func write(t *testing.T, path string) {
-	t.Helper()
-
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	require.NoError(t, os.WriteFile(path, []byte("x"), 0o644))
-}
-
-func TestRemoveUnrestoredKeepsWhatTheRestoreWroteUnderAnotherSpelling(t *testing.T) {
-	base := t.TempDir()
-	write(t, filepath.Join(base, "world", "level.dat"))
-	write(t, filepath.Join(base, "stale", "old.log"))
-
-	// the commit spells the directory and file differently; on a
-	// case-insensitive filesystem the restore wrote into the existing ones
-	restored := map[string]bool{
-		filepath.Join(base, "World"):              true,
-		filepath.Join(base, "World", "Level.dat"): true,
-	}
-
-	_, err := os.Lstat(filepath.Join(base, "WORLD"))
-	insensitive := err == nil
-
-	require.NoError(t, removeUnrestored(base, restored, false))
-	require.NoDirExists(t, filepath.Join(base, "stale"))
-
-	if insensitive {
-		require.FileExists(t, filepath.Join(base, "world", "level.dat"))
-	} else {
-		require.NoDirExists(t, filepath.Join(base, "world"))
-	}
-}
-
-func TestRemoveUnrestoredKeepsThePartialsOfRestoredFiles(t *testing.T) {
-	base := t.TempDir()
-	level, gone := filepath.Join(base, "level.dat"), filepath.Join(base, "gone.dat")
-	write(t, backup.PartialPath(level))
-	write(t, backup.PartialPath(gone))
-
-	require.NoError(t, removeUnrestored(base, map[string]bool{level: true}, false))
-	require.FileExists(t, backup.PartialPath(level))
-	require.NoFileExists(t, backup.PartialPath(gone))
-}
-
-func TestRestoreDirReplacesWhatIsNotADirectory(t *testing.T) {
-	base := t.TempDir()
-	outside := filepath.Join(base, "outside")
-	require.NoError(t, os.Mkdir(outside, 0o755))
-
-	link := filepath.Join(base, "world")
-	if err := os.Symlink(outside, link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-
-	require.NoError(t, restoreDir(link, 0o755))
-
-	info, err := os.Lstat(link)
-	require.NoError(t, err)
-	require.True(t, info.IsDir(), "the link is replaced by a directory")
-	require.Zero(t, info.Mode()&os.ModeSymlink)
-
-	entries, err := os.ReadDir(outside)
-	require.NoError(t, err)
-	require.Empty(t, entries, "nothing was written through the link")
-
-	file := filepath.Join(base, "plain")
-	write(t, file)
-	require.NoError(t, restoreDir(file, 0o755))
-	info, err = os.Lstat(file)
-	require.NoError(t, err)
-	require.True(t, info.IsDir())
-}
-
 type restoreProgressRecord struct {
 	Msg        string `json:"msg"`
 	FilesDone  int64  `json:"files_done"`
@@ -225,19 +153,17 @@ func lastProgress(t *testing.T, c *commit, dst string) restoreProgressRecord {
 func TestRestoreProgressCountsAFilesBytesWhileItIsWritten(t *testing.T) {
 	p := &restoreProgress{}
 
-	written, done := p.file(100)
-	written(30)
-	written(30)
+	p.wrote(30)
+	p.wrote(30)
 	require.Equal(t, int64(60), p.bytesDone.Load(), "parts count before the file is through")
 	require.Zero(t, p.filesDone.Load())
 
-	done()
+	p.done(100, 60)
 	require.Equal(t, int64(100), p.bytesDone.Load(), "what no part wrote, as for a file found unchanged, counts at the end")
 	require.Equal(t, int64(1), p.filesDone.Load())
 
-	written, done = p.file(10)
-	written(15)
-	done()
+	p.wrote(15)
+	p.done(10, 15)
 	require.Equal(t, int64(115), p.bytesDone.Load(), "a file never takes back what its parts counted")
 }
 
@@ -271,7 +197,6 @@ func TestRestoreProgressCountsWhatTheRestoreCovers(t *testing.T) {
 			set:              "world",
 			ref:              result.Ref,
 			from:             from,
-			reader:           backup.NewBackupReader(index),
 			restorer:         &backup.Restorer{Store: index, Workers: 2, Overwrite: backup.OverwriteIfChanged},
 			progressInterval: time.Hour,
 		}

@@ -12,7 +12,6 @@ import (
 
 type commit struct {
 	ctx      context.Context
-	reader   *backup.BackupReader
 	restorer *backup.Restorer
 	store    backup.ObjectStore
 	index    backup.Index

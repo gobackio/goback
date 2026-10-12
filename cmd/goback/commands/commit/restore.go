@@ -3,12 +3,9 @@ package commit
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"log"
 	"log/slog"
-	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -23,18 +20,6 @@ import (
 	"github.com/urfave/cli"
 )
 
-type restoredDir struct {
-	path    string
-	mode    os.FileMode
-	modTime time.Time
-}
-
-type restoreEntry struct {
-	path string
-	info os.FileInfo
-	ref  *proto.Ref
-}
-
 // restoreProgress counts the files of a restore and the logical bytes they
 // hold; a file is done once the restore is through with it, whether it was
 // written, found unchanged or failed.
@@ -47,23 +32,14 @@ type restoreProgress struct {
 	downloaded func() int64
 }
 
-// file counts one file's parts into bytes_done as they are written; done
-// then adds whatever of size its parts did not, as for a file found
-// unchanged.
-func (p *restoreProgress) file(size int64) (written func(int64), done func()) {
-	var landed atomic.Int64
+// wrote counts a part of a file into bytes_done as it lands.
+func (p *restoreProgress) wrote(n int64) { p.bytesDone.Add(n) }
 
-	written = func(n int64) {
-		landed.Add(n)
-		p.bytesDone.Add(n)
-	}
-
-	done = func() {
-		p.filesDone.Add(1)
-		p.bytesDone.Add(max(size-landed.Load(), 0))
-	}
-
-	return written, done
+// done counts a file of size whose parts wrote written bytes, adding
+// whatever of size they did not, as for a file found unchanged.
+func (p *restoreProgress) done(size, written int64) {
+	p.filesDone.Add(1)
+	p.bytesDone.Add(max(size-written, 0))
 }
 
 func (p *restoreProgress) log() {
@@ -204,120 +180,33 @@ func (c *commit) restore() error {
 		return err
 	}
 
-	c.reader, err = c.reader.ForCommit(c.ctx, commit)
-	if err != nil {
-		return err
-	}
-
 	ref := proto.NewObject(commit).Ref()
 	log.Printf("Restoring commit %x from %v", ref.Hash, commit.Timestamp)
 
 	lost := c.lostHere(ref)
 
-	ctx, done, err := common.RestoreSession(c.ctx, c.store, c.set, ref)
-	if err != nil {
-		return err
-	}
-	defer done()
-	c.ctx = ctx
-
-	tree := commit.Tree
-	var parent []byte
-
-	if c.from != "" {
-		tree, parent, err = c.reader.GetTree(c.ctx, tree, strings.Split(c.from, "/"))
-		if err != nil {
-			return err
-		}
-	}
-
-	// the whole tree is listed before anything is written, so the totals
-	// progress reports against are known from the start
-	var entries []restoreEntry
 	progress := &restoreProgress{}
 	if counted, ok := c.store.(interface{ Downloaded() int64 }); ok {
 		progress.downloaded = counted.Downloaded
 	}
 
-	err = c.reader.WalkTree(c.ctx, tree, parent, func(path string, info os.FileInfo, ref *proto.Ref) error {
-		entries = append(entries, restoreEntry{path: filepath.Join(c.base, path), info: info, ref: ref})
+	stopProgress := func() {}
 
-		if stat, _ := info.Sys().(*proto.FileInfo); !info.IsDir() && stat != nil && stat.Type != proto.NodeType_NODE_SYMLINK {
-			progress.filesTotal++
-			progress.bytesTotal += stat.Size
-		}
-
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	stopProgress := progress.report(c.progressInterval)
-
-	restored := map[string]bool{}
-	var dirs []restoredDir
 	var unrestored atomic.Int64
 
-	// every directory and link is made before the files go to the
-	// restorer, which takes several at a time
-	var (
-		files    []backup.FileToRestore
-		finished []func()
-	)
+	err = c.restorer.RestoreTree(c.ctx, commit, c.base, backup.TreeOptions{
+		From:   c.from,
+		Delete: c.delete,
+		Listed: func(files, bytes int64) {
+			progress.filesTotal, progress.bytesTotal = files, bytes
+			stopProgress = progress.report(c.progressInterval)
+		},
+		Written: progress.wrote,
+		Done: func(f backup.RestoredFile) error {
+			progress.done(f.Size, f.Written)
 
-	for _, entry := range entries {
-		path, info, ref := entry.path, entry.info, entry.ref
-		restored[path] = true
-
-		if info.IsDir() {
-			// directory modes and times are set after the subtree is written:
-			// a read-only directory could not take its children, and the
-			// children would clobber its time
-			dirs = append(dirs, restoredDir{path: path, mode: info.Mode(), modTime: info.ModTime()})
-
-			if c.restorer.DryRun {
-				continue
-			}
-
-			if err = restoreDir(path, info.Mode()); err != nil {
-				break
-			}
-
-			continue
-		}
-
-		stat, _ := info.Sys().(*proto.FileInfo)
-		if stat == nil {
-			err = errors.Errorf("no stat for %s", path)
-			break
-		}
-
-		if stat.Type == proto.NodeType_NODE_SYMLINK {
-			if c.restorer.DryRun {
-				continue
-			}
-
-			if err = restoreSymlink(path, string(stat.LinkTarget)); err != nil {
-				break
-			}
-
-			continue
-		}
-
-		written, done := progress.file(stat.Size)
-		files = append(files, backup.FileToRestore{Path: path, Stat: stat, Ref: ref, Written: written})
-		finished = append(finished, done)
-	}
-
-	if err == nil {
-		err = c.restorer.RestoreFiles(c.ctx, files, func(i int, outcome backup.Outcome, err error) error {
-			defer finished[i]()
-
-			path, ref := files[i].Path, files[i].Ref
-
-			if err != nil {
-				if lost[string(ref.GetHash())] {
+			if err := f.Err; err != nil {
+				if lost[string(f.Ref.GetHash())] {
 					err = fmt.Errorf("%w (repair recorded this version as unrecoverable)", err)
 				}
 
@@ -328,42 +217,30 @@ func (c *commit) restore() error {
 				}
 
 				unrestored.Add(1)
-				log.Printf("cannot restore %s: %v", path, err)
+				log.Printf("cannot restore %s: %v", f.Path, err)
 
 				return nil
 			}
 
-			if outcome != backup.OutcomeUnchanged && outcome != backup.OutcomeSkipped {
-				log.Printf("%s: %s", outcome, path)
+			if f.Outcome != backup.OutcomeUnchanged && f.Outcome != backup.OutcomeSkipped {
+				log.Printf("%s: %s", f.Outcome, f.Path)
 			}
 
 			return nil
-		})
-	}
+		},
+		Removing: func(path string) {
+			if c.restorer.DryRun {
+				log.Printf("would remove: %s", path)
+			} else {
+				log.Printf("Removing %s", path)
+			}
+		},
+	})
 
 	stopProgress()
 
 	if err != nil {
 		return err
-	}
-
-	if c.delete {
-		err = removeUnrestored(c.base, restored, c.restorer.DryRun)
-		if err != nil {
-			return err
-		}
-	}
-
-	if !c.restorer.DryRun {
-		for i := len(dirs) - 1; i >= 0; i-- {
-			if err = os.Chmod(dirs[i].path, dirs[i].mode.Perm()); err != nil {
-				return err
-			}
-
-			if err = os.Chtimes(dirs[i].path, time.Now(), dirs[i].modTime); err != nil {
-				return err
-			}
-		}
 	}
 
 	stats, missed := c.restorer.Stats(), unrestored.Load()
@@ -384,25 +261,6 @@ func (c *commit) restore() error {
 	return nil
 }
 
-// restoreDir makes path the recorded directory, which its owner can write
-// into until the restore sets mode: whatever else is there, a file or a
-// symlink the restore must not write through, is removed.
-func restoreDir(path string, mode os.FileMode) error {
-	if existing, err := os.Lstat(path); err == nil && !existing.IsDir() {
-		if err := os.Remove(path); err != nil {
-			return err
-		}
-	}
-
-	mode = mode.Perm() | 0o300
-
-	if err := os.MkdirAll(path, mode); err != nil {
-		return err
-	}
-
-	return os.Chmod(path, mode)
-}
-
 func logStats(stats backup.RestoreStats) {
 	log.Printf("%d files: %d written, %d unchanged, %d skipped by stat; bytes from destination %s, seeds %s, cache %s, store %s",
 		stats.Files, stats.Written, stats.Unchanged, stats.Skipped,
@@ -412,100 +270,6 @@ func logStats(stats backup.RestoreStats) {
 	if stats.Salvaged > 0 {
 		log.Printf("%d files salvaged with %s missing", stats.Salvaged, humanize.Bytes(uint64(stats.MissingBytes)))
 	}
-}
-
-// restoreSymlink recreates a link as recorded and never follows it.
-func restoreSymlink(path, target string) error {
-	if existing, err := os.Readlink(path); err == nil && existing == target {
-		return nil
-	}
-
-	err := os.Remove(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	return os.Symlink(target, path)
-}
-
-// removeUnrestored deletes everything under base that the restore did not
-// write, deepest entries first, except the partial files a later restore
-// of the same paths resumes from.
-func removeUnrestored(base string, restored map[string]bool, dryRun bool) error {
-	keep := make(map[string]bool, 2*len(restored))
-	for path := range restored {
-		keep[path] = true
-		keep[backup.PartialPath(path)] = true
-	}
-
-	folded := make(map[string]string, len(keep))
-	for path := range keep {
-		folded[strings.ToLower(path)] = path
-	}
-
-	// kept reports whether the restore wrote path under any spelling the
-	// filesystem treats as the same name
-	kept := func(path string) bool {
-		if keep[path] {
-			return true
-		}
-
-		spelled, ok := folded[strings.ToLower(path)]
-		if !ok {
-			return false
-		}
-
-		found, err := os.Lstat(path)
-		if err != nil {
-			return false
-		}
-
-		written, err := os.Lstat(spelled)
-		if err != nil {
-			return false
-		}
-
-		return os.SameFile(found, written)
-	}
-
-	var stale []string
-
-	err := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if path == base || kept(path) {
-			return nil
-		}
-
-		stale = append(stale, path)
-
-		if d.IsDir() {
-			return filepath.SkipDir
-		}
-
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	for _, path := range stale {
-		if dryRun {
-			log.Printf("would remove: %s", path)
-			continue
-		}
-
-		log.Printf("Removing %s", path)
-
-		err = os.RemoveAll(path)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func overwriteMode(name string) backup.OverwriteMode {
@@ -547,12 +311,6 @@ func restoreAction(c *cli.Context) {
 		}
 	}
 
-	if !c.Bool("dry-run") {
-		if err := os.MkdirAll(base, 0775); err != nil {
-			common.Fatal(err)
-		}
-	}
-
 	store := common.GetObjectStore(c)
 	index := common.OpenIndex(c, store)
 	key := common.StoreKey(c, store)
@@ -589,7 +347,6 @@ func restoreAction(c *cli.Context) {
 		ref:      ref,
 		from:     c.String("from"),
 		delete:   c.Bool("delete"),
-		reader:   backup.NewBackupReader(store).WithKey(key),
 		restorer: restorer,
 		store:    store,
 		set:      c.GlobalString("set"),

@@ -15,7 +15,6 @@ import (
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
 
-	"golang.org/x/sync/errgroup"
 )
 
 // ErrNoBase is returned when no base backup can be restored to the moment
@@ -37,9 +36,6 @@ type Restore struct {
 	// At, when set, is the moment recovery stops at; zero recovers to the
 	// end of the WAL set.
 	At time.Time
-	// Hold, when set, keeps the chosen base from being collected while the
-	// restore writes it, until the returned func is called.
-	Hold func(ctx context.Context, set string, ref *proto.Ref) (context.Context, func(), error)
 	// RestoreCommand is the restore_command that fetches the WAL commit's
 	// files, with %f and %p for Postgres to fill in.
 	RestoreCommand func(walCommit *proto.Ref) string
@@ -68,16 +64,6 @@ func (r *Restore) Run(ctx context.Context, dir string) (*RestoreResult, error) {
 	baseRef, base, err := r.chooseBase(ctx, wal)
 	if err != nil {
 		return nil, err
-	}
-
-	if r.Hold != nil {
-		held, release, err := r.Hold(ctx, r.BaseSet, baseRef)
-		if err != nil {
-			return nil, err
-		}
-		defer release()
-
-		ctx = held
 	}
 
 	if err := r.writeTree(ctx, base, dir); err != nil {
@@ -294,48 +280,7 @@ func emptyDir(dir string) error {
 
 // writeTree writes the base's data directory into dir.
 func (r *Restore) writeTree(ctx context.Context, base *proto.Commit, dir string) error {
-	restorer := &backup.Restorer{Store: r.Objects, Key: r.Key}
-
-	reader, err := backup.NewBackupReader(r.Objects).WithKey(r.Key).ForCommit(ctx, base)
-	if err != nil {
-		return err
-	}
-
-	files, fctx := errgroup.WithContext(ctx)
-	files.SetLimit(backup.DefaultRestoreWorkers())
-
-	err = reader.WalkTree(ctx, base.GetTree(), nil, func(rel string, info os.FileInfo, ref *proto.Ref) error {
-		if !filepath.IsLocal(rel) {
-			return fmt.Errorf("the base backup holds %q, outside the data directory", rel)
-		}
-
-		path := filepath.Join(dir, rel)
-		stat, _ := info.Sys().(*proto.FileInfo)
-
-		switch {
-		case info.IsDir():
-			if err := os.MkdirAll(path, 0o700); err != nil {
-				return err
-			}
-
-			return os.Chmod(path, info.Mode().Perm())
-		case stat.GetType() == proto.NodeType_NODE_SYMLINK:
-			return os.Symlink(string(stat.GetLinkTarget()), path)
-		}
-
-		files.Go(func() error {
-			_, err := restorer.RestoreFile(fctx, path, stat, ref)
-			return err
-		})
-
-		return fctx.Err()
-	})
-
-	if waited := files.Wait(); err == nil {
-		err = waited
-	}
-
-	return err
+	return (&backup.Restorer{Store: r.Objects, Key: r.Key}).RestoreTree(ctx, base, dir, backup.TreeOptions{})
 }
 
 // configureRecovery makes Postgres recover from the WAL commit when it

@@ -76,7 +76,6 @@ func TestAnUnretiredCommitSurvivesCollectionsAndRestores(t *testing.T) {
 		store:            index,
 		set:              "world",
 		ref:              old,
-		reader:           backup.NewBackupReader(index),
 		restorer:         &backup.Restorer{Store: index, Workers: 2, Overwrite: backup.OverwriteIfChanged},
 		progressInterval: time.Hour,
 		base:             dst,

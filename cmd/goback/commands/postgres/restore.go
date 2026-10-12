@@ -88,9 +88,6 @@ func restoreAction(c *cli.Context) error {
 		BaseSet: c.String("base-set"),
 		WALSet:  c.String("wal-set"),
 		At:      at,
-		Hold: func(ctx context.Context, set string, ref *proto.Ref) (context.Context, func(), error) {
-			return common.RestoreSession(ctx, store, set, ref)
-		},
 		RestoreCommand: func(wal *proto.Ref) string {
 			return strings.ReplaceAll(goback, "%", "%%") + " postgres wal-get --wal-set " + shellQuote(c.String("wal-set")) + " --commit " + hex.EncodeToString(wal.Hash) + " %f %p"
 		},
