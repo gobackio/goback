@@ -2,6 +2,7 @@ package storekey
 
 import (
 	"bytes"
+	"io/fs"
 	"path/filepath"
 	"testing"
 
@@ -93,6 +94,7 @@ func TestAKeyFileLoadsAsTheSameKey(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "store.key")
 	require.NoError(t, key.Save(path))
+	require.ErrorIs(t, testKey(t).Save(path), fs.ErrExist, "a key is never written over another")
 
 	loaded, err := Load(path)
 	require.NoError(t, err)

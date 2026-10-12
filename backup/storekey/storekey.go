@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -184,14 +185,34 @@ func Parse(data []byte) (*Key, error) {
 	return key, nil
 }
 
-// Save writes the key file, readable by its owner only.
+// Save writes the key file, readable by its owner only. It refuses a path
+// that exists, with an error matching fs.ErrExist, so no key is ever
+// written over another.
 func (k *Key) Save(path string) error {
 	data, err := k.Marshal()
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0o600)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("%s exists, refusing to overwrite a key: %w", path, err)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	_, err = f.Write(data)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+
+	if err != nil {
+		_ = os.Remove(path)
+	}
+
+	return err
 }
 
 // Marshal returns the key file's contents.

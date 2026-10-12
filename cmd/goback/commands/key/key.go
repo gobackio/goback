@@ -105,9 +105,6 @@ func fresh(path string) error {
 // write saves the key under --out.
 func write(c *cli.Context, key *storekey.Key, verb string) error {
 	out := c.String("out")
-	if err := fresh(out); err != nil {
-		return err
-	}
 
 	err := key.Save(out)
 	if err != nil {
