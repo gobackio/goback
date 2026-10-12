@@ -208,15 +208,29 @@ func (ps *PackStorage) reconcileSessions(listed map[string]*ListedFile) error {
 	return nil
 }
 
-// pruneSessionMarkers deletes the markers of every session that ended,
-// that no horizon lists and that live does not hold, once no archive of
-// the session is stored, live or retired, and returns how many sessions
-// it pruned. The begin goes first, so a session never looks begun without
-// its end, and a session whose begin stays keeps its end.
-func (ps *PackStorage) pruneSessionMarkers(live map[string]bool, horizons ...[]string) (int, error) {
-	ended, err := ps.markerIDs(SessionEndExt)
-	if err != nil || len(ended) == 0 {
+// pruneSessionMarkers deletes the markers of every session that ended at
+// least a claim's limit before now, that no horizon lists and that live
+// does not hold, once no archive of the session is stored, live or
+// retired, and returns how many sessions it pruned. A writer that stalled
+// past the limit finds its claim lapsed and deletes what it stored, so a
+// late archive still meets the end that has a rebuild delete it. The begin
+// goes first, so a session never looks begun without its end, and a
+// session whose begin stays keeps its end.
+func (ps *PackStorage) pruneSessionMarkers(now time.Time, live map[string]bool, horizons ...[]string) (int, error) {
+	ends, err := ListInfo(ps.storage, SessionEndExt)
+	if err != nil {
 		return 0, err
+	}
+
+	ended := make(map[string]bool, len(ends))
+	for _, end := range ends {
+		if now.Sub(end.Modified) >= ps.claimLimit() {
+			ended[strings.TrimSuffix(end.Name, SessionEndExt)] = true
+		}
+	}
+
+	if len(ended) == 0 {
+		return 0, nil
 	}
 
 	archives, err := ps.storage.List(ArchiveSuffix)

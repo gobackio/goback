@@ -569,7 +569,7 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 		horizons = append(horizons, prev.Horizon)
 	}
 
-	pruned, err := ps.pruneSessionMarkers(sessions, append(horizons, state.Horizon)...)
+	pruned, err := ps.pruneSessionMarkers(opts.Now, sessions,append(horizons, state.Horizon)...)
 	if err != nil {
 		return nil, errors.Wrap(err, "pruning session markers")
 	}

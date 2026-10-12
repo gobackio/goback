@@ -108,6 +108,56 @@ func requireMarkers(t *testing.T, store *PackStorage, id string, begin, end bool
 	require.Equal(t, end, store.stored(id+SessionEndExt), "end of %s", id)
 }
 
+// pastClaims is far enough ahead for every claim to have lapsed.
+const pastClaims = DefaultClaimOpen + DefaultClaimGrace + time.Minute
+
+func TestACollectionKeepsTheMarkersOfASessionThatEndedWithinAClaimsLimit(t *testing.T) {
+	store := newTestStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	sctx, session := beginSession(t, store, "agent-a")
+	require.NoError(t, store.EndSession(sctx))
+
+	_, err := store.Collect(ctx, gcOptions(t, DefaultClaimOpen+DefaultClaimGrace-time.Minute))
+	require.NoError(t, err)
+	requireMarkers(t, store, session.ID, true, true)
+
+	_, err = store.Collect(ctx, gcOptions(t, pastClaims))
+	require.NoError(t, err)
+	requireMarkers(t, store, session.ID, false, false)
+}
+
+func TestAnArchiveAStalledWriterStoresAfterItsSessionAbortedIsNotTakenAsCommitted(t *testing.T) {
+	base := t.TempDir()
+	store := newTestStore(t, base)
+	ctx := context.Background()
+
+	sctx, session := beginSession(t, store, "agent-a")
+	require.NoError(t, store.EndSession(sctx))
+
+	_, err := store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	// a writer elsewhere that still held the session stores its archive late
+	stalledIndex := NewInMemoryIndex()
+	stalled := newTestStore(t, base, WithArchiveIndex(stalledIndex))
+	require.NoError(t, stalledIndex.BeginSession(session))
+	late := makeTestData(t, 1)[0]
+	require.NoError(t, stalled.Put(backup.WithSession(ctx, session), late))
+	require.NoError(t, stalled.Flush())
+	require.NoError(t, stalled.Close())
+
+	rebuilt := newTestStore(t, base)
+	t.Cleanup(func() { _ = rebuilt.Close() })
+	requireVisible(t, rebuilt, ctx, late, false)
+
+	archives, err := rebuilt.storage.List(ArchiveSuffix)
+	require.NoError(t, err)
+	require.Empty(t, archives, "the rebuild deleted what the aborted session left")
+}
+
 func TestACollectionDeletesASessionsMarkersOnceNoArchiveOrHorizonHoldsIt(t *testing.T) {
 	base := t.TempDir()
 	store := newTestStore(t, base, WithCompaction(CompactionConfig{MinimumCandidates: 0}))
@@ -124,7 +174,7 @@ func TestACollectionDeletesASessionsMarkersOnceNoArchiveOrHorizonHoldsIt(t *test
 
 	hctx, spanning := beginSession(t, store, "agent-c")
 
-	_, err := store.Collect(ctx, gcOptions(t, 0))
+	_, err := store.Collect(ctx, gcOptions(t, pastClaims))
 	require.NoError(t, err)
 	requireMarkers(t, store, empty.ID, false, false)
 	requireMarkers(t, store, committed.ID, true, true)
@@ -132,13 +182,13 @@ func TestACollectionDeletesASessionsMarkersOnceNoArchiveOrHorizonHoldsIt(t *test
 
 	// it ended after the generation listed it in its horizon
 	require.NoError(t, store.EndSession(hctx))
-	_, err = store.Collect(ctx, gcOptions(t, 0))
+	_, err = store.Collect(ctx, gcOptions(t, pastClaims))
 	require.NoError(t, err)
 	requireMarkers(t, store, spanning.ID, true, true)
 
 	// the committed session's archives are retired, then purged
 	compact(t, ctx, store)
-	_, err = store.Collect(ctx, gcOptions(t, 0))
+	_, err = store.Collect(ctx, gcOptions(t, pastClaims))
 	require.NoError(t, err)
 	requireMarkers(t, store, spanning.ID, false, false)
 	requireMarkers(t, store, committed.ID, true, true)
@@ -199,7 +249,7 @@ func TestACrashWhileDeletingASessionsMarkersLeavesNoSessionLive(t *testing.T) {
 	require.NoError(t, store.EndSession(actx))
 
 	storage.crashing = true
-	_, err = store.Collect(ctx, gcOptions(t, 0))
+	_, err = store.Collect(ctx, gcOptions(t, pastClaims))
 	require.NoError(t, err)
 	require.NoError(t, store.Close())
 
@@ -225,7 +275,7 @@ func TestACrashWhileDeletingASessionsMarkersLeavesNoSessionLive(t *testing.T) {
 		requireVisible(t, reopened, ctx, obj, true)
 	}
 
-	_, err = reopened.Collect(ctx, gcOptions(t, 0))
+	_, err = reopened.Collect(ctx, gcOptions(t, pastClaims))
 	require.NoError(t, err)
 	requireMarkers(t, reopened, aborted.ID, false, false)
 }
