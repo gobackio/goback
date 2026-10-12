@@ -14,74 +14,12 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/index/sql"
-	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage"
 	"github.com/gobackio/goback/storage/pack"
 
 	"github.com/stretchr/testify/require"
 	"gocloud.dev/blob/memblob"
 )
-
-type pickIndex struct {
-	backup.Index
-	objects map[string]*proto.Object
-	newest  *proto.Commit
-	asked   time.Time
-}
-
-func (x *pickIndex) Get(_ context.Context, ref *proto.Ref) (*proto.Object, error) {
-	obj, ok := x.objects[string(ref.Hash)]
-	if !ok {
-		return nil, backup.ErrNotFound
-	}
-
-	return obj, nil
-}
-
-func (x *pickIndex) CommitInfo(_ context.Context, _ string, notAfter time.Time, _ int) ([]*proto.Commit, error) {
-	x.asked = notAfter
-	if x.newest == nil {
-		return nil, nil
-	}
-
-	return []*proto.Commit{x.newest}, nil
-}
-
-func TestPickByRefChecksTheSet(t *testing.T) {
-	tree := &proto.Ref{Hash: make([]byte, proto.HashSize)}
-	ours := proto.NewObject(&proto.Commit{Timestamp: 1, Tree: tree, BackupSet: "world"})
-	theirs := proto.NewObject(&proto.Commit{Timestamp: 2, Tree: tree, BackupSet: "other"})
-	newest := &proto.Commit{Timestamp: 3, Tree: tree, BackupSet: "world"}
-	index := &pickIndex{
-		objects: map[string]*proto.Object{string(ours.Ref().Hash): ours, string(theirs.Ref().Hash): theirs},
-		newest:  newest,
-	}
-	c := &commit{ctx: context.Background(), index: index, set: "world"}
-
-	c.ref = ours.Ref()
-	picked, err := c.pick()
-	require.NoError(t, err)
-	require.Same(t, ours.GetCommit(), picked, "a ref wins over the newest commit")
-
-	c.ref = theirs.Ref()
-	_, err = c.pick()
-	require.Error(t, err)
-
-	c.ref = proto.NewObject(&proto.Commit{Timestamp: 4, Tree: tree, BackupSet: "world"}).Ref()
-	_, err = c.pick()
-	require.Error(t, err)
-
-	at := time.Unix(1700000000, 0)
-	c.ref, c.when = nil, at
-	picked, err = c.pick()
-	require.NoError(t, err)
-	require.Same(t, newest, picked)
-	require.Equal(t, at, index.asked)
-
-	index.newest = nil
-	_, err = c.pick()
-	require.Error(t, err)
-}
 
 func TestRestoreTarget(t *testing.T) {
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)

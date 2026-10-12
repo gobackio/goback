@@ -103,42 +103,6 @@ func (p *restoreProgress) report(interval time.Duration) func() {
 	}
 }
 
-// pick returns the commit c.ref names, or else the set's newest at or
-// before c.when.
-func (c *commit) pick() (*proto.Commit, error) {
-	if c.ref == nil {
-		commits, err := c.index.CommitInfo(c.ctx, c.set, c.when, 1)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(commits) != 1 {
-			return nil, errors.Errorf("set %s has no commit at or before %s", c.set, c.when.Format(time.RFC3339))
-		}
-
-		return commits[0], nil
-	}
-
-	obj, err := c.index.Get(c.ctx, c.ref)
-	if errors.Is(err, backup.ErrNotFound) {
-		return nil, errors.Errorf("set %s has no commit %x", c.set, c.ref.Hash)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	commit := obj.GetCommit()
-	if commit == nil {
-		return nil, errors.Errorf("%x is not a commit", c.ref.Hash)
-	}
-
-	if commit.GetBackupSet() != c.set {
-		return nil, errors.Errorf("commit %x belongs to set %s, not %s", c.ref.Hash, commit.GetBackupSet(), c.set)
-	}
-
-	return commit, nil
-}
-
 // restoreTarget is the instant a restore picks the newest commit at or
 // before; at most one of age, at and ref may be given.
 func restoreTarget(now time.Time, age, at, ref string) (time.Time, error) {
@@ -175,7 +139,7 @@ func restoreTarget(now time.Time, age, at, ref string) (time.Time, error) {
 }
 
 func (c *commit) restore() error {
-	commit, err := c.pick()
+	commit, err := backup.PickCommit(c.ctx, c.index, c.set, c.ref, c.when)
 	if err != nil {
 		return err
 	}
