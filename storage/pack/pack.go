@@ -532,10 +532,7 @@ func (ps *PackStorage) refuse(ctx context.Context, ws *writeSession, ref *proto.
 		return
 	}
 
-	err := ps.withWritableArchive(ctx, ws, func(a *archive) error {
-		return a.putTombstone(ctx, ref, false)
-	})
-	if err != nil {
+	if err := ps.putTombstone(ctx, ws, ref, false); err != nil {
 		ps.logger.Warn("tombstoning a refused commit failed", "commit", fmt.Sprintf("%x", ref.GetHash()), "cause", cause, "err", err)
 	}
 }

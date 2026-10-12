@@ -168,6 +168,35 @@ func TestAWriteToAnArchiveACommitElsewhereGaveUpIsRefusedAsLost(t *testing.T) {
 	}
 }
 
+func TestARefusedCommitStaysAbsentWhenItsSessionCommitsAndThroughARebuild(t *testing.T) {
+	base := t.TempDir()
+	at := &clock{now: time.Now()}
+	index := NewInMemoryIndex()
+	index.Now = at.Now
+
+	a := closing(t, newTestStore(t, base, WithArchiveIndex(index), WithClaims(time.Hour, time.Minute)))
+	b := closing(t, newTestStore(t, base, WithArchiveIndex(index), WithClaims(time.Hour, time.Minute)))
+
+	ctx, _ := beginSession(t, a, "agent")
+	blob := makeTestData(t, 1)[0]
+	require.NoError(t, a.Put(ctx, blob))
+
+	at.add(2 * time.Hour)
+
+	refused := commitObject()
+	require.ErrorIs(t, b.Put(ctx, refused), backup.ErrSessionLost)
+
+	require.NoError(t, b.Put(ctx, blob))
+	require.NoError(t, b.Put(ctx, commitObject()))
+
+	requirePresent(t, b, []*proto.Object{refused}, false)
+	require.NoError(t, b.Close())
+
+	rebuilt := closing(t, newTestStore(t, base))
+	requirePresent(t, rebuilt, []*proto.Object{refused}, false)
+	requireVisible(t, rebuilt, t.Context(), blob, true)
+}
+
 func TestAnArchiveIsFinalizedOnceItHasBeenOpenForAsLongAsItMayBe(t *testing.T) {
 	a, b, _ := twoProcesses(t, WithClaims(100*time.Millisecond, time.Hour))
 
