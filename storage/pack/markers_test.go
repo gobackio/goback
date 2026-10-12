@@ -279,3 +279,26 @@ func TestACrashWhileDeletingASessionsMarkersLeavesNoSessionLive(t *testing.T) {
 	require.NoError(t, err)
 	requireMarkers(t, reopened, aborted.ID, false, false)
 }
+
+// prunedBegin lists a begin marker that a collection deleted, with its end,
+// after the ends were listed.
+type prunedBegin struct {
+	*localArchiveStorage
+}
+
+func (p prunedBegin) List(extension string) ([]string, error) {
+	names, err := p.localArchiveStorage.List(extension)
+	if extension == SessionBeginExt {
+		names = append(names, "pruned"+SessionBeginExt)
+	}
+
+	return names, err
+}
+
+func TestAStoreOpensWhileACollectionPrunesSessionMarkers(t *testing.T) {
+	store, err := NewPackStorage(WithArchiveStorage(prunedBegin{newLocal(t.TempDir())}), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	require.NoError(t, store.Open())
+}

@@ -151,12 +151,14 @@ func (ps *PackStorage) placeUnknown(name string) (ArchiveInfo, bool, error) {
 // ending is indexed again if the index lost it, so it expires like any
 // other, last seen when it last stored one of the listed archives.
 func (ps *PackStorage) reconcileSessions(listed map[string]*ListedFile) error {
-	begun, err := ps.markerIDs(SessionBeginExt)
+	// ends before begins: a collection deletes a session's begin before its
+	// end, so a begin listed after its end was missed is one still stored
+	ended, err := ps.markerIDs(SessionEndExt)
 	if err != nil {
 		return err
 	}
 
-	ended, err := ps.markerIDs(SessionEndExt)
+	begun, err := ps.markerIDs(SessionBeginExt)
 	if err != nil {
 		return err
 	}
@@ -190,6 +192,11 @@ func (ps *PackStorage) reconcileSessions(listed map[string]*ListedFile) error {
 		}
 
 		s, err := ps.readBegin(id)
+		if notExist(err) {
+			// a collection pruned the session's markers since the listing
+			continue
+		}
+
 		if err != nil {
 			return err
 		}
