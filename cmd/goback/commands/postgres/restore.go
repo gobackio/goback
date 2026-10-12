@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -15,8 +14,6 @@ import (
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
 	"github.com/gobackio/goback/proto"
-	"github.com/gobackio/goback/storage/pack"
-	"github.com/gobackio/goback/storage/wrapped"
 
 	"github.com/urfave/cli"
 )
@@ -77,7 +74,6 @@ func restoreAction(c *cli.Context) error {
 
 	repo := common.OpenRepo(c)
 	store := repo.Store
-	index := repo.Index
 
 	defer func() {
 		common.CloseRepo(repo)
@@ -86,7 +82,7 @@ func restoreAction(c *cli.Context) error {
 	r := &postgres.Restore{
 		Objects: store,
 		Key:     common.StoreKey(c, repo),
-		Latest:  latest(index, store),
+		Latest:  repo.LatestCommit,
 		BaseSet: c.String("base-set"),
 		WALSet:  c.String("wal-set"),
 		At:      at,
@@ -116,66 +112,6 @@ func restoreAction(c *cli.Context) error {
 	})
 
 	return nil
-}
-
-// latest finds a set's newest commit: by id from the set's head, by name
-// through the index, and through the
-// heads the store keeps when the index has none.
-func latest(index backup.Index, store backup.ObjectStore) func(context.Context, string) (*proto.Ref, error) {
-	return func(ctx context.Context, set string) (*proto.Ref, error) {
-		if id, ok := backup.SetID(set); ok {
-			return headOf(store, id)
-		}
-
-		ref, err := index.LatestCommit(ctx, set)
-		if !errors.Is(err, backup.ErrNotFound) {
-			return ref, err
-		}
-
-		ps, ok := wrapped.Innermost(store).(*pack.PackStorage)
-		if !ok {
-			return nil, err
-		}
-
-		heads, herr := ps.Heads()
-		if herr != nil {
-			return nil, herr
-		}
-
-		var newest *pack.Head
-		for i, head := range heads {
-			if head.Set == set && (newest == nil || head.ReceivedAtNs > newest.ReceivedAtNs) {
-				newest = &heads[i]
-			}
-		}
-
-		if newest == nil {
-			return nil, err
-		}
-
-		return &proto.Ref{Hash: newest.Commit}, nil
-	}
-}
-
-// headOf is the newest commit of the set with id.
-func headOf(store backup.ObjectStore, id uint64) (*proto.Ref, error) {
-	ps, ok := wrapped.Innermost(store).(*pack.PackStorage)
-	if !ok {
-		return nil, fmt.Errorf("store %T keeps no set heads to find set %d in", store, id)
-	}
-
-	heads, err := ps.Heads()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, head := range heads {
-		if head.SetID == id {
-			return &proto.Ref{Hash: head.Commit}, nil
-		}
-	}
-
-	return nil, fmt.Errorf("%w: set %d has no head", backup.ErrNotFound, id)
 }
 
 // invocation is this binary with the global flags it was started with, quoted

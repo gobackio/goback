@@ -67,7 +67,6 @@ func restoreAction(c *cli.Context) error {
 
 	repo := common.OpenRepo(c)
 	store := repo.Store
-	index := repo.Index
 
 	defer func() {
 		common.CloseRepo(repo)
@@ -78,7 +77,7 @@ func restoreAction(c *cli.Context) error {
 	r := &mysql.Restore{
 		Objects:   store,
 		Key:       common.StoreKey(c, repo),
-		Latest:    index.LatestCommit,
+		Latest:    repo.LatestCommit,
 		DumpSet:   c.String("dump-set"),
 		BinlogSet: c.String("binlog-set"),
 		At:        at,
