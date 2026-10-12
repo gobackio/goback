@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/storage/maintenance"
 	"github.com/gobackio/goback/storage/pack"
@@ -51,15 +52,15 @@ var Command = cli.Command{
 
 func gcAction(c *cli.Context) {
 	ctx := common.Context(c)
-	store := common.GetObjectStore(c)
+	repo := common.OpenRepo(c)
+	store := repo.Store
 
-	collector, ok := common.Unwrap(store).(pack.Collector)
+	collector, ok := goback.Innermost(store).(pack.Collector)
 	if !ok {
 		common.Fatalf("storage %s cannot be garbage collected", c.GlobalString("storage"))
 	}
 
-	index := common.OpenIndex(c, store)
-	defer index.Close()
+	index := repo.Index
 
 	attributor, _ := index.(maintenance.Attributor)
 
@@ -81,7 +82,7 @@ func gcAction(c *cli.Context) {
 
 	common.Result(common.View.Report(report), func() { Log(report) })
 
-	common.CloseStore(store)
+	common.CloseRepo(repo)
 }
 
 // Log prints one line per phase of a collection report.

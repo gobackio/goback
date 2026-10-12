@@ -1,4 +1,4 @@
-package common
+package goback
 
 import (
 	"net/url"
@@ -48,7 +48,7 @@ func TestRemoteAddressKeepsThePortOnlyOnce(t *testing.T) {
 }
 
 func TestOnlyThePlaintextSchemeSkipsTLS(t *testing.T) {
-	require.Contains(t, storageDrivers, insecureScheme, "the scheme reaches a store server")
+	require.Contains(t, drivers, insecureScheme, "the scheme reaches a store server")
 }
 
 func TestTheUrlCarriesTheApiKey(t *testing.T) {

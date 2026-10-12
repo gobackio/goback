@@ -60,7 +60,8 @@ func (o *object) list() {
 }
 
 func listAction(c *cli.Context) {
-	store := common.GetObjectStore(c)
+	repo := common.OpenRepo(c)
+	store := repo.Store
 	objectType := proto.ObjectType(proto.ObjectType_value[strings.ToUpper(c.String("type"))])
 
 	o := &object{

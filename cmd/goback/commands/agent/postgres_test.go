@@ -122,7 +122,7 @@ func TestTheAgentBacksUpPostgresWithPointInTimeRecoveryFromAnEmptyKind(t *testin
 
 	env, err := s.open(ctx)
 	require.NoError(t, err)
-	defer closeEnv(env)
+	defer s.close(env)
 
 	r := &postgres.Restore{
 		Objects:        env.Index,

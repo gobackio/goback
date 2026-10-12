@@ -76,15 +76,16 @@ func restoreAction(c *cli.Context) {
 
 	when := time.Now().Add(-d)
 
-	store := common.GetObjectStore(c)
-	idx := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	store := repo.Store
+	idx := repo.Index
 
-	key := common.StoreKey(c, store)
+	key := common.StoreKey(c, repo)
 
 	restorer := &backup.Restorer{
 		Store:   store,
 		Key:     key,
-		Cache:   common.BlobCache(c, key),
+		Cache:   common.BlobCache(c, repo),
 		Workers: c.Int("workers"),
 		Verify:  c.Bool("verify"),
 		DryRun:  c.Bool("dry-run"),

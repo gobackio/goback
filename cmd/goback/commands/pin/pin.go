@@ -44,8 +44,8 @@ func addAction(c *cli.Context) {
 		common.Fatal("usage: pin add <ref>")
 	}
 
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	index := repo.Index
 
 	pin := proto.NewObject(&proto.Pin{Target: common.ParseRef(c.Args().First()), Metadata: common.Metadata(c)})
 
@@ -62,8 +62,8 @@ func addAction(c *cli.Context) {
 }
 
 func listAction(c *cli.Context) {
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	index := repo.Index
 
 	pins, err := common.GetRetention(index).Pins(common.Context(c))
 	if err != nil {
@@ -89,8 +89,8 @@ func removeAction(c *cli.Context) {
 		common.Fatal("usage: pin remove <pin-ref>")
 	}
 
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	index := repo.Index
 
 	err := common.GetRetention(index).Unpin(common.Context(c), common.ParseRef(c.Args().First()))
 	if err != nil {

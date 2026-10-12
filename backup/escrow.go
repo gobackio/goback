@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/gobackio/goback/backup/storekey"
+
 	"filippo.io/age/armor"
 )
 
@@ -49,6 +51,32 @@ type KeyEscrow interface {
 	// PutEscrowedKey keeps one escrowed copy, once: nothing kept is ever
 	// replaced. A store keeps copies of one store key only.
 	PutEscrowedKey(ctx context.Context, key EscrowedKey) error
+	EscrowLister
+}
+
+// EscrowLister reads the escrowed copies of a store's key.
+type EscrowLister interface {
 	// EscrowedKeys returns every copy kept.
 	EscrowedKeys(ctx context.Context) ([]EscrowedKey, error)
+}
+
+// RecoverKey opens the store key with the first escrowed copy the
+// passphrase opens.
+func RecoverKey(ctx context.Context, escrow EscrowLister, passphrase string) (*storekey.Key, error) {
+	kept, err := escrow.EscrowedKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(kept) == 0 {
+		return nil, errors.New("the store keeps no escrowed key; upload one with goback key escrow --upload")
+	}
+
+	for _, k := range kept {
+		if key, err := storekey.Recover(k.Escrowed, passphrase); err == nil {
+			return key, nil
+		}
+	}
+
+	return nil, fmt.Errorf("the passphrase opens none of the %d escrowed copies the store keeps", len(kept))
 }

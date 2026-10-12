@@ -27,8 +27,8 @@ func unretireAction(c *cli.Context) {
 		common.Fatal("usage: commit unretire [--dry-run] (--set <set> [--since <time>] | <ref>...)")
 	}
 
-	store := common.GetObjectStore(c)
-	idx := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	idx := repo.Index
 	ctx := common.Context(c)
 
 	x, ok := idx.(unretirer)
@@ -77,7 +77,7 @@ func unretireAction(c *cli.Context) {
 		}
 	})
 
-	common.CloseAll(store, idx)
+	common.CloseRepo(repo)
 }
 
 func unretiredLine(u views.UnretiredView, dryRun bool) string {

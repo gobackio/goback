@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/admin"
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
@@ -102,8 +103,9 @@ func serverAction(ctx *cli.Context) {
 		log.Println("Serving plaintext; a proxy must terminate TLS in front of this listener")
 	}
 
-	s := common.GetObjectStore(ctx)
-	idx := common.OpenIndex(ctx, s)
+	repo := common.OpenRepo(ctx)
+	s := repo.Store
+	idx := repo.Index
 
 	listener, err := net.Listen("tcp", ctx.String("address"))
 	if err != nil {
@@ -143,7 +145,7 @@ func serverAction(ctx *cli.Context) {
 	probe := &health.Probe{}
 	probe.Register(srv)
 
-	base := common.Unwrap(s)
+	base := goback.Innermost(s)
 	retirer, _ := idx.(backup.Retirer)
 	collector, _ := base.(pack.Collector)
 	attributor, _ := idx.(maintenance.Attributor)

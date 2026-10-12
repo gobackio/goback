@@ -53,8 +53,8 @@ func (c *commit) listTrash() {
 }
 
 func listAction(c *cli.Context) {
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	index := repo.Index
 
 	s := &commit{
 		ctx:   common.Context(c),
@@ -68,7 +68,7 @@ func listAction(c *cli.Context) {
 		s.list()
 	}
 
-	common.CloseAll(store, index)
+	common.CloseRepo(repo)
 }
 
 var listCmd = cli.Command{

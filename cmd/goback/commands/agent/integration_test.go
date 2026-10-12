@@ -81,7 +81,7 @@ func commits(t *testing.T, s *setup, set string) (int, time.Time) {
 
 	env, err := s.open(context.Background())
 	require.NoError(t, err)
-	defer closeEnv(env)
+	defer s.close(env)
 
 	infos, err := env.Index.CommitInfo(context.Background(), set, time.Now().Add(time.Hour), 100)
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestTheAgentPlansFromTheStoreAcrossRestarts(t *testing.T) {
 	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{AgentID: "node-1"})
 	_, err = job.Path(ctx, env, job.PathSettings{Set: "one", Dir: filepath.Join(home, "one"), Workers: 1, ProgressInterval: -1})
 	require.NoError(t, err)
-	closeEnv(env)
+	s.close(env)
 
 	_, byHand := commits(t, s, "one")
 

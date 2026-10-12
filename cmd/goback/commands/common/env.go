@@ -4,22 +4,19 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup/job"
 
 	"github.com/urfave/cli"
 )
 
-// Env opens the store, its index and its key the global flags name, or
-// exits. It opens no cache, and the programs runs start write to stderr
-// as they are. The caller closes the store and the index with CloseAll.
-func Env(c *cli.Context) *job.Env {
-	store := GetObjectStore(c)
-	index := OpenIndex(c, store)
-
+// Env is the job environment of repo with its key, or exits. It opens no
+// cache, and the programs runs start write to stderr as they are.
+func Env(c *cli.Context, repo *goback.Repo) *job.Env {
 	return &job.Env{
-		Store:   store,
-		Index:   index,
-		Key:     StoreKey(c, store),
+		Store:   repo.Store,
+		Index:   repo.Index,
+		Key:     StoreKey(c, repo),
 		AgentID: AgentID(c),
 		Logger:  slog.Default(),
 		Stderr:  os.Stderr,

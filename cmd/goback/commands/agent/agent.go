@@ -132,7 +132,7 @@ func (s *setup) agent(logger *slog.Logger) *agent.Agent {
 	return &agent.Agent{
 		ID:          s.store.AgentID,
 		Open:        s.open,
-		Close:       closeEnv,
+		Close:       s.close,
 		AfterRun:    afterRun,
 		Concurrency: s.cfg.Schedule.Concurrency,
 		Grace:       s.cfg.Schedule.ShutdownGrace,
@@ -186,7 +186,7 @@ func checkAction(c *cli.Context) error {
 	if err != nil {
 		return cli.NewExitError(err.Error(), 2)
 	}
-	defer closeEnv(env)
+	defer s.close(env)
 
 	now := time.Now()
 

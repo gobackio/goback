@@ -67,18 +67,19 @@ func restoreAction(c *cli.Context) error {
 		}
 	}
 
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	store := repo.Store
+	index := repo.Index
 
 	defer func() {
-		common.CloseAll(store, index)
+		common.CloseRepo(repo)
 	}()
 
 	exec := client(c)
 
 	r := &mysql.Restore{
 		Objects:   store,
-		Key:       common.StoreKey(c, store),
+		Key:       common.StoreKey(c, repo),
 		Latest:    index.LatestCommit,
 		DumpSet:   c.String("dump-set"),
 		BinlogSet: c.String("binlog-set"),

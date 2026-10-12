@@ -54,10 +54,10 @@ func commitsAction(c *cli.Context) {
 		common.Fatalf("%s: %v", name, err)
 	}
 
-	store := common.GetObjectStore(c)
-	defer common.CloseStore(store)
+	repo := common.OpenRepo(c)
+	defer common.CloseRepo(repo)
 
-	x := common.OpenIndex(c, store)
+	x := repo.Index
 	defer x.Close()
 
 	indexer, ok := x.(commitIndexer)

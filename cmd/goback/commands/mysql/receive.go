@@ -82,13 +82,14 @@ func receiveAction(c *cli.Context) error {
 
 	ctx, stop := common.Graceful(c, c.Duration("shutdown-grace"))
 
-	env := common.Env(c)
+	repo := common.OpenRepo(c)
+	env := common.Env(c, repo)
 
 	defer func() {
-		common.CloseAll(env.Store, env.Index)
+		common.CloseRepo(repo)
 	}()
 
-	if dir := common.StoreCache(c, "backup"); dir != "" {
+	if dir := repo.StoreCache("backup"); dir != "" {
 		if env.TreeCache, err = job.OpenTreeCache(dir); err != nil {
 			return err
 		}

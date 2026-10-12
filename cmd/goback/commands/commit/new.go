@@ -35,13 +35,14 @@ func runNew(c *cli.Context) error {
 		dir = c.Args().First()
 	}
 
-	env := common.Env(c)
+	repo := common.OpenRepo(c)
+	env := common.Env(c, repo)
 
 	defer func() {
-		common.CloseAll(env.Store, env.Index)
+		common.CloseRepo(repo)
 	}()
 
-	if cacheDir := common.StoreCache(c, "backup"); cacheDir != "" {
+	if cacheDir := repo.StoreCache("backup"); cacheDir != "" {
 		stats, err := job.OpenStatCache(cacheDir, env.Logger)
 		if err != nil {
 			return err
@@ -66,7 +67,7 @@ func runNew(c *cli.Context) error {
 	}
 
 	if c.GlobalBoolT("blob-cache-on-backup") {
-		env.BlobCache = common.BlobCache(c, env.Key)
+		env.BlobCache = common.BlobCache(c, repo)
 	}
 
 	ctx := common.Context(c)

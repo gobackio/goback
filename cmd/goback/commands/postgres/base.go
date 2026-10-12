@@ -40,10 +40,11 @@ func baseAction(c *cli.Context) error {
 	// everything that can exit the process comes before pg_basebackup starts:
 	// an orphaned pg_basebackup is reparented to PID 1, which in the Postgres
 	// container is the postmaster, and its death restarts the cluster
-	env := common.Env(c)
+	repo := common.OpenRepo(c)
+	env := common.Env(c, repo)
 
 	defer func() {
-		common.CloseAll(env.Store, env.Index)
+		common.CloseRepo(repo)
 	}()
 
 	result, err := job.PostgresBase(common.Context(c), env, job.PostgresBaseSettings{

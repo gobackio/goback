@@ -1,4 +1,4 @@
-package common
+package backup_test
 
 import (
 	"context"
@@ -27,16 +27,13 @@ func TestAPassphraseOpensTheCopyItEscrowed(t *testing.T) {
 		kept = append(kept, backup.EscrowedKey{KeyID: key.IDString(), Escrowed: data})
 	}
 
-	opened, err := escrowedKey(ctx, kept, "new passphrase")
+	opened, err := backup.RecoverKey(ctx, kept, "new passphrase")
 	require.NoError(t, err)
 	require.Equal(t, key.ID(), opened.ID())
 
-	_, err = escrowedKey(ctx, kept, "wrong passphrase")
+	_, err = backup.RecoverKey(ctx, kept, "wrong passphrase")
 	require.Error(t, err)
 
-	_, err = escrowedKey(ctx, keeps(nil), "new passphrase")
-	require.Error(t, err)
-
-	_, err = escrowedKey(ctx, struct{}{}, "new passphrase")
+	_, err = backup.RecoverKey(ctx, keeps(nil), "new passphrase")
 	require.Error(t, err)
 }

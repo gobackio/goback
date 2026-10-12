@@ -332,10 +332,20 @@ func (k *Key) encrypt(plaintext, ad []byte) []byte {
 	return out
 }
 
-// Escrow wraps the key file under a passphrase with age, so the key's
-// owner can keep it where the server cannot open it. The result is an
-// armored age file; `age -d` opens it too.
+// MinPassphrase is the fewest characters Escrow takes: anyone holding an
+// agent key of the store can fetch the escrowed copy and guess at it
+// offline.
+const MinPassphrase = 12
+
+// Escrow wraps the key file under a passphrase of at least MinPassphrase
+// characters with age, so the key's owner can keep it where the server
+// cannot open it. The result is an armored age file; `age -d` opens it
+// too.
 func (k *Key) Escrow(passphrase string) ([]byte, error) {
+	if len([]rune(passphrase)) < MinPassphrase {
+		return nil, fmt.Errorf("the passphrase needs at least %d characters", MinPassphrase)
+	}
+
 	data, err := k.Marshal()
 	if err != nil {
 		return nil, err

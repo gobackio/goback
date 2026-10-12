@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
@@ -34,12 +35,13 @@ var Command = cli.Command{
 func repairAction(c *cli.Context) {
 	ctx := common.Context(c)
 
-	store := common.GetObjectStore(c)
-	defer common.CloseStore(store)
+	repo := common.OpenRepo(c)
+	store := repo.Store
+	defer common.CloseRepo(repo)
 
-	idx := common.OpenIndex(c, store)
+	idx := repo.Index
 
-	repairer, ok := common.Unwrap(store).(Repairer)
+	repairer, ok := goback.Innermost(store).(Repairer)
 	if !ok {
 		common.Fatalf("storage %s cannot be repaired", c.GlobalString("storage"))
 	}

@@ -68,12 +68,12 @@ func lsAction(c *cli.Context) error {
 		return errors.Wrap(err, "Failed parsing <age> parameter: %v")
 	}
 
-	store := common.GetObjectStore(c)
-	idx := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	idx := repo.Index
 
 	f := &file{
 		ctx:   common.Context(c),
-		key:   common.StoreKey(c, store),
+		key:   common.StoreKey(c, repo),
 		src:   c.Args().Get(0),
 		index: idx,
 		when:  time.Now().Add(-d),

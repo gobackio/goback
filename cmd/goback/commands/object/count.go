@@ -46,7 +46,8 @@ func (o *object) count() {
 }
 
 func countAction(c *cli.Context) {
-	store := common.GetObjectStore(c)
+	repo := common.OpenRepo(c)
+	store := repo.Store
 
 	o := &object{
 		store: store,

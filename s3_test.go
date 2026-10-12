@@ -1,4 +1,4 @@
-package common
+package goback
 
 import (
 	"bytes"
@@ -14,22 +14,21 @@ import (
 )
 
 func TestAnS3StoreKeepsItsArchivesInTheIndexAndCachesUnderTheCacheDir(t *testing.T) {
+	ctx := context.Background()
 	location := tests3.Start(t, "goback")
-	u := parse(t, location)
 	cacheDir := t.TempDir()
 
-	store, err := initS3(u, StoreSettings{Index: t.TempDir(), Storage: location, CacheDir: cacheDir, MetadataCacheSize: "1GiB"})
+	repo, err := Open(ctx, Settings{Index: t.TempDir(), Storage: location, CacheDir: cacheDir})
 	require.NoError(t, err)
-	require.Contains(t, storeIndexes, store)
-	t.Cleanup(func() { CloseStore(store) })
+	require.NotNil(t, repo.Index)
+	t.Cleanup(func() { _ = repo.Close() })
 
-	ctx := context.Background()
 	content := bytes.Repeat([]byte("goback"), 1<<16)
 
-	ref, err := backup.PutFile(ctx, store, nil, int64(len(content)), bytes.NewReader(content))
+	ref, err := backup.PutFile(ctx, repo.Store, nil, int64(len(content)), bytes.NewReader(content))
 	require.NoError(t, err)
 
-	reader, err := backup.NewBackupReader(store).ReadFile(ctx, ref)
+	reader, err := backup.NewBackupReader(repo.Store).ReadFile(ctx, ref)
 	require.NoError(t, err)
 
 	got, err := io.ReadAll(reader)
@@ -38,10 +37,10 @@ func TestAnS3StoreKeepsItsArchivesInTheIndexAndCachesUnderTheCacheDir(t *testing
 
 	metadata, err := filepath.Glob(filepath.Join(cacheDir, "stores", "*", "metadata"))
 	require.NoError(t, err)
-	require.Len(t, metadata, 1, "the bucket's metadata cache sits under --cache-dir")
+	require.Len(t, metadata, 1, "the bucket's metadata cache sits under the cache directory")
 }
 
 func TestABucketURLTakesNoCache(t *testing.T) {
-	_, err := initS3(parse(t, "s3://bucket?cache="+t.TempDir()), StoreSettings{Index: t.TempDir()})
-	require.ErrorContains(t, err, "--cache-dir")
+	_, err := Open(context.Background(), Settings{Storage: "s3://bucket?cache=" + t.TempDir(), Index: t.TempDir()})
+	require.ErrorContains(t, err, "takes no cache")
 }

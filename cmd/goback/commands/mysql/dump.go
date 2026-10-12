@@ -34,10 +34,11 @@ func dumpAction(c *cli.Context) error {
 		return cli.NewExitError("--set is required", 2)
 	}
 
-	env := common.Env(c)
+	repo := common.OpenRepo(c)
+	env := common.Env(c, repo)
 
 	defer func() {
-		common.CloseAll(env.Store, env.Index)
+		common.CloseRepo(repo)
 	}()
 
 	result, err := job.MySQLDump(common.Context(c), env, job.MySQLDumpSettings{

@@ -47,7 +47,8 @@ func getAction(c *cli.Context) {
 		common.Fatal(err)
 	}
 
-	store := common.GetObjectStore(c)
+	repo := common.OpenRepo(c)
+	store := repo.Store
 
 	o := &object{
 		store: store,

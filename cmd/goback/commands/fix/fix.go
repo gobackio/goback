@@ -17,15 +17,15 @@ var Command = cli.Command{
 }
 
 func fixAction(c *cli.Context) {
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	index := repo.Index
 
 	report, err := index.ReIndex(common.Context(c))
 	if err != nil {
 		common.Fatal(err)
 	}
 
-	common.CloseAll(store, index)
+	common.CloseRepo(repo)
 
 	common.Result(reindexed{Done: common.Done{Action: "reindexed"}, ReIndexView: common.View.ReIndex(report)}, func() {
 		if report.Tied > 0 || report.Behind > 0 || report.Unnamed > 0 {

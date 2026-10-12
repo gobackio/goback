@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
@@ -150,7 +151,7 @@ func due(m *members) {
 	schedule := maintenance.DefaultSchedule
 	schedule.Collect = m.c.Duration("gc-interval")
 
-	base := common.Unwrap(m.objects)
+	base := goback.Innermost(m.objects)
 	runner := &maintenance.Runner{Schedule: schedule}
 	runner.Store, _ = base.(maintenance.Store)
 	runner.Collector, _ = base.(pack.Collector)
@@ -218,7 +219,7 @@ type members struct {
 }
 
 func (m *members) store() maintenance.Store {
-	store, ok := common.Unwrap(m.objects).(maintenance.Store)
+	store, ok := goback.Innermost(m.objects).(maintenance.Store)
 	if !ok {
 		common.Fatalf("storage %s has no archives to maintain", m.c.GlobalString("storage"))
 	}
@@ -228,14 +229,12 @@ func (m *members) store() maintenance.Store {
 
 func action(run func(*members)) func(*cli.Context) {
 	return func(c *cli.Context) {
-		objects := common.GetObjectStore(c)
-		index := common.OpenIndex(c, objects)
+		repo := common.OpenRepo(c)
 
-		run(&members{c: c, objects: objects, index: index})
+		run(&members{c: c, objects: repo.Store, index: repo.Index})
 
-		index.Close()
-		if cl, ok := objects.(common.Closer); ok {
-			cl.Close()
+		if err := repo.Close(); err != nil {
+			log.Printf("Closing the store failed: %v", err)
 		}
 	}
 }

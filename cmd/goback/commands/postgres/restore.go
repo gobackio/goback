@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/postgres"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
@@ -74,16 +75,17 @@ func restoreAction(c *cli.Context) error {
 		}
 	}
 
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	store := repo.Store
+	index := repo.Index
 
 	defer func() {
-		common.CloseAll(store, index)
+		common.CloseRepo(repo)
 	}()
 
 	r := &postgres.Restore{
 		Objects: store,
-		Key:     common.StoreKey(c, store),
+		Key:     common.StoreKey(c, repo),
 		Latest:  latest(index, store),
 		BaseSet: c.String("base-set"),
 		WALSet:  c.String("wal-set"),
@@ -130,7 +132,7 @@ func latest(index backup.Index, store backup.ObjectStore) func(context.Context, 
 			return ref, err
 		}
 
-		ps, ok := common.Unwrap(store).(*pack.PackStorage)
+		ps, ok := goback.Innermost(store).(*pack.PackStorage)
 		if !ok {
 			return nil, err
 		}
@@ -157,7 +159,7 @@ func latest(index backup.Index, store backup.ObjectStore) func(context.Context, 
 
 // headOf is the newest commit of the set with id.
 func headOf(store backup.ObjectStore, id uint64) (*proto.Ref, error) {
-	ps, ok := common.Unwrap(store).(*pack.PackStorage)
+	ps, ok := goback.Innermost(store).(*pack.PackStorage)
 	if !ok {
 		return nil, fmt.Errorf("store %T keeps no set heads to find set %d in", store, id)
 	}
@@ -234,8 +236,9 @@ func walGetAction(c *cli.Context) error {
 		return cli.NewExitError("--wal-set, --commit and the file's name and destination are required", 2)
 	}
 
-	store := common.GetObjectStore(c)
-	defer common.CloseStore(store)
+	repo := common.OpenRepo(c)
+	store := repo.Store
+	defer common.CloseRepo(repo)
 
 	ref := &proto.Ref{Hash: hash}
 
@@ -245,7 +248,7 @@ func walGetAction(c *cli.Context) error {
 	}
 	defer done()
 
-	err = postgres.FetchWAL(ctx, store, common.StoreKey(c, store), ref, c.Args().Get(0), c.Args().Get(1))
+	err = postgres.FetchWAL(ctx, store, common.StoreKey(c, repo), ref, c.Args().Get(0), c.Args().Get(1))
 	if errors.Is(err, backup.ErrNotFound) {
 		return cli.NewExitError("", 1)
 	}

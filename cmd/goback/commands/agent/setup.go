@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/agent"
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
@@ -33,6 +34,7 @@ type setup struct {
 	path         string
 	cfg          *agent.Config
 	store        common.StoreSettings
+	repo         *goback.Repo
 	blobOnBackup bool
 	stateDir     string
 	overrides    []override
@@ -130,11 +132,7 @@ func load(path string, g globals) (*setup, error) {
 		errs = append(errs, errors.New("store.storage or --storage is required"))
 	}
 
-	if _, err := s.store.MetadataCacheLimit(); err != nil {
-		errs = append(errs, err)
-	}
-
-	if _, err := s.store.BlobCacheLimit(); err != nil {
+	if _, err := s.store.Parse(); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -174,28 +172,23 @@ func (s *setup) reload() (tasks []*agent.Task, restart []string, err error) {
 func (s *setup) open(ctx context.Context) (env *job.Env, err error) {
 	logger := slog.Default()
 
-	store, err := s.store.OpenStore()
-	if err != nil {
+	if s.repo, err = s.store.Open(ctx); err != nil {
 		return nil, err
 	}
 
-	env = &job.Env{Store: store, AgentID: s.store.AgentID}
+	env = &job.Env{Store: s.repo.Store, Index: s.repo.Index, AgentID: s.store.AgentID}
 
 	defer func() {
 		if err != nil {
-			closeEnv(env)
+			s.close(env)
 		}
 	}()
 
-	if env.Index, err = s.store.OpenIndex(store); err != nil {
+	if env.Key, err = s.repo.Key(ctx); err != nil {
 		return nil, err
 	}
 
-	if env.Key, err = s.store.Key(ctx, store); err != nil {
-		return nil, err
-	}
-
-	if dir := s.store.StoreCache("backup"); dir != "" {
+	if dir := s.repo.StoreCache("backup"); dir != "" {
 		if env.StatCache, err = job.OpenStatCache(dir, logger); err != nil {
 			return nil, err
 		}
@@ -210,7 +203,7 @@ func (s *setup) open(ctx context.Context) (env *job.Env, err error) {
 	}
 
 	if s.blobOnBackup {
-		if env.BlobCache, err = s.store.BlobCache(env.Key); err != nil {
+		if env.BlobCache, err = s.repo.BlobCache(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -218,8 +211,8 @@ func (s *setup) open(ctx context.Context) (env *job.Env, err error) {
 	return env, nil
 }
 
-// closeEnv closes what open opened.
-func closeEnv(env *job.Env) {
+// close closes what open opened.
+func (s *setup) close(env *job.Env) {
 	if env.StatCache != nil {
 		_ = env.StatCache.Close()
 	}
@@ -228,12 +221,7 @@ func closeEnv(env *job.Env) {
 		_ = env.ObjectCache.Close()
 	}
 
-	if env.Index != nil {
-		common.CloseAll(env.Store, env.Index)
-		return
-	}
-
-	common.CloseStore(env.Store)
+	common.CloseRepo(s.repo)
 }
 
 // afterRun does what a one-shot command does on exit, short of closing:

@@ -311,14 +311,15 @@ func restoreAction(c *cli.Context) {
 		}
 	}
 
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
-	key := common.StoreKey(c, store)
+	repo := common.OpenRepo(c)
+	store := repo.Store
+	index := repo.Index
+	key := common.StoreKey(c, repo)
 
 	restorer := &backup.Restorer{
 		Store:     store,
 		Key:       key,
-		Cache:     common.BlobCache(c, key),
+		Cache:     common.BlobCache(c, repo),
 		Workers:   c.Int("workers"),
 		Overwrite: overwriteMode(c.String("overwrite")),
 		Verify:    c.Bool("verify"),
@@ -361,7 +362,7 @@ func restoreAction(c *cli.Context) {
 
 	common.SweepBlobCache(restorer.Cache)
 
-	common.CloseAll(store, index)
+	common.CloseRepo(repo)
 }
 
 var restoreFlags = []cli.Flag{

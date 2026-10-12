@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
 	"github.com/gobackio/goback/storage/pack"
@@ -27,9 +28,10 @@ var Command = cli.Command{
 }
 
 func scrubAction(c *cli.Context) {
-	store := common.GetObjectStore(c)
+	repo := common.OpenRepo(c)
+	store := repo.Store
 
-	scrubber, ok := common.Unwrap(store).(Scrubber)
+	scrubber, ok := goback.Innermost(store).(Scrubber)
 	if !ok {
 		common.Fatalf("storage %s cannot be scrubbed", c.GlobalString("storage"))
 	}
@@ -69,7 +71,7 @@ func scrubAction(c *cli.Context) {
 		}
 	})
 
-	common.CloseStore(store)
+	common.CloseRepo(repo)
 
 	if len(report.Corrupt) > 0 {
 		os.Exit(1)

@@ -59,8 +59,8 @@ func retentionAction(c *cli.Context) {
 		common.Fatal("usage: set retention [<name>] [--keep-... | --inherit] [--trash-days N]")
 	}
 
-	store := common.GetObjectStore(c)
-	idx := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	idx := repo.Index
 	defer idx.Close()
 
 	x, ok := idx.(admin.Index)
@@ -228,8 +228,8 @@ func deleteAction(c *cli.Context) {
 		common.Fatal("usage: set delete [--erase] <name>")
 	}
 
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	index := repo.Index
 
 	err := common.GetRetention(index).DeleteSet(common.Context(c), c.Args().First(), c.Bool("erase"))
 	if err != nil {
@@ -245,8 +245,8 @@ func undeleteAction(c *cli.Context) {
 		common.Fatal("usage: set undelete <name>")
 	}
 
-	store := common.GetObjectStore(c)
-	index := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	index := repo.Index
 
 	err := common.GetRetention(index).UndeleteSet(common.Context(c), c.Args().First())
 	if err != nil {

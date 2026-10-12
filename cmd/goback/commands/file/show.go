@@ -59,12 +59,12 @@ func showAction(c *cli.Context) error {
 
 	when := time.Now().Add(-d)
 
-	store := common.GetObjectStore(c)
-	idx := common.OpenIndex(c, store)
+	repo := common.OpenRepo(c)
+	idx := repo.Index
 
 	f := &file{
 		ctx:   common.Context(c),
-		key:   common.StoreKey(c, store),
+		key:   common.StoreKey(c, repo),
 		src:   src,
 		index: idx,
 		when:  when,

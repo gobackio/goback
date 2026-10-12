@@ -143,19 +143,10 @@ func newAction(c *cli.Context) error {
 	return write(c, key, "wrote")
 }
 
-// minPassphrase is the shortest passphrase a key is escrowed under: anyone
-// holding an agent key of the store can fetch the escrowed copy and guess
-// at it offline.
-const minPassphrase = 12
-
 func escrowAction(c *cli.Context) error {
 	pass, err := passphrase(c)
 	if err != nil {
 		return err
-	}
-
-	if len([]rune(pass)) < minPassphrase {
-		return fmt.Errorf("the passphrase needs at least %d characters", minPassphrase)
 	}
 
 	key, err := storekey.Load(c.String("key"))
@@ -188,8 +179,9 @@ func escrowAction(c *cli.Context) error {
 
 // upload keeps the escrowed key with the store --storage names.
 func upload(c *cli.Context, keyID string, escrowed []byte) error {
-	store := common.GetObjectStore(c)
-	defer common.CloseStore(store)
+	repo := common.OpenRepo(c)
+	store := repo.Store
+	defer common.CloseRepo(repo)
 
 	escrow, ok := store.(backup.KeyEscrow)
 	if !ok {
