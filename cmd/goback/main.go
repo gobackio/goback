@@ -122,7 +122,7 @@ func main() {
 		if errors.As(err, &coded) {
 			switch {
 			case err.Error() != "":
-				common.Fail(err.Error())
+				common.FailError(err)
 			case common.JSON():
 				common.Fail(fmt.Sprintf("exit status %d", coded.ExitCode()))
 			}

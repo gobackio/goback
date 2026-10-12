@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // capture runs fn in the given mode with stdout and exit captured.
@@ -56,4 +59,27 @@ func TestAFailureIsAnErrorObjectOnStdoutAndExitsOne(t *testing.T) {
 	out, code = capture(t, false, func() { Fatal(errors.New("broken")) })
 	require.Empty(t, out, "text mode logs the failure instead")
 	require.Equal(t, 1, code)
+}
+
+func TestAFailureCarriesTheGRPCCodeOfItsError(t *testing.T) {
+	refused := fmt.Errorf("listing commits: %w", status.Error(codes.Unauthenticated, "unknown key"))
+
+	for name, fail := range map[string]func(){
+		"FailError": func() { FailError(refused) },
+		"Fatal":     func() { Fatal(refused) },
+		"Fatalf":    func() { Fatalf("store: %v", refused) },
+	} {
+		out, _ := capture(t, true, fail)
+
+		var got map[string]string
+		require.NoError(t, json.Unmarshal([]byte(out), &got), name)
+		require.Equal(t, "Unauthenticated", got["code"], name)
+	}
+
+	out, _ := capture(t, true, func() { FailError(errors.New("broken")) })
+
+	var got map[string]string
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	require.Equal(t, "broken", got["error"])
+	require.NotContains(t, got, "code")
 }

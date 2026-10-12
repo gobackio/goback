@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,4 +111,53 @@ func TestJSONModeKeepsResultsOnStdoutAndLogsAsLinesOnStderr(t *testing.T) {
 	out, _, code = c.runJSON("postgres", "receive")
 	require.Equal(t, 2, code, "a usage error keeps its own exit code")
 	require.NoError(t, json.Unmarshal([]byte(out), &failure), out)
+}
+
+func TestJSONErrorNamesTheCodeOfAStoreServerRefusingTheKey(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the binary")
+	}
+
+	home := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(home, "store"), 0o755))
+	bin := buildCLI(t)
+
+	server := exec.Command(bin, "--storage", "store", "--index", "index", "server",
+		"--address", "127.0.0.1:0", "--secret", "right", "--plaintext-behind-proxy")
+	server.Dir = home
+
+	logs, err := server.StderrPipe()
+	require.NoError(t, err)
+	require.NoError(t, server.Start())
+	t.Cleanup(func() { _ = server.Process.Kill(); _ = server.Wait() })
+
+	var addr string
+
+	lines := bufio.NewScanner(logs)
+	for addr == "" && lines.Scan() {
+		if _, after, ok := strings.Cut(lines.Text(), "Listening on "); ok {
+			addr = strings.Trim(after, `"`)
+		}
+	}
+
+	require.NotEmpty(t, addr, "the server never listened")
+
+	go func() {
+		for lines.Scan() {
+		}
+	}()
+
+	list := exec.Command(bin, "--json", "--storage", "goback+insecure://wrong@"+addr, "--set", "world", "--agent-id", "node-1", "commit", "list")
+	list.Dir = home
+
+	out, err := list.Output()
+	require.Error(t, err)
+
+	var failure struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	require.NoError(t, json.Unmarshal(out, &failure), string(out))
+	require.NotEmpty(t, failure.Error)
+	require.Equal(t, "Unauthenticated", failure.Code)
 }

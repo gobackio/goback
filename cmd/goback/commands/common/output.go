@@ -11,6 +11,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -63,16 +66,24 @@ func Result(v any, text func()) {
 // Fail reports that a command failed: in JSON mode as an error object on
 // stdout, otherwise as an error in the log.
 func Fail(msg string) {
-	fail(msg, 2)
+	fail(msg, nil, 2)
 }
 
-func fail(msg string, skip int) {
+// FailError reports that a command failed with err, as Fail does with its
+// message; in JSON mode the error object also carries err's gRPC status
+// code name as "code", if err carries one.
+func FailError(err error) {
+	fail(err.Error(), err, 2)
+}
+
+func fail(msg string, err error, skip int) {
 	if jsonMode {
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)
 		_ = enc.Encode(struct {
 			Error string `json:"error"`
-		}{msg})
+			Code  string `json:"code,omitempty"`
+		}{msg, statusCode(err)})
 
 		return
 	}
@@ -84,21 +95,42 @@ func fail(msg string, skip int) {
 	_ = slog.Default().Handler().Handle(context.Background(), record)
 }
 
+func statusCode(err error) string {
+	switch code := status.Code(err); code {
+	case codes.OK, codes.Unknown:
+		return ""
+	default:
+		return code.String()
+	}
+}
+
+func firstError(v []any) error {
+	for _, a := range v {
+		if err, ok := a.(error); ok {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Fatal fails the command with the values' message, as log.Fatal would,
-// and exits 1.
+// and exits 1. The first error among v gives the JSON error its code.
 func Fatal(v ...any) {
-	fail(fmt.Sprint(v...), 2)
+	fail(fmt.Sprint(v...), firstError(v), 2)
 	exit(1)
 }
 
-// Fatalf fails the command with the formatted message and exits 1.
+// Fatalf fails the command with the formatted message and exits 1. The
+// first error among v gives the JSON error its code.
 func Fatalf(format string, v ...any) {
-	fail(fmt.Sprintf(format, v...), 2)
+	fail(fmt.Sprintf(format, v...), firstError(v), 2)
 	exit(1)
 }
 
-// Fatalln fails the command as log.Fatalln would and exits 1.
+// Fatalln fails the command as log.Fatalln would and exits 1. The first
+// error among v gives the JSON error its code.
 func Fatalln(v ...any) {
-	fail(strings.TrimSuffix(fmt.Sprintln(v...), "\n"), 2)
+	fail(strings.TrimSuffix(fmt.Sprintln(v...), "\n"), firstError(v), 2)
 	exit(1)
 }
