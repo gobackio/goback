@@ -72,9 +72,6 @@ func (c *Config) Tasks() []*Task {
 	return tasks
 }
 
-// logEvery is how often file-based log capture commits.
-const logEvery = time.Minute
-
 // defaultDatabasePlan is when a database's full backups run unless the
 // backup says otherwise: daily at 03:00.
 const defaultDatabasePlan = "0 3 * * *"
@@ -110,20 +107,6 @@ func (b *Backup) fullTask(kind, set, fallback string, run RunFunc) *Task {
 		Jitter:  b.Jitter,
 		Timeout: b.Timeout,
 		Run:     run,
-	}
-}
-
-// logTask is the task that captures a database's log to set every
-// minute, once base holds a complete commit.
-func logTask(kind, set, base string, run RunFunc) *Task {
-	return &Task{
-		Name:  set,
-		Set:   set,
-		Kind:  kind,
-		Plan:  Every(logEvery),
-		Log:   true,
-		After: base,
-		Run:   run,
 	}
 }
 
