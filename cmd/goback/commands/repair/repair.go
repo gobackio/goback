@@ -2,28 +2,17 @@ package repair
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
-	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
-	"github.com/gobackio/goback/storage/pack"
-	"github.com/gobackio/goback/storage/wrapped"
+	"github.com/gobackio/goback/storage/maintenance"
 
 	"github.com/urfave/cli"
 )
-
-// Repairer is implemented by stores that can rewrite their damage away.
-type Repairer interface {
-	Repair(ctx context.Context) (*pack.RepairReport, error)
-}
-
-// Lister is implemented by indexes that can name their sets.
-type Lister interface {
-	ListSets(ctx context.Context) ([]index.SetInfo, error)
-}
 
 // Command is the repair command.
 var Command = cli.Command{
@@ -36,22 +25,18 @@ func repairAction(c *cli.Context) {
 	ctx := common.Context(c)
 
 	repo := common.OpenRepo(c)
-	store := repo.Store
 	defer common.CloseRepo(repo)
 
-	idx := repo.Index
-
-	repairer, ok := wrapped.Innermost(store).(Repairer)
-	if !ok {
+	report, damage, err := maintenance.Repair(ctx, repo.Store, repo.Index)
+	if errors.Is(err, errors.ErrUnsupported) {
 		common.Fatalf("storage %s cannot be repaired", c.GlobalString("storage"))
 	}
 
-	report, err := repairer.Repair(ctx)
 	if err != nil {
 		common.Fatal(err)
 	}
 
-	markDamage(ctx, idx, report.Lost)
+	logDamage(ctx, repo.Index, report.Lost, damage)
 
 	hexes := func(refs []*proto.Ref) []string {
 		out := make([]string, len(refs))
@@ -81,43 +66,30 @@ func repairAction(c *cli.Context) {
 	})
 }
 
-// markDamage records the paths that held what the repair could not keep,
-// so the next backup of their sets reads them again.
-func markDamage(ctx context.Context, idx backup.Index, lost []*proto.Ref) {
+// logDamage says what recording the damage of the lost objects did.
+func logDamage(ctx context.Context, idx backup.Index, lost []*proto.Ref, damage *backup.DamageReport) {
 	if len(lost) == 0 {
 		return
 	}
 
-	damage, ok := idx.(backup.DamageIndex)
-	lister, listable := idx.(Lister)
-
-	if !ok || !listable {
+	if damage == nil {
 		log.Printf("index %T cannot record damage, so nothing will read the lost objects again", idx)
 		return
 	}
 
-	sets, err := lister.ListSets(ctx)
-	if err != nil {
-		common.Fatalf("Listing the sets failed: %v", err)
+	names := map[int64]string{}
+	if lister, ok := idx.(maintenance.SetLister); ok {
+		sets, _ := lister.ListSets(ctx)
+		for _, s := range sets {
+			names[s.ID] = s.Name
+		}
 	}
 
-	ids := make([]int64, 0, len(sets))
-	names := make(map[int64]string, len(sets))
-	for _, s := range sets {
-		ids = append(ids, s.ID)
-		names[s.ID] = s.Name
-	}
-
-	result, err := backup.ReportDamage(ctx, idx, damage, ids, lost)
-	if err != nil {
-		common.Fatalf("Recording the damage failed: %v", err)
-	}
-
-	for set, paths := range result.Paths {
+	for set, paths := range damage.Paths {
 		log.Printf("set %s: %d paths will be read again by the next backup", names[set], len(paths))
 	}
 
-	for _, at := range result.Lost {
+	for _, at := range damage.Lost {
 		if at.Open {
 			continue
 		}
@@ -125,7 +97,7 @@ func markDamage(ctx context.Context, idx backup.Index, lost []*proto.Ref) {
 		log.Printf("set %s: %s is unrecoverable in the snapshots that hold this version", at.Set, at.Path)
 	}
 
-	if len(result.Rescan) > 0 {
-		log.Printf("%d objects could not be placed at a path, so %d sets will be read in full", len(result.Unplaced), len(result.Rescan))
+	if len(damage.Rescan) > 0 {
+		log.Printf("%d objects could not be placed at a path, so %d sets will be read in full", len(damage.Unplaced), len(damage.Rescan))
 	}
 }

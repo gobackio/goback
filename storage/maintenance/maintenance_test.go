@@ -9,6 +9,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/index"
+	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage/pack"
 
 	"github.com/stretchr/testify/require"
@@ -186,4 +187,26 @@ func TestNewRunnerFindsTheJobsAndEachReindexesAfter(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(1), x.recorded.Load())
 	require.Equal(t, int32(3), x.fakeReindexer.runs.Load())
+}
+
+type fakeRepairer struct {
+	backup.ObjectStore
+	lost []*proto.Ref
+}
+
+func (f *fakeRepairer) Repair(context.Context) (*pack.RepairReport, error) {
+	return &pack.RepairReport{Lost: f.lost}, nil
+}
+
+func TestRepairFindsTheRepairerBeneathWrappingStores(t *testing.T) {
+	ctx := context.Background()
+
+	_, _, err := Repair(ctx, &fakeArchives{}, &fakeIndex{})
+	require.ErrorIs(t, err, errors.ErrUnsupported)
+
+	lost := []*proto.Ref{{Hash: []byte{1}}}
+	report, damage, err := Repair(ctx, wrapping{&fakeRepairer{lost: lost}}, &fakeIndex{})
+	require.NoError(t, err)
+	require.Equal(t, lost, report.Lost)
+	require.Nil(t, damage, "an index that records no damage records none")
 }
