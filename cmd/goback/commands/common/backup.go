@@ -3,107 +3,49 @@ package common
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 
 	"github.com/gobackio/goback"
+	"github.com/gobackio/goback/agent"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage/maintenance"
 
-	"github.com/dustin/go-humanize"
 	"github.com/urfave/cli"
 )
 
-// StoreSettings are the global store flags as given, which the agent's
-// config file also sets.
-type StoreSettings struct {
-	Storage    string
-	Index      string
-	AgentID    string
-	StoreKey   string
-	Passphrase string
-	AtRestKey  string
-	CacheDir   string
-
-	MetadataCacheSize string
-	BlobCacheSize     string
-}
-
-// Settings reads the StoreSettings from the global flags; the agent id
-// defaults to the hostname.
-func Settings(c *cli.Context) StoreSettings {
-	return StoreSettings{
+// Settings are the store settings the global flags give.
+func Settings(c *cli.Context) (goback.Settings, error) {
+	settings, err := agent.Store{
 		Storage:           c.GlobalString("storage"),
 		Index:             c.GlobalString("index"),
-		AgentID:           AgentID(c),
+		AgentID:           c.GlobalString("agent-id"),
 		StoreKey:          c.GlobalString("store-key"),
-		Passphrase:        c.GlobalString("passphrase"),
 		AtRestKey:         c.GlobalString("at-rest-key"),
 		CacheDir:          c.GlobalString("cache-dir"),
 		MetadataCacheSize: c.GlobalString("metadata-cache-size"),
 		BlobCacheSize:     c.GlobalString("blob-cache-size"),
-	}
-}
+	}.Settings()
 
-// Parse turns the flag values into goback.Settings. A cache size of 0
-// means no bound.
-func (s StoreSettings) Parse() (goback.Settings, error) {
-	metadata, err := cacheSize("--metadata-cache-size", s.MetadataCacheSize)
-	if err != nil {
-		return goback.Settings{}, err
-	}
+	settings.Passphrase = c.GlobalString("passphrase")
 
-	blobs, err := cacheSize("--blob-cache-size", s.BlobCacheSize)
-	if err != nil {
-		return goback.Settings{}, err
-	}
-
-	return goback.Settings{
-		Storage:           s.Storage,
-		Index:             s.Index,
-		AgentID:           s.AgentID,
-		StoreKey:          s.StoreKey,
-		Passphrase:        s.Passphrase,
-		AtRestKey:         s.AtRestKey,
-		CacheDir:          s.CacheDir,
-		MetadataCacheSize: metadata,
-		BlobCacheSize:     blobs,
-	}, nil
-}
-
-func cacheSize(flag, value string) (int64, error) {
-	size, err := humanize.ParseBytes(value)
-	if err != nil {
-		return 0, fmt.Errorf("invalid %s: %w", flag, err)
-	}
-
-	if size == 0 {
-		return -1, nil
-	}
-
-	return int64(size), nil
-}
-
-// Open opens the store s names.
-func (s StoreSettings) Open(ctx context.Context) (*goback.Repo, error) {
-	if s.Storage == "" {
-		return nil, errors.New("--storage is required: where the objects live")
-	}
-
-	settings, err := s.Parse()
-	if err != nil {
-		return nil, err
-	}
-
-	return goback.Open(ctx, settings)
+	return settings, err
 }
 
 // OpenRepo opens the store the global flags name, or exits. Close it with
 // CloseRepo.
 func OpenRepo(c *cli.Context) *goback.Repo {
-	repo, err := Settings(c).Open(Context(c))
+	settings, err := Settings(c)
+	if err != nil {
+		Fatal(err)
+	}
+
+	if settings.Storage == "" {
+		Fatal(errors.New("--storage is required: where the objects live"))
+	}
+
+	repo, err := goback.Open(Context(c), settings)
 	if err != nil {
 		Fatal(err)
 	}

@@ -5,6 +5,7 @@
 package job
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/gobackio/goback/backup/statcache"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/storage/badger"
+	"github.com/gobackio/goback/storage/pack"
 )
 
 // Env is what runs share: the open store and index, the key, the agent
@@ -42,6 +44,54 @@ type Env struct {
 	TreeCache *blobcache.Cache
 	// BlobCache receives every blob Path uploads.
 	BlobCache *blobcache.Cache
+}
+
+// Close closes the stat and object caches.
+func (e *Env) Close() error {
+	var errs []error
+
+	if e.StatCache != nil {
+		errs = append(errs, e.StatCache.Close())
+	}
+
+	if e.ObjectCache != nil {
+		errs = append(errs, e.ObjectCache.Close())
+	}
+
+	return errors.Join(errs...)
+}
+
+// AfterRun is the upkeep between runs: it compacts the store when it can
+// and trims the blob and tree caches, logging what fails.
+func AfterRun(ctx context.Context, env *Env) {
+	logger := env.logger()
+
+	if c, ok := env.Store.(interface {
+		Compact(context.Context) (*pack.CompactReport, error)
+	}); ok {
+		report, err := c.Compact(ctx)
+
+		switch {
+		case err != nil:
+			logger.Warn("compaction failed", "error", err)
+		case report.Rewritten > 0:
+			logger.Info(report.Summary())
+		}
+	}
+
+	if env.BlobCache != nil {
+		if removed, err := env.BlobCache.Sweep(); err != nil {
+			logger.Warn("sweeping the blob cache failed", "error", err)
+		} else if removed > 0 {
+			logger.Info("evicted blobs from the cache", "count", removed)
+		}
+	}
+
+	if env.TreeCache != nil {
+		if _, err := env.TreeCache.Sweep(); err != nil {
+			logger.Warn("sweeping the tree cache failed", "error", err)
+		}
+	}
 }
 
 func (e *Env) logger() *slog.Logger {

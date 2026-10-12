@@ -3,6 +3,7 @@ package postgres
 import (
 	"log"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/postgres"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
@@ -41,9 +42,10 @@ func baseAction(c *cli.Context) error {
 	// an orphaned pg_basebackup is reparented to PID 1, which in the Postgres
 	// container is the postmaster, and its death restarts the cluster
 	repo := common.OpenRepo(c)
-	env := common.Env(c, repo)
+	env := common.Env(c, repo, goback.Caches{})
 
 	defer func() {
+		_ = env.Close()
 		common.CloseRepo(repo)
 	}()
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/agent"
 	"github.com/gobackio/goback/backup/postgres"
 	"github.com/gobackio/goback/proto"
@@ -120,14 +121,17 @@ func TestTheAgentBacksUpPostgresWithPointInTimeRecoveryFromAnEmptyKind(t *testin
 	require.NoError(t, err, "the spool is under the state dir")
 	require.NotEmpty(t, files)
 
-	env, err := s.open(ctx)
+	repo, err := goback.Open(ctx, s.settings)
 	require.NoError(t, err)
-	defer s.close(env)
+	defer repo.Close()
+
+	key, err := repo.Key(ctx)
+	require.NoError(t, err)
 
 	r := &postgres.Restore{
-		Objects:        env.Index,
-		Key:            env.Key,
-		Latest:         func(ctx context.Context, set string) (*proto.Ref, error) { return env.Index.LatestCommit(ctx, set) },
+		Objects:        repo.Index,
+		Key:            key,
+		Latest:         func(ctx context.Context, set string) (*proto.Ref, error) { return repo.Index.LatestCommit(ctx, set) },
 		BaseSet:        "db-base",
 		WALSet:         "db-wal",
 		RestoreCommand: func(*proto.Ref) string { return "true" },
@@ -137,7 +141,7 @@ func TestTheAgentBacksUpPostgresWithPointInTimeRecoveryFromAnEmptyKind(t *testin
 	require.NoError(t, err)
 	require.NotNil(t, restored.WAL)
 
-	walCommit, err := env.Index.Get(ctx, restored.WAL)
+	walCommit, err := repo.Index.Get(ctx, restored.WAL)
 	require.NoError(t, err)
 
 	end, err := postgres.ParseLSN(walCommit.GetCommit().GetMetadata()[postgres.MetaEndLSN])

@@ -1,7 +1,6 @@
 package common
 
 import (
-	"log/slog"
 	"os"
 
 	"github.com/gobackio/goback"
@@ -10,15 +9,16 @@ import (
 	"github.com/urfave/cli"
 )
 
-// Env is the job environment of repo with its key, or exits. It opens no
-// cache, and the programs runs start write to stderr as they are.
-func Env(c *cli.Context, repo *goback.Repo) *job.Env {
-	return &job.Env{
-		Store:   repo.Store,
-		Index:   repo.Index,
-		Key:     StoreKey(c, repo),
-		AgentID: AgentID(c),
-		Logger:  slog.Default(),
-		Stderr:  os.Stderr,
+// Env is the job environment of repo with the caches c names, or exits.
+// The programs runs start write to stderr as they are. Close it before
+// the repo.
+func Env(c *cli.Context, repo *goback.Repo, caches goback.Caches) *job.Env {
+	env, err := repo.Env(Context(c), caches)
+	if err != nil {
+		Fatal(err)
 	}
+
+	env.Stderr = os.Stderr
+
+	return env
 }

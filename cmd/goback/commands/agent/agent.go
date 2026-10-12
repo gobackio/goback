@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/agent"
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
@@ -130,10 +131,9 @@ func runAction(c *cli.Context) error {
 // agent is the agent that runs s's backups.
 func (s *setup) agent(logger *slog.Logger) *agent.Agent {
 	return &agent.Agent{
-		ID:          s.store.AgentID,
-		Open:        s.open,
-		Close:       s.close,
-		AfterRun:    afterRun,
+		ID:          s.settings.AgentID,
+		Settings:    s.settings,
+		Caches:      s.store.Caches(),
 		Concurrency: s.cfg.Schedule.Concurrency,
 		Grace:       s.cfg.Schedule.ShutdownGrace,
 		StateDir:    s.stateDir,
@@ -180,13 +180,17 @@ func checkAction(c *cli.Context) error {
 		return err
 	}
 
-	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{AgentID: s.store.AgentID})
+	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{AgentID: s.settings.AgentID})
 
-	env, err := s.open(ctx)
+	repo, err := goback.Open(ctx, s.settings)
 	if err != nil {
 		return cli.NewExitError(err.Error(), 2)
 	}
-	defer s.close(env)
+	defer repo.Close()
+
+	if _, err := repo.Key(ctx); err != nil {
+		return cli.NewExitError(err.Error(), 2)
+	}
 
 	now := time.Now()
 
@@ -204,12 +208,12 @@ func checkAction(c *cli.Context) error {
 			p.Plan = "always"
 		}
 
-		last, _, err := agent.LastRun(ctx, env.Index, t.Set, now)
+		last, _, err := agent.LastRun(ctx, repo.Index, t.Set, now)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: reading the last run: %w", t.Name, err))
 		} else {
 			p.LastRun = last
-			p.NextDue = t.NextDue(s.store.AgentID, last, now)
+			p.NextDue = t.NextDue(s.settings.AgentID, last, now)
 		}
 
 		jobs = append(jobs, p)

@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/mysql"
@@ -83,17 +84,12 @@ func receiveAction(c *cli.Context) error {
 	ctx, stop := common.Graceful(c, c.Duration("shutdown-grace"))
 
 	repo := common.OpenRepo(c)
-	env := common.Env(c, repo)
+	env := common.Env(c, repo, goback.Caches{Trees: true})
 
 	defer func() {
+		_ = env.Close()
 		common.CloseRepo(repo)
 	}()
-
-	if dir := repo.StoreCache("backup"); dir != "" {
-		if env.TreeCache, err = job.OpenTreeCache(dir); err != nil {
-			return err
-		}
-	}
 
 	return job.MySQLReceive(ctx, env, job.MySQLReceiveSettings{
 		Set:               set,

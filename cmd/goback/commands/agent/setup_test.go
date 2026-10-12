@@ -69,7 +69,7 @@ func TestAFlagOverridesTheFileAndIsNamed(t *testing.T) {
 	require.Equal(t, "node-1", s.store.AgentID)
 	require.Equal(t, "2GiB", s.store.MetadataCacheSize)
 	require.Equal(t, "4GB", s.store.BlobCacheSize)
-	require.True(t, s.blobOnBackup)
+	require.True(t, s.store.Caches().Blobs)
 	require.Equal(t, filepath.Join("/cache", "schedule"), s.stateDir)
 
 	var keys []string
@@ -101,11 +101,11 @@ backups: [{name: a, every: 1h, path: {dir: /a}}]
 
 	s, err := load(path, cliDefaults(nil))
 	require.NoError(t, err)
-	require.Equal(t, "from file", s.store.Passphrase)
+	require.Equal(t, "from file", s.settings.Passphrase)
 
 	s, err = load(path, cliDefaults(map[string]string{"passphrase": "from flag"}))
 	require.NoError(t, err)
-	require.Equal(t, "from flag", s.store.Passphrase)
+	require.Equal(t, "from flag", s.settings.Passphrase)
 	require.Len(t, s.overrides, 1)
 }
 
@@ -117,11 +117,11 @@ backups: [{name: a, every: 1h, path: {dir: /a}}]
 
 	s, err := load(path, cliDefaults(nil))
 	require.NoError(t, err)
-	require.False(t, s.blobOnBackup)
+	require.False(t, s.store.Caches().Blobs)
 
 	s, err = load(path, cliDefaults(map[string]string{"blob-cache-on-backup": "true"}))
 	require.NoError(t, err)
-	require.True(t, s.blobOnBackup)
+	require.True(t, s.store.Caches().Blobs)
 }
 
 func TestLoadRefuses(t *testing.T) {

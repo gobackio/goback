@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
@@ -36,39 +37,12 @@ func runNew(c *cli.Context) error {
 	}
 
 	repo := common.OpenRepo(c)
-	env := common.Env(c, repo)
+	env := common.Env(c, repo, goback.Caches{Stats: true, Objects: true, Blobs: c.GlobalBoolT("blob-cache-on-backup")})
 
 	defer func() {
+		_ = env.Close()
 		common.CloseRepo(repo)
 	}()
-
-	if cacheDir := repo.StoreCache("backup"); cacheDir != "" {
-		stats, err := job.OpenStatCache(cacheDir, env.Logger)
-		if err != nil {
-			return err
-		}
-
-		if stats != nil {
-			defer stats.Close()
-
-			env.StatCache = stats
-		}
-
-		objects, err := job.OpenObjectCache(cacheDir, env.Logger)
-		if err != nil {
-			return err
-		}
-
-		if objects != nil {
-			defer objects.Close()
-
-			env.ObjectCache = objects
-		}
-	}
-
-	if c.GlobalBoolT("blob-cache-on-backup") {
-		env.BlobCache = common.BlobCache(c, repo)
-	}
 
 	ctx := common.Context(c)
 	if d := c.Duration("max-duration"); d > 0 {

@@ -12,9 +12,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
+	"github.com/dustin/go-humanize"
+	"github.com/gobackio/goback"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -232,6 +235,87 @@ func (b *Backup) kind() kind {
 	}
 
 	return nil
+}
+
+// Settings is the store section as goback.Settings, with the passphrase
+// read from PassphraseFile. A cache size of 0 means no bound.
+func (s Store) Settings() (goback.Settings, error) {
+	settings := goback.Settings{
+		Storage:   s.Storage,
+		Index:     s.Index,
+		AgentID:   s.AgentID,
+		StoreKey:  s.StoreKey,
+		AtRestKey: s.AtRestKey,
+		CacheDir:  s.CacheDir,
+	}
+
+	if settings.AgentID == "" {
+		settings.AgentID, _ = os.Hostname()
+	}
+
+	var errs []error
+
+	if s.PassphraseFile != "" {
+		data, err := os.ReadFile(s.PassphraseFile)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("reading store.passphrase-file: %w", err))
+		}
+
+		settings.Passphrase = strings.TrimSpace(string(data))
+	}
+
+	var err error
+
+	if settings.MetadataCacheSize, err = cacheSize("metadata-cache-size", s.MetadataCacheSize); err != nil {
+		errs = append(errs, err)
+	}
+
+	if settings.BlobCacheSize, err = cacheSize("blob-cache-size", s.BlobCacheSize); err != nil {
+		errs = append(errs, err)
+	}
+
+	return settings, errors.Join(errs...)
+}
+
+// cacheSize parses a size such as 4GB into what goback.Settings takes:
+// 0 when unset, -1 for no bound.
+func cacheSize(key, value string) (int64, error) {
+	if value == "" {
+		return 0, nil
+	}
+
+	size, err := humanize.ParseBytes(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", key, err)
+	}
+
+	if size == 0 {
+		return -1, nil
+	}
+
+	return int64(size), nil
+}
+
+// Caches is every cache a run uses; the blob cache unless
+// BlobCacheOnBackup turns it off.
+func (s Store) Caches() goback.Caches {
+	return goback.Caches{Stats: true, Objects: true, Trees: true, Blobs: s.BlobCacheOnBackup == nil || *s.BlobCacheOnBackup}
+}
+
+// RestartSections names the sections of c that differ from old and that
+// a running agent keeps until it restarts.
+func (c *Config) RestartSections(old *Config) []string {
+	var sections []string
+
+	if !reflect.DeepEqual(c.Store, old.Store) {
+		sections = append(sections, "store")
+	}
+
+	if !reflect.DeepEqual(c.Schedule, old.Schedule) {
+		sections = append(sections, "schedule")
+	}
+
+	return sections
 }
 
 // StateDir is where the status file and the lock go: the config's

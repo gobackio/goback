@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 
@@ -36,7 +37,8 @@ type Settings struct {
 	// directory for SQLite, or a postgres:// URL. A store server brings
 	// its own.
 	Index string
-	// AgentID is who a store server is told is calling.
+	// AgentID is who commits and who a store server is told is calling;
+	// empty means the hostname.
 	AgentID string
 	// StoreKey is the store key's file. Without it, Passphrase opens the
 	// copy the store keeps escrowed; without either, the store is written
@@ -82,6 +84,10 @@ type Repo struct {
 func Open(ctx context.Context, s Settings) (*Repo, error) {
 	if s.Storage == "" {
 		return nil, errors.New("no storage location: where the objects live")
+	}
+
+	if s.AgentID == "" {
+		s.AgentID, _ = os.Hostname()
 	}
 
 	u, err := parseLocation(s.Storage)

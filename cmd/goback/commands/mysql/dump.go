@@ -3,6 +3,7 @@ package mysql
 import (
 	"log"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/mysql"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
@@ -35,9 +36,10 @@ func dumpAction(c *cli.Context) error {
 	}
 
 	repo := common.OpenRepo(c)
-	env := common.Env(c, repo)
+	env := common.Env(c, repo, goback.Caches{})
 
 	defer func() {
+		_ = env.Close()
 		common.CloseRepo(repo)
 	}()
 

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
@@ -24,8 +25,14 @@ import (
 type Agent struct {
 	// ID is the agent id runs commit as; it also picks each task's jitter.
 	ID string
+	// Settings and Caches name the store and the caches every run shares,
+	// which the agent opens when Open is nil; ID, when set, is the agent id.
+	Settings goback.Settings
+	Caches   goback.Caches
 	// Open opens the store, the index, the key and the caches that every
-	// run shares. The agent retries it with backoff until it works.
+	// run shares. The agent retries it with backoff until it works. When
+	// Open is nil, the agent opens Settings, and a nil Close and AfterRun
+	// close it and run job.AfterRun.
 	Open func(ctx context.Context) (*job.Env, error)
 	// Close closes what Open opened, once every run has ended.
 	Close func(env *job.Env)
@@ -44,6 +51,7 @@ type Agent struct {
 	Now func() time.Time
 
 	once      sync.Once
+	repo      *goback.Repo
 	reloadMu  sync.Mutex
 	reloads   chan []*Task
 	abort     chan struct{}
@@ -54,7 +62,51 @@ func (a *Agent) init() {
 	a.once.Do(func() {
 		a.reloads = make(chan []*Task, 1)
 		a.abort = make(chan struct{})
+
+		if a.Open == nil {
+			a.Open = a.openSettings
+
+			if a.Close == nil {
+				a.Close = a.closeSettings
+			}
+
+			if a.AfterRun == nil {
+				a.AfterRun = job.AfterRun
+			}
+		}
 	})
+}
+
+func (a *Agent) openSettings(ctx context.Context) (*job.Env, error) {
+	settings := a.Settings
+	if a.ID != "" {
+		settings.AgentID = a.ID
+	}
+
+	if settings.Logger == nil {
+		settings.Logger = a.logger()
+	}
+
+	repo, err := goback.Open(ctx, settings)
+	if err != nil {
+		return nil, err
+	}
+
+	env, err := repo.Env(ctx, a.Caches)
+	if err != nil {
+		_ = repo.Close()
+		return nil, err
+	}
+
+	a.repo = repo
+
+	return env, nil
+}
+
+func (a *Agent) closeSettings(env *job.Env) {
+	if err := errors.Join(env.Close(), a.repo.Close()); err != nil {
+		a.logger().Warn("closing the store failed", "error", err)
+	}
 }
 
 func (a *Agent) now() time.Time {

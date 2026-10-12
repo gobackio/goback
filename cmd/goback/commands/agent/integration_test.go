@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/agent"
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup/job"
@@ -79,11 +80,11 @@ func jobNamed(status *agent.Status, name string) agent.JobStatus {
 func commits(t *testing.T, s *setup, set string) (int, time.Time) {
 	t.Helper()
 
-	env, err := s.open(context.Background())
+	repo, err := goback.Open(context.Background(), s.settings)
 	require.NoError(t, err)
-	defer s.close(env)
+	defer repo.Close()
 
-	infos, err := env.Index.CommitInfo(context.Background(), set, time.Now().Add(time.Hour), 100)
+	infos, err := repo.Index.CommitInfo(context.Background(), set, time.Now().Add(time.Hour), 100)
 	require.NoError(t, err)
 
 	if len(infos) == 0 {
@@ -108,13 +109,17 @@ func TestTheAgentPlansFromTheStoreAcrossRestarts(t *testing.T) {
 
 	s := agentAt(t, home, backups("1h"))
 
-	env, err := s.open(context.Background())
+	repo, err := goback.Open(context.Background(), s.settings)
+	require.NoError(t, err)
+
+	env, err := repo.Env(context.Background(), s.store.Caches())
 	require.NoError(t, err)
 
 	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{AgentID: "node-1"})
 	_, err = job.Path(ctx, env, job.PathSettings{Set: "one", Dir: filepath.Join(home, "one"), Workers: 1, ProgressInterval: -1})
 	require.NoError(t, err)
-	s.close(env)
+	require.NoError(t, env.Close())
+	require.NoError(t, repo.Close())
 
 	_, byHand := commits(t, s, "one")
 
