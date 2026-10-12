@@ -281,16 +281,39 @@ func (s *pgStream) fetchHistory(ctx context.Context, timeline uint32) error {
 		return nil
 	}
 
+	content, err := s.readHistory(ctx, timeline)
+	if err != nil {
+		return err
+	}
+
+	return s.spool.put(historyName(timeline), content)
+}
+
+// serverHistory is the history of timeline, the server's.
+func (s *pgStream) serverHistory(ctx context.Context, timeline uint32) (history, error) {
+	if timeline <= 1 {
+		return timelineHistory(timeline), nil
+	}
+
+	content, err := s.readHistory(ctx, timeline)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseHistory(timeline, content)
+}
+
+func (s *pgStream) readHistory(ctx context.Context, timeline uint32) ([]byte, error) {
 	h, err := pglogrepl.TimelineHistory(ctx, s.conn, int32(timeline))
 	if err != nil {
-		return fmt.Errorf("TIMELINE_HISTORY %d: %w", timeline, err)
+		return nil, fmt.Errorf("TIMELINE_HISTORY %d: %w", timeline, err)
 	}
 
 	if h.FileName != historyName(timeline) {
-		return fmt.Errorf("TIMELINE_HISTORY %d named %q", timeline, h.FileName)
+		return nil, fmt.Errorf("TIMELINE_HISTORY %d named %q", timeline, h.FileName)
 	}
 
-	return s.spool.put(h.FileName, h.Content)
+	return h.Content, nil
 }
 
 func historyName(timeline uint32) string {

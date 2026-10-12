@@ -335,6 +335,37 @@ func TestOnlyTheNewestTimelinesLastPartialSegmentIsServed(t *testing.T) {
 	require.False(t, servesPartial([]string{walName(1, 2) + partialSuffix, "00000002.history"}, walName(1, 2)), "a newer timeline began")
 }
 
+func TestARestoreRefusesABaseThatStopsPastWhereTheNewestTimelineForked(t *testing.T) {
+	for _, c := range []struct {
+		history string
+		usable  bool
+	}{
+		{"1\t0/7000100\tbefore 2026-10-12 10:00:00+00\n", false},
+		{"1\t0/7800000\tbefore 2026-10-12 10:00:00+00\n", true},
+	} {
+		t.Run(c.history[2:11], func(t *testing.T) {
+			f := newWALFixture(t)
+
+			_, err := f.runBase(baseTar(t, 42), nil)
+			require.NoError(t, err)
+
+			f.spoolSegment(7, 42)
+			f.spoolSegment(8, 42)
+			require.NoError(t, f.spool.put("00000002.history", []byte(c.history)))
+
+			_, err = f.receive(f.receiving(2, 7, 0x900000))
+			require.NoError(t, err)
+
+			_, _, err = f.restore(time.Time{})
+			if c.usable {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, ErrNoBase)
+			}
+		})
+	}
+}
+
 func TestARestoreRefusesABaseThatStopsAfterTheWALSetEnds(t *testing.T) {
 	f := newWALFixture(t)
 

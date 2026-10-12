@@ -101,6 +101,9 @@ type walCommit struct {
 	// end is where its WAL ends, its partial segment included; zero when
 	// it doesn't say.
 	end uint64
+	// path is the history of its newest timeline, which recovery follows;
+	// nil when it lacks that timeline's history file.
+	path history
 }
 
 func (r *Restore) wal(ctx context.Context) (*proto.Ref, *walCommit, error) {
@@ -133,6 +136,15 @@ func (r *Restore) wal(ctx context.Context) (*proto.Ref, *walCommit, error) {
 		if wal.end, err = ParseLSN(end); err != nil {
 			return nil, nil, fmt.Errorf("the WAL commit's end: %w", err)
 		}
+	}
+
+	tree, err := openWALTree(ctx, r.Objects, r.Objects, commit, r.Key)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if wal.path, err = tree.history(ctx); err != nil {
+		return nil, nil, err
 	}
 
 	return ref, wal, nil
@@ -206,13 +218,34 @@ func (r *Restore) unusable(base *proto.Commit, wal *walCommit) string {
 		return fmt.Sprintf("starts in %s, before the WAL set's first file %s", start, wal.first)
 	}
 
+	stop, err := ParseLSN(base.GetMetadata()[MetaStopLSN])
+	if err != nil {
+		return ""
+	}
+
+	if wal.path != nil {
+		timeline := baseTimeline(base)
+		if s, ok := wal.path.span(timeline); !ok || stop > s.end {
+			return fmt.Sprintf("stops at %s on timeline %d, off the history of the WAL set's timeline %d", FormatLSN(stop), timeline, wal.path.newest())
+		}
+	}
+
 	// recovery reads a segment from the WAL set before the base's own
 	// copy, and a padded partial one ends where the WAL set does
-	if stop, err := ParseLSN(base.GetMetadata()[MetaStopLSN]); err == nil && wal.end != 0 && stop > wal.end {
+	if wal.end != 0 && stop > wal.end {
 		return fmt.Sprintf("stops at %s, after the WAL set's end at %s", FormatLSN(stop), FormatLSN(wal.end))
 	}
 
 	return ""
+}
+
+// baseTimeline is the timeline base started on.
+func baseTimeline(base *proto.Commit) uint32 {
+	if t, err := strconv.ParseUint(base.GetMetadata()[MetaTimeline], 10, 32); err == nil {
+		return uint32(t)
+	}
+
+	return segmentTimeline(base.GetMetadata()[MetaStartWALFile])
 }
 
 func (r *Restore) commit(ctx context.Context, ref *proto.Ref) (*proto.Commit, error) {
@@ -379,7 +412,9 @@ func confString(s string) string {
 // restore_command does with %f and %p. A segment the commit holds only as
 // the newest timeline's partial segment is written padded with zeros to
 // its full size. It returns backup.ErrNotFound for a file the commit does
-// not hold, which Postgres asks for as a matter of course.
+// not hold, which Postgres asks for as a matter of course, and for a
+// segment off the history of the commit's newest timeline, which recovery
+// follows: an older timeline's past where that history leaves it.
 func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key, ref *proto.Ref, name, dst string) error {
 	obj, err := objects.Get(ctx, ref)
 	if err != nil {
@@ -391,21 +426,12 @@ func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key
 		return fmt.Errorf("%x is not a commit", ref.Hash)
 	}
 
-	key, err = backup.CommitKey(ctx, objects, commit, key)
+	tree, err := openWALTree(ctx, objects, objects, commit, key)
 	if err != nil {
 		return err
 	}
 
-	tree, err := backup.OpenTree(ctx, objects, commit.Tree, key, nil)
-	if err != nil {
-		return err
-	}
-
-	names := make([]string, len(tree.Nodes))
-	for i, node := range tree.Nodes {
-		names[i] = string(node.Stat.Name)
-	}
-
+	names := tree.names
 	pad := false
 
 	i := slices.Index(names, name)
@@ -413,12 +439,24 @@ func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key
 		i, pad = slices.Index(names, name+partialSuffix), true
 	}
 
+	if i >= 0 && isSegment(name) && segmentTimeline(name) != newestTimeline(names) {
+		h, err := tree.history(ctx)
+		if err != nil {
+			return err
+		}
+
+		// a whole segment's size is the cluster's segment size
+		if size := uint64(tree.nodes[i].Stat.GetSize()); h != nil && size > 0 && !h.holds(name, size) {
+			i = -1
+		}
+	}
+
 	if i < 0 {
 		return fmt.Errorf("%w: %s", backup.ErrNotFound, name)
 	}
 
-	restorer := &backup.Restorer{Store: objects, Key: key}
-	if _, err := restorer.RestoreFile(ctx, dst, tree.Nodes[i].Stat, tree.Nodes[i].Ref); err != nil {
+	restorer := &backup.Restorer{Store: objects, Key: tree.key}
+	if _, err := restorer.RestoreFile(ctx, dst, tree.nodes[i].Stat, tree.nodes[i].Ref); err != nil {
 		return err
 	}
 
@@ -438,17 +476,8 @@ func servesPartial(names []string, segment string) bool {
 		return false
 	}
 
-	newest := uint32(0)
-	for _, name := range names {
-		if len(name) >= 8 && (isSegment(name) || strings.HasSuffix(name, partialSuffix) || strings.HasSuffix(name, ".history")) {
-			if t, err := strconv.ParseUint(name[:8], 16, 32); err == nil {
-				newest = max(newest, uint32(t))
-			}
-		}
-	}
-
 	timeline := segment[:8]
-	if segmentTimeline(segment) != newest {
+	if segmentTimeline(segment) != newestTimeline(names) {
 		return false
 	}
 

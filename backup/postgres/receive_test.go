@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -339,33 +340,120 @@ func TestSlotNamesComeFromTheSet(t *testing.T) {
 }
 
 func TestStreamingResumesAfterTheNewestWholeSegment(t *testing.T) {
-	_, _, ok := resumePoint([]string{"00000001.history"}, segSize)
+	resume := func(names ...string) (position, bool) {
+		from, _, _, ok := history(nil).reach(names, segSize)
+		return from, ok
+	}
+
+	_, ok := resume("00000001.history")
 	require.False(t, ok)
 
-	timeline, lsn, ok := resumePoint([]string{walName(1, 3), walName(1, 4), walName(1, 2)}, segSize)
+	from, ok := resume(walName(1, 3), walName(1, 4), walName(1, 2))
 	require.True(t, ok)
-	require.Equal(t, uint32(1), timeline)
-	require.Equal(t, uint64(5*segSize), lsn)
+	require.Equal(t, position{timeline: 1, lsn: 5 * segSize}, from)
 
-	timeline, lsn, _ = resumePoint([]string{walName(1, 4), walName(1, 5) + partialSuffix}, segSize)
-	require.Equal(t, uint32(1), timeline)
-	require.Equal(t, uint64(5*segSize), lsn, "the open segment is received again from its start")
+	from, _ = resume(walName(1, 4), walName(1, 5)+partialSuffix)
+	require.Equal(t, position{timeline: 1, lsn: 5 * segSize}, from, "the open segment is received again from its start")
 
-	timeline, lsn, _ = resumePoint([]string{walName(1, 4), walName(1, 5) + partialSuffix, "00000002.history", walName(2, 5) + partialSuffix}, segSize)
-	require.Equal(t, uint32(2), timeline, "the newer timeline")
-	require.Equal(t, uint64(5*segSize), lsn)
+	from, _ = resume(walName(1, 4), walName(1, 5)+partialSuffix, "00000002.history", walName(2, 5)+partialSuffix)
+	require.Equal(t, position{timeline: 2, lsn: 5 * segSize}, from, "the newer timeline")
 }
 
-func TestAGapIsBridgedOnlyByALaterBaseBackup(t *testing.T) {
+// fork is the history of timeline 2 after the cluster was restored to
+// 0/3800000, inside segment 3.
+func fork(t *testing.T) history {
+	t.Helper()
+
+	h, err := parseHistory(2, []byte("1\t0/3800000\tbefore 2026-10-12 10:00:00+00\n"))
+	require.NoError(t, err)
+
+	return h
+}
+
+func TestAHistoryFileLaysOutWhichTimelineHoldsEachLSN(t *testing.T) {
+	h := fork(t)
+	require.Equal(t, uint32(1), h.at(0x37FFFFF))
+	require.Equal(t, uint32(2), h.at(0x3800000))
+
+	require.True(t, h.holds(walName(1, 3), segSize), "up to the fork")
+	require.False(t, h.holds(walName(1, 4), segSize), "past it")
+	require.True(t, h.holds(walName(2, 3)+partialSuffix, segSize))
+	require.False(t, h.holds(walName(3, 3), segSize), "a timeline it doesn't name")
+
+	// timeline 3 forked off timeline 1 before timeline 2 did
+	again, err := parseHistory(3, []byte("1\t0/5800000\tbefore\n\n2\t0/3800000\tbefore\n"))
+	require.NoError(t, err)
+
+	require.Equal(t, uint32(1), again.at(0x37FFFFF))
+	require.Equal(t, uint32(3), again.at(0x4000000))
+	require.False(t, again.holds(walName(2, 5), segSize), "timeline 2 holds nothing of it")
+	require.False(t, again.holds(walName(1, 4), segSize))
+
+	_, err = parseHistory(2, []byte("2\t0/3800000\tbefore\n"))
+	require.Error(t, err, "a history naming its own timeline")
+}
+
+func TestTheReceiverResumesAtTheForkAfterARestoreToAnEarlierMoment(t *testing.T) {
+	one := timelineHistory(1)
+	set := []string{walName(1, 1), walName(1, 2), walName(1, 3), walName(1, 4), walName(1, 5), walName(1, 6) + partialSuffix}
+
+	res, err := resumeAt(set, one, one, segSize)
+	require.NoError(t, err)
+	require.Equal(t, &resumption{position: position{timeline: 1, lsn: 6 * segSize}}, res, "the same history")
+
+	res, err = resumeAt(set, one, fork(t), segSize)
+	require.NoError(t, err)
+	require.Equal(t, &resumption{position: position{timeline: 2, lsn: 3 * segSize}, fork: true}, res, "at the start of the segment it forked in, on the new timeline")
+
+	promoted, err := parseHistory(2, []byte("1\t0/7000100\tno recovery target specified\n"))
+	require.NoError(t, err)
+
+	res, err = resumeAt(set, one, promoted, segSize)
+	require.NoError(t, err)
+	require.Equal(t, &resumption{position: position{timeline: 1, lsn: 6 * segSize}}, res, "a switch past the set's end is followed as it streams")
+
+	forked := append(slices.Clone(set), "00000002.history", walName(2, 3), walName(2, 4)+partialSuffix)
+	res, err = resumeAt(forked, fork(t), fork(t), segSize)
+	require.NoError(t, err)
+	require.Equal(t, &resumption{position: position{timeline: 2, lsn: 4 * segSize}}, res, "on the new timeline once the set follows it")
+
+	res, err = resumeAt(append(slices.Clone(set), "00000002.history"), fork(t), fork(t), segSize)
+	require.NoError(t, err)
+	require.Equal(t, &resumption{position: position{timeline: 2, lsn: 3 * segSize}}, res, "the new timeline's history alone")
+
+	_, err = resumeAt(forked, fork(t), one, segSize)
+	require.ErrorIs(t, err, ErrGap, "the server went on on a timeline the set left")
+
+	_, err = resumeAt([]string{walName(1, 8), walName(1, 9)}, one, fork(t), segSize)
+
+	var gap *gapError
+	require.ErrorAs(t, err, &gap, "a fork before the oldest WAL the set holds")
+	require.Equal(t, uint64(0x3800000), gap.from)
+
+	again, err := parseHistory(3, []byte("1\t0/3800000\tbefore\n2\t0/2000000\tbefore\n"))
+	require.NoError(t, err)
+
+	twice := []string{walName(1, 1), walName(1, 2), walName(1, 3), "00000002.history", walName(2, 3), walName(2, 4), walName(2, 5) + partialSuffix}
+	res, err = resumeAt(twice, fork(t), again, segSize)
+	require.NoError(t, err)
+	require.Equal(t, &resumption{position: position{timeline: 3, lsn: 2 * segSize}, fork: true}, res, "restored to before the first fork")
+}
+
+func TestAGapIsBridgedOnlyByALaterBaseBackupOnTheServersHistory(t *testing.T) {
 	starts := []string{walName(1, 2), walName(1, 9), walName(1, 7), ""}
 
-	timeline, lsn, ok := gapStart(starts, 5*segSize, segSize)
+	timeline, lsn, ok := gapStart(starts, 5*segSize, timelineHistory(1), segSize)
 	require.True(t, ok)
 	require.Equal(t, uint32(1), timeline)
 	require.Equal(t, uint64(7*segSize), lsn, "the oldest base after the gap")
 
-	_, _, ok = gapStart(starts, 9*segSize, segSize)
+	_, _, ok = gapStart(starts, 9*segSize, timelineHistory(1), segSize)
 	require.False(t, ok)
+
+	timeline, lsn, ok = gapStart(append(starts, walName(2, 8)), 3*segSize, fork(t), segSize)
+	require.True(t, ok)
+	require.Equal(t, uint32(2), timeline, "not one on the timeline the server left")
+	require.Equal(t, uint64(8*segSize), lsn)
 }
 
 func TestTheStatusUpdateCarriesFlushAsApply(t *testing.T) {

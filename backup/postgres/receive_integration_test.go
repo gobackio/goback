@@ -232,6 +232,17 @@ func (x *replica) now() time.Time {
 func (x *replica) restore(at time.Time) string {
 	x.t.Helper()
 
+	recovered := x.recover(at)
+	defer func() { _ = recovered.Terminate(context.Background()) }()
+
+	return recovered.psql("SELECT phase, count(*) FROM rows GROUP BY phase ORDER BY min(ctid)")
+}
+
+// recover starts a cluster recovered from the sets to at, or to their end
+// when at is zero, with settings, and waits until it is promoted.
+func (x *replica) recover(at time.Time, settings ...string) *pgContainer {
+	x.t.Helper()
+
 	r := &Restore{
 		Objects:        x.f.index,
 		Latest:         func(ctx context.Context, set string) (*proto.Ref, error) { return x.f.index.LatestCommit(ctx, set) },
@@ -258,23 +269,33 @@ func (x *replica) restore(at time.Time) string {
 			name = segment
 		}
 
-		require.NoError(x.t, FetchWAL(x.f.ctx, x.f.index, nil, restored.WAL, name, filepath.Join(wal, name)))
+		err := FetchWAL(x.f.ctx, x.f.index, nil, restored.WAL, name, filepath.Join(wal, name))
+		if errors.Is(err, backup.ErrNotFound) {
+			continue
+		}
+
+		require.NoError(x.t, err)
 	}
 
 	bundle := tarDirs(x.t, map[string]string{"var/lib/postgresql/data": data, "wal": wal})
 
+	command := "postgres"
+	for _, s := range settings {
+		command += " -c " + s
+	}
+
 	recovered := startPostgres(x.t, testcontainers.ContainerRequest{
-		Image: "postgres:" + x.version + "-alpine",
-		Env:   map[string]string{"PGDATA": "/var/lib/postgresql/data"},
+		Image:        "postgres:" + x.version + "-alpine",
+		Env:          map[string]string{"PGDATA": "/var/lib/postgresql/data"},
+		ExposedPorts: []string{"5432/tcp"},
 		Entrypoint: []string{"sh", "-c", "set -e; tar -xf /tmp/restore.tar -C /; chown -R postgres:postgres /var/lib/postgresql/data /wal; " +
-			"chmod 700 /var/lib/postgresql/data; exec docker-entrypoint.sh postgres"},
+			"chmod 700 /var/lib/postgresql/data; exec docker-entrypoint.sh " + command},
 		Files: []testcontainers.ContainerFile{{Reader: bytes.NewReader(bundle), ContainerFilePath: "/tmp/restore.tar", FileMode: 0o644}},
 	})
-	defer func() { _ = recovered.Terminate(context.Background()) }()
 
 	recovered.waitFor(`[ "$(psql -tAc 'SELECT pg_is_in_recovery()')" = f ]`)
 
-	return recovered.psql("SELECT phase, count(*) FROM rows GROUP BY phase ORDER BY min(ctid)")
+	return recovered
 }
 
 func TestAPointInTimeRestoreFromReplication(t *testing.T) {
@@ -479,6 +500,48 @@ func TestTheReceiverFollowsAPromotionToTimeline2(t *testing.T) {
 
 	require.Equal(t, "before|1000\non the primary|1000\nafter the promotion|1000", x.restore(at))
 	require.Equal(t, "before|1000\non the primary|1000\nafter the promotion|1000\nlater|1000", x.restore(time.Time{}))
+}
+
+func TestTheReceiverGoesOnWhereARestoreToAnEarlierMomentForked(t *testing.T) {
+	x := startReplica(t, "17", "max_slot_wal_keep_size=1GB")
+
+	x.insert("before")
+	x.base()
+
+	stop := x.start(x.receiver())
+	x.insert("kept")
+	x.caughtUp()
+
+	time.Sleep(2 * time.Second)
+	fork := x.now()
+	time.Sleep(2 * time.Second)
+
+	x.insert("abandoned")
+	x.caughtUp()
+	require.NoError(t, stop())
+
+	restored := x.recover(fork, "fsync=off", "max_slot_wal_keep_size=1GB")
+	require.NoError(t, x.pg.Terminate(context.Background()))
+	x.pg, x.conn = restored, connTo(t, restored)
+
+	stop = x.start(x.receiver())
+	x.insert("after the fork")
+	last := x.caughtUp()
+
+	time.Sleep(2 * time.Second)
+	at := x.now()
+	time.Sleep(2 * time.Second)
+
+	x.insert("later")
+	x.caughtUp()
+	require.NoError(t, stop())
+	x.slotKeepsWhatNoCommitHolds()
+
+	require.Equal(t, "2", last.GetMetadata()[MetaTimeline])
+	require.Contains(t, walFiles(t, x.f, x.f.latestRef(t)), "00000002.history")
+
+	require.Equal(t, "before|1000\nkept|1000\nafter the fork|1000", x.restore(at))
+	require.Equal(t, "before|1000\nkept|1000\nafter the fork|1000\nlater|1000", x.restore(time.Time{}))
 }
 
 func (f *walFixture) latestRef(t *testing.T) *proto.Ref {

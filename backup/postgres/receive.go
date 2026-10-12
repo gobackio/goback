@@ -201,7 +201,7 @@ func (r *Receiver) Run(ctx context.Context, stop <-chan struct{}) error {
 		r.logger().Warn("max_slot_wal_keep_size is -1: while the receiver is down or the store unreachable, the slot keeps WAL until the database's disk is full")
 	}
 
-	held, systemID, committed, err := r.setState(ctx, settings.segSize)
+	held, committed, err := r.setState(ctx, settings.segSize)
 	if err != nil {
 		return err
 	}
@@ -211,58 +211,57 @@ func (r *Receiver) Run(ctx context.Context, stop <-chan struct{}) error {
 		return err
 	}
 
-	run := &receiveRun{r: r, mon: mon, slot: slot, settings: settings, held: held, systemID: systemID, committed: committed}
+	run := &receiveRun{r: r, mon: mon, slot: slot, settings: settings, held: held, committed: committed}
 
 	err = run.session(ctx, stop, nil)
 
-	var removed *removedError
-	if !errors.As(err, &removed) {
+	var gap *gapError
+	if !errors.As(err, &gap) {
 		return err
 	}
 
-	timeline, from, ok := gapStart(starts, removed.from, settings.segSize)
+	timeline, from, ok := gapStart(starts, gap.from, gap.server, settings.segSize)
 	if !ok {
-		return fmt.Errorf("%w: the server no longer has the WAL from %s on, where the WAL set goes on; take a base backup, and streaming continues where it starts", ErrGap, FormatLSN(removed.from))
+		return fmt.Errorf("%w: %s; take a base backup, and streaming continues where it starts", ErrGap, gap.what)
 	}
 
-	r.logger().Warn("the server no longer has the WAL the set goes on with; streaming from the oldest base backup after it",
-		"missing", FormatLSN(removed.from), "from", FormatLSN(from))
+	r.logger().Warn("the WAL set can't go on where it ends; streaming from the oldest base backup after that",
+		"why", gap.what, "from", FormatLSN(from))
 
 	err = run.session(ctx, stop, &position{timeline: timeline, lsn: from})
-	if errors.As(err, &removed) {
-		return fmt.Errorf("%w: the server no longer has the WAL from %s on, nor where the next base backup starts; take a base backup", ErrGap, FormatLSN(removed.from))
+	if errors.As(err, &gap) {
+		return fmt.Errorf("%w: the server no longer has the WAL from %s on, where the next base backup starts; take a base backup", ErrGap, FormatLSN(gap.from))
 	}
 
 	return err
 }
 
-// setState reads the WAL set's newest commit: the files it holds, its
-// cluster, and where its WAL ends.
-func (r *Receiver) setState(ctx context.Context, segSize uint64) ([]string, uint64, uint64, error) {
+// setState reads the WAL set's newest commit: the files it holds, and
+// where its WAL ends.
+func (r *Receiver) setState(ctx context.Context, segSize uint64) (*heldSet, uint64, error) {
 	b := &WALBackup{Walker: r.Walker()}
 
-	held, systemID, err := b.previous(ctx)
+	held, err := b.previous(ctx)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("reading the WAL set: %w", err)
+		return nil, 0, fmt.Errorf("reading the WAL set: %w", err)
 	}
 
-	commit, err := latestCommit(ctx, b.Walker.Index, b.Walker.Objects, b.Walker.Set)
-	if err != nil || commit == nil {
-		return held, systemID, 0, err
+	if held.commit == nil {
+		return held, 0, nil
 	}
 
-	meta := commit.GetMetadata()
+	meta := held.commit.GetMetadata()
 
 	if end, ok := meta[MetaEndLSN]; ok {
 		lsn, err := ParseLSN(end)
-		return held, systemID, lsn, err
+		return held, lsn, err
 	}
 
 	if last := meta[MetaLastWALFile]; isSegment(last) {
-		return held, systemID, (segmentNumber(last, segSize) + 1) * segSize, nil
+		return held, (segmentNumber(last, segSize) + 1) * segSize, nil
 	}
 
-	return held, systemID, 0, nil
+	return held, 0, nil
 }
 
 // baseStarts lists the segments the base set's backups started in.
@@ -309,16 +308,16 @@ type position struct {
 	lsn      uint64
 }
 
-// removedError is the server saying it no longer has the WAL streaming
-// started from.
-type removedError struct {
-	from uint64
-	err  error
+// gapError is a session finding that the WAL set can't go on from where it
+// ends: the server no longer has the WAL from there, or its history leaves
+// the set's before the WAL the set holds.
+type gapError struct {
+	what   string
+	from   uint64
+	server history
 }
 
-func (e *removedError) Error() string { return e.err.Error() }
-
-func (e *removedError) Unwrap() error { return e.err }
+func (e *gapError) Error() string { return e.what }
 
 // receiveRun is what a Run's sessions share.
 type receiveRun struct {
@@ -326,8 +325,7 @@ type receiveRun struct {
 	mon       *monitor
 	slot      string
 	settings  settings
-	held      []string
-	systemID  uint64
+	held      *heldSet
 	committed uint64
 }
 
@@ -346,8 +344,8 @@ func (run *receiveRun) session(ctx context.Context, stop <-chan struct{}, at *po
 		return err
 	}
 
-	if run.systemID != 0 && id.systemID != run.systemID {
-		return fmt.Errorf("%w: the server is %d, the WAL set of %d", ErrForeignCluster, id.systemID, run.systemID)
+	if run.held.systemID != 0 && id.systemID != run.held.systemID {
+		return fmt.Errorf("%w: the server is %d, the WAL set of %d", ErrForeignCluster, id.systemID, run.held.systemID)
 	}
 
 	spooled, err := r.Spool.Files()
@@ -355,7 +353,19 @@ func (run *receiveRun) session(ctx context.Context, stop <-chan struct{}, at *po
 		return err
 	}
 
-	slot, err := run.ensureSlot(ctx, conn, len(run.held) > 0 || len(spooled) > 0)
+	names := append(slices.Clone(run.held.names), spooled...)
+
+	slot, err := run.ensureSlot(ctx, conn, len(names) > 0)
+	if err != nil {
+		return err
+	}
+
+	stream := &pgStream{conn: conn, slot: run.slot, spool: r.Spool, lacks: func(name string) bool {
+		_, err := os.Stat(r.Spool.path(name))
+		return !slices.Contains(run.held.names, name) && errors.Is(err, fs.ErrNotExist)
+	}}
+
+	server, err := stream.serverHistory(ctx, id.timeline)
 	if err != nil {
 		return err
 	}
@@ -364,19 +374,26 @@ func (run *receiveRun) session(ctx context.Context, stop <-chan struct{}, at *po
 
 	from := at
 	if from == nil {
-		if timeline, lsn, ok := resumePoint(append(slices.Clone(run.held), spooled...), segSize); ok {
-			from = &position{timeline: timeline, lsn: lsn}
-		} else {
+		if from, err = run.resume(ctx, names, spooled, server); err != nil {
+			var gap *gapError
+			if errors.As(err, &gap) {
+				gap.server = server
+			}
+
+			return err
+		}
+
+		if from == nil {
 			from = &position{timeline: id.timeline, lsn: slot.restartLSN - slot.restartLSN%segSize}
 		}
 	}
 
-	stream := &pgStream{conn: conn, slot: run.slot, spool: r.Spool, lacks: func(name string) bool {
-		_, err := os.Stat(r.Spool.path(name))
-		return !slices.Contains(run.held, name) && errors.Is(err, fs.ErrNotExist)
-	}}
+	lo := from.timeline
+	if newest := newestTimeline(names); newest != 0 {
+		lo = min(lo, newest)
+	}
 
-	for t := from.timeline + 1; t <= id.timeline; t++ {
+	for t := min(lo+1, id.timeline); t <= id.timeline; t++ {
 		if err := stream.fetchHistory(ctx, t); err != nil {
 			return err
 		}
@@ -423,7 +440,44 @@ func (run *receiveRun) session(ctx context.Context, stop <-chan struct{}, at *po
 	err = s.run(ctx, stop)
 	run.committed = max(run.committed, s.flushed)
 
+	var gap *gapError
+	if errors.As(err, &gap) {
+		gap.server = server
+	}
+
 	return err
+}
+
+// resume is where streaming starts again after what names, the WAL set's
+// files and the spool's, hold; nil when they hold no segment.
+func (run *receiveRun) resume(ctx context.Context, names, spooled []string, server history) (*position, error) {
+	set, err := walHistory(names, func(name string) ([]byte, error) {
+		if slices.Contains(spooled, name) {
+			return os.ReadFile(run.r.Spool.path(name))
+		}
+
+		return run.held.read(ctx, name)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := resumeAt(names, set, server, run.settings.segSize)
+	if err != nil || res == nil {
+		return nil, err
+	}
+
+	if res.fork {
+		run.r.logger().Warn("the server's history leaves the WAL set's, as after a restore to an earlier moment; streaming from where they part",
+			"timeline", res.timeline, "from", FormatLSN(res.lsn))
+
+		// the set's end lies past the fork, on a history the server
+		// doesn't have; as a flush position it would release WAL no
+		// commit holds
+		run.committed = min(run.committed, res.lsn)
+	}
+
+	return &res.position, nil
 }
 
 // ensureSlot checks the receiver's slot, creating it when it is missing
@@ -641,7 +695,7 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 		msg, err := s.stream.next(ctx, now.Add(receiveWait))
 		if err != nil {
 			if isRemovedWAL(err) && !s.received {
-				return &removedError{from: s.start, err: err}
+				return &gapError{what: fmt.Sprintf("the server no longer has the WAL from %s on, where the WAL set goes on", FormatLSN(s.start)), from: s.start}
 			}
 
 			return err

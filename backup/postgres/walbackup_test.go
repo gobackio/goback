@@ -424,6 +424,55 @@ func TestAPartialSegmentThatSkipsOneIsRefused(t *testing.T) {
 	require.ErrorIs(t, err, ErrGap)
 }
 
+func TestAWALCommitEndsWhereItsNewestTimelinesHistoryLeavesTheOlderOne(t *testing.T) {
+	f := newWALFixture(t)
+
+	for n := uint64(1); n <= 4; n++ {
+		f.spoolSegment(n, 42)
+	}
+
+	_, err := f.run()
+	require.NoError(t, err)
+
+	require.NoError(t, f.spool.put("00000002.history", []byte("1\t0/3800000\tbefore 2026-10-12 10:00:00+00\n")))
+	f.spoolSegment(5, 42)
+
+	result, err := f.run()
+	require.NoError(t, err)
+	require.Equal(t, "1", result.Commit.Metadata[MetaTimeline])
+	require.Equal(t, "0/3800000", result.Commit.Metadata[MetaEndLSN], "not the segments after the fork")
+
+	f.spoolSegment(6, 42)
+
+	result, err = f.run()
+	require.NoError(t, err)
+	require.Equal(t, "0/3800000", result.Commit.Metadata[MetaEndLSN], "with the history read from the set")
+
+	result, err = f.receive(f.receiving(2, 3, 0x900000))
+	require.NoError(t, err)
+	require.Equal(t, "2", result.Commit.Metadata[MetaTimeline])
+	require.Equal(t, "0/3900000", result.Commit.Metadata[MetaEndLSN])
+}
+
+func TestOnlySegmentsOnTheNewestTimelinesHistoryAreServed(t *testing.T) {
+	f := newWALFixture(t)
+
+	f.put(walName(1, 3), 1, 3, segSize)
+	f.put(walName(1, 4), 1, 4, segSize)
+	require.NoError(t, f.spool.put("00000002.history", []byte("1\t0/3800000\tbefore 2026-10-12 10:00:00+00\n")))
+
+	result, err := f.receive(f.receiving(2, 3, 0x900000))
+	require.NoError(t, err)
+
+	dst := filepath.Join(t.TempDir(), "RECOVERYXLOG")
+	require.NoError(t, FetchWAL(f.ctx, f.index, nil, result.Ref, walName(1, 3), dst), "up to the fork")
+	require.ErrorIs(t, FetchWAL(f.ctx, f.index, nil, result.Ref, walName(1, 4), dst), backup.ErrNotFound, "past it")
+	require.NoError(t, FetchWAL(f.ctx, f.index, nil, result.Ref, walName(2, 3), dst))
+	require.NoError(t, FetchWAL(f.ctx, f.index, nil, result.Ref, "00000002.history", dst))
+
+	require.ErrorIs(t, FetchWAL(f.ctx, streamingStore{f.index}, nil, result.Ref, walName(1, 4), dst), backup.ErrNotFound, "with the history read from a store that serves no parts")
+}
+
 func TestAnOlderTimelinesPartialSegmentStaysBesideTheNewOnes(t *testing.T) {
 	f := newWALFixture(t)
 

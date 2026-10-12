@@ -65,10 +65,12 @@ func (b *WALBackup) Run(ctx context.Context) (*backup.WalkResult, error) {
 	w.Objects = cache.New(cache.NewMemory(), objects)
 	defer func() { w.Objects = objects }()
 
-	held, systemID, err := b.previous(ctx)
+	prev, err := b.previous(ctx)
 	if err != nil {
 		return nil, err
 	}
+
+	held, systemID := prev.names, prev.systemID
 
 	bases, err := w.Index.CommitInfo(ctx, b.BaseSet, b.Now(), maxBases)
 	if err != nil {
@@ -152,9 +154,22 @@ func (b *WALBackup) Run(ctx context.Context) (*backup.WalkResult, error) {
 		w.Metadata[MetaSystemID] = strconv.FormatUint(systemID, 10)
 	}
 
-	if timeline, end, ok := b.end(names, segSize); ok {
-		w.Metadata[MetaTimeline] = strconv.FormatUint(uint64(timeline), 10)
-		w.Metadata[MetaEndLSN] = FormatLSN(end)
+	end, ok, err := b.end(names, segSize, func() (history, error) {
+		return walHistory(names, func(name string) ([]byte, error) {
+			if slices.Contains(spooled, name) {
+				return os.ReadFile(b.Spool.path(name))
+			}
+
+			return prev.read(ctx, name)
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if ok {
+		w.Metadata[MetaTimeline] = strconv.FormatUint(uint64(end.timeline), 10)
+		w.Metadata[MetaEndLSN] = FormatLSN(end.lsn)
 	}
 
 	result, err := w.Run(ctx)
@@ -218,73 +233,117 @@ func (b *WALBackup) carry(cutoff func(string) bool, spooled []string) func(strin
 	}
 }
 
-// end is where the WAL of names ends: on the newest timeline, at the end of
-// the open segment or of the last whole one.
-func (b *WALBackup) end(names []string, segSize uint64) (uint32, uint64, bool) {
+// end is where the WAL of names and Open ends: at the end of the open
+// segment or of the last whole one of the newest timeline. While the newest
+// timeline has none, it is where the WAL of older ones ends on the path its
+// history file, read by readHistory, lays out; without that file, on the
+// newest timeline that has a segment.
+func (b *WALBackup) end(names []string, segSize uint64, readHistory func() (history, error)) (position, bool, error) {
 	if segSize == 0 {
-		return 0, 0, false
+		return position{}, false, nil
 	}
 
-	var (
-		timeline uint32
-		end      uint64
-	)
-
-	consider := func(t uint32, lsn uint64) {
-		if t > timeline || t == timeline && lsn > end {
-			timeline, end = t, lsn
-		}
+	type candidate struct {
+		segment string
+		end     uint64
 	}
 
+	var candidates []candidate
 	for _, name := range names {
 		if isSegment(name) {
-			consider(segmentTimeline(name), (segmentNumber(name, segSize)+1)*segSize)
+			candidates = append(candidates, candidate{name, (segmentNumber(name, segSize) + 1) * segSize})
 		}
 	}
 
 	if b.Open != nil {
-		consider(segmentTimeline(b.Open.Name), segmentNumber(b.Open.Name, segSize)*segSize+uint64(b.Open.Size))
+		candidates = append(candidates, candidate{b.Open.Name, segmentNumber(b.Open.Name, segSize)*segSize + uint64(b.Open.Size)})
 	}
 
-	return timeline, end, end != 0
+	newest := newestTimeline(names)
+	if b.Open != nil {
+		newest = max(newest, segmentTimeline(b.Open.Name))
+	}
+
+	var h history
+	if !slices.ContainsFunc(candidates, func(c candidate) bool { return segmentTimeline(c.segment) == newest }) {
+		var err error
+		if h, err = readHistory(); err != nil {
+			return position{}, false, err
+		}
+	}
+
+	var (
+		end   position
+		found bool
+	)
+
+	better := func(t uint32, lsn uint64) bool {
+		if h == nil {
+			return t > end.timeline || t == end.timeline && lsn > end.lsn
+		}
+
+		return lsn > end.lsn || lsn == end.lsn && t > end.timeline
+	}
+
+	for _, c := range candidates {
+		t, lsn := segmentTimeline(c.segment), c.end
+
+		if h != nil {
+			if !h.holds(c.segment, segSize) {
+				continue
+			}
+
+			s, _ := h.span(t)
+			lsn = min(lsn, s.end)
+		}
+
+		if !found || better(t, lsn) {
+			end, found = position{timeline: t, lsn: lsn}, true
+		}
+	}
+
+	return end, found, nil
 }
 
-// previous lists the WAL files the set's latest commit holds, and the
-// cluster it belongs to; a set without commits holds none.
-func (b *WALBackup) previous(ctx context.Context) ([]string, uint64, error) {
+// heldSet is what the WAL set's latest commit holds; a set without commits
+// holds nothing.
+type heldSet struct {
+	*walTree
+	commit *proto.Commit
+	// systemID is the cluster the set belongs to; zero when it doesn't
+	// say.
+	systemID uint64
+}
+
+// previous reads the set's latest commit.
+func (b *WALBackup) previous(ctx context.Context) (*heldSet, error) {
 	w := b.Walker
 
 	commit, err := latestCommit(ctx, w.Index, w.Objects, w.Set)
-	if commit == nil || err != nil {
-		return nil, 0, err
+	if err != nil {
+		return nil, err
+	}
+
+	if commit == nil {
+		return &heldSet{walTree: &walTree{}}, nil
 	}
 
 	systemID, err := commitSystemID(commit)
 	if err != nil {
-		return nil, 0, fmt.Errorf("the WAL set's %w", err)
+		return nil, fmt.Errorf("the WAL set's %w", err)
 	}
 
 	trees, err := prefetch(ctx, w.Objects, commit.GetTree())
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
-	key, err := backup.CommitKey(ctx, trees, commit, w.Key)
+	tree, err := openWALTree(ctx, trees, w.Objects, commit, w.Key)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
-	tree, err := backup.OpenTree(ctx, trees, commit.GetTree(), key, nil)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	names := make([]string, 0, len(tree.Nodes))
-	for _, node := range tree.Nodes {
-		names = append(names, string(node.Stat.Name))
-	}
-
-	return names, systemID, nil
+	return &heldSet{walTree: tree, commit: commit, systemID: systemID}, nil
 }
 
 // latestCommit is the set's latest commit, or nil for a set without one.
