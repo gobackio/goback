@@ -198,6 +198,48 @@ func TestARefusedCommitStaysAbsentWhenItsSessionCommitsAndThroughARebuild(t *tes
 	requireVisible(t, rebuilt, t.Context(), blob, true)
 }
 
+// stallAfter advances the clock past every claim once the row of the object
+// is indexed, the way a process stalls right after its write returns.
+type stallAfter struct {
+	*InMemoryIndex
+	at  *clock
+	sum [proto.HashSize]byte
+}
+
+func (s *stallAfter) AddObjects(archive string, records []IndexRecord) error {
+	err := s.InMemoryIndex.AddObjects(archive, records)
+
+	for _, record := range records {
+		if record.Sum == s.sum {
+			s.at.add(2 * time.Hour)
+		}
+	}
+
+	return err
+}
+
+func TestACommitWhoseOwnArchiveLapsesBeforeItIsFinalizedIsRefused(t *testing.T) {
+	at := &clock{now: time.Now()}
+	commit := commitObject()
+
+	index := &stallAfter{InMemoryIndex: NewInMemoryIndex(), at: at}
+	index.Now = at.Now
+	copy(index.sum[:], commit.Ref().Hash)
+
+	store := closing(t, newTestStore(t, t.TempDir(), WithArchiveIndex(index), WithClaims(time.Hour, time.Minute)))
+
+	ctx, _ := beginSession(t, store, "agent")
+	blob := makeTestData(t, 1)[0]
+	require.NoError(t, store.Put(ctx, blob))
+	require.NoError(t, store.Flush())
+
+	require.ErrorIs(t, store.Put(ctx, commit), backup.ErrSessionLost, "the commit's own record went with the archive")
+
+	index.sum = [proto.HashSize]byte{}
+	require.NoError(t, store.Put(ctx, commit))
+	requireVisible(t, store, t.Context(), commit, true)
+}
+
 func TestAnArchiveIsFinalizedOnceItHasBeenOpenForAsLongAsItMayBe(t *testing.T) {
 	a, b, _ := twoProcesses(t, WithClaims(100*time.Millisecond, time.Hour))
 

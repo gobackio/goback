@@ -1,12 +1,14 @@
 package pack
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/proto"
 )
 
 const (
@@ -180,6 +182,28 @@ func (ps *PackStorage) settle(session string) error {
 
 	if len(lost) > 0 {
 		return fmt.Errorf("%w: %d objects of session %s", backup.ErrSessionLost, len(lost), session)
+	}
+
+	return nil
+}
+
+// kept refuses a commit whose own record or un-tombstone was in an archive
+// that lapsed, which settle does not answer for: Lost leaves both out.
+func (ps *PackStorage) kept(ctx context.Context, ws *writeSession, commit *proto.Ref) error {
+	has, err := ps.Has(ctx, commit)
+	if err != nil {
+		return err
+	}
+
+	untomb := proto.TombstoneRef(proto.TombstoneRef(commit))
+
+	located, err := ps.index.LocateTombstones([]*proto.Ref{untomb}, Scope{Session: ws.id})
+	if err != nil {
+		return err
+	}
+
+	if !has || len(located[string(untomb.Hash)]) == 0 {
+		return fmt.Errorf("%w: an archive holding commit %x of session %s lapsed", backup.ErrSessionLost, commit.Hash, ws.id)
 	}
 
 	return nil

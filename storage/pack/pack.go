@@ -569,6 +569,10 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 		if err := ps.settle(ws.id); err != nil {
 			return err
 		}
+
+		if err := ps.kept(ctx, ws, commit.Ref()); err != nil {
+			return err
+		}
 	}
 
 	if err := ps.resurrect(ctx, ws, commit); err != nil {
