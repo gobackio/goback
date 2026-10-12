@@ -15,9 +15,8 @@ import (
 
 // spoolCommit commits what a receiver's spool holds to a chain of the
 // binlog set: the whole binlogs, and the one being received as
-// <binlog>.partial in place of the chain's previous partial one. Like the
-// binlog job's commits, each holds every binlog back to the chain's oldest
-// dump inside Window.
+// <binlog>.partial in place of the chain's previous partial one. Each
+// holds every binlog back to the chain's oldest dump inside Window.
 type spoolCommit struct {
 	// Walker stores the commit; its Root is the spool's directory.
 	Walker  *backup.Walker
@@ -204,13 +203,13 @@ func (c *spoolCommit) Run(ctx context.Context) (*backup.WalkResult, error) {
 
 // check checks that the binlog at path opens as one the server wrote.
 func (c *spoolCommit) check(path, name string) error {
-	hdr, err := readBinlogFile(path)
+	serverID, err := readBinlogFileServerID(path)
 	if err != nil {
 		return fmt.Errorf("%s: %w", name, err)
 	}
 
-	if hdr.serverID != c.Server.ServerID {
-		return fmt.Errorf("%w: %s was written by server_id %d, the server is %d", ErrForeignBinlog, name, hdr.serverID, c.Server.ServerID)
+	if serverID != c.Server.ServerID {
+		return fmt.Errorf("%w: %s was written by server_id %d, the server is %d", ErrForeignBinlog, name, serverID, c.Server.ServerID)
 	}
 
 	return nil

@@ -9,9 +9,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/retention"
@@ -47,7 +48,6 @@ type fakeServer struct {
 	replayed         [][]string
 	databases        []string
 	noBinlog         bool
-	flushes          int
 	// replicas are the rows SHOW REPLICAS returns
 	replicas [][]string
 }
@@ -67,27 +67,23 @@ func (s *fakeServer) open() {
 	s.next++
 	s.files = append(s.files, name)
 	s.written = 0
-	s.writeFile(name, true, 0)
+	s.writeFile(name, 0)
 }
 
-func (s *fakeServer) writeFile(name string, inUse bool, events int) {
-	content := binlogContent(s.serverID, inUse, events)
+func (s *fakeServer) writeFile(name string, events int) {
+	content := binlogContent(s.serverID, events)
 	require.NoError(s.t, os.WriteFile(filepath.Join(s.dir, name), content, 0o640))
 }
 
 // binlogContent is a binlog of serverID: magic, a format description event
 // and events of 10 bytes each.
-func binlogContent(serverID uint32, inUse bool, events int) []byte {
+func binlogContent(serverID uint32, events int) []byte {
 	buf := append([]byte{}, binlogMagic...)
 
 	event := make([]byte, eventHeaderLen)
 	event[4] = formatDescriptionEvent
 	binary.LittleEndian.PutUint32(event[5:], serverID)
 	binary.LittleEndian.PutUint32(event[9:], headerSize-4)
-
-	if inUse {
-		binary.LittleEndian.PutUint16(event[17:], binlogInUse)
-	}
 
 	buf = append(buf, event...)
 	buf = append(buf, make([]byte, headerSize-4-eventHeaderLen)...)
@@ -98,13 +94,12 @@ func binlogContent(serverID uint32, inUse bool, events int) []byte {
 // write logs a transaction to the active binlog.
 func (s *fakeServer) write() {
 	s.written++
-	s.writeFile(s.files[len(s.files)-1], true, s.written)
+	s.writeFile(s.files[len(s.files)-1], s.written)
 }
 
 // flush closes the active binlog and opens the next.
 func (s *fakeServer) flush() {
-	s.flushes++
-	s.writeFile(s.files[len(s.files)-1], false, s.written)
+	s.writeFile(s.active(), s.written)
 	s.open()
 }
 
@@ -118,14 +113,6 @@ func (s *fakeServer) resetMaster() {
 	s.open()
 }
 
-// purge deletes the binlogs before to.
-func (s *fakeServer) purge(to string) {
-	for len(s.files) > 0 && s.files[0] != to {
-		require.NoError(s.t, os.Remove(filepath.Join(s.dir, s.files[0])))
-		s.files = s.files[1:]
-	}
-}
-
 func (s *fakeServer) active() string { return s.files[len(s.files)-1] }
 
 func (s *fakeServer) Query(_ context.Context, sql string) ([][]string, error) {
@@ -136,7 +123,7 @@ func (s *fakeServer) Query(_ context.Context, sql string) ([][]string, error) {
 			logBin = "1"
 		}
 
-		return [][]string{{s.version, "MySQL Community Server - GPL", logBin, fmt.Sprint(s.serverID), s.dir + "/", "ROW"}}, nil
+		return [][]string{{s.version, "MySQL Community Server - GPL", logBin, fmt.Sprint(s.serverID), "ROW"}}, nil
 	case strings.HasPrefix(sql, "SELECT @@server_uuid"):
 		return [][]string{{s.uuid, filepath.Join(s.dir, s.base), "OFF"}}, nil
 	case strings.HasPrefix(sql, "SELECT CONCAT(table_schema"):
@@ -146,11 +133,6 @@ func (s *fakeServer) Query(_ context.Context, sql string) ([][]string, error) {
 		}
 
 		return rows, nil
-	case sql == "SHOW MASTER STATUS", sql == "SHOW BINARY LOG STATUS":
-		return [][]string{{s.active(), fmt.Sprint(headerSize + s.written*10), "", ""}}, nil
-	case sql == "FLUSH BINARY LOGS":
-		s.flush()
-		return nil, nil
 	case sql == "SHOW REPLICAS", sql == "SHOW SLAVE HOSTS":
 		return s.replicas, nil
 	case sql == "SHOW BINARY LOGS":
@@ -222,8 +204,6 @@ type fixture struct {
 	ctx   context.Context
 	index *sql.Index
 	srv   *fakeServer
-	// offset moves the binlog job's clock ahead of the wall clock
-	offset time.Duration
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -264,22 +244,36 @@ func (f *fixture) mustDump() *backup.WalkResult {
 	return result
 }
 
-func (f *fixture) binlog() (*backup.WalkResult, error) {
-	b := &BinlogBackup{
-		Walker:  f.walker("db-binlog"),
-		Client:  f.srv,
-		DumpSet: "db-dump",
-		Window:  14 * 24 * time.Hour,
-		Now:     func() time.Time { return time.Now().Add(f.offset) },
-	}
-
-	return b.Run(f.ctx)
-}
-
-func (f *fixture) mustBinlog() *backup.WalkResult {
+// commitFiles closes the fake server's active binlog when it holds
+// anything, and commits its closed binlogs to chain of db-binlog as
+// binlog-directory capture laid binlog sets out.
+func (f *fixture) commitFiles(chain int) *backup.WalkResult {
 	f.t.Helper()
 
-	result, err := f.binlog()
+	if f.srv.written > 0 {
+		f.srv.flush()
+	}
+
+	closed := f.srv.files[:len(f.srv.files)-1]
+
+	w := f.walker("db-binlog")
+	w.Root = f.srv.dir
+	w.Subdir = chainDir(chain)
+	w.Include = func(rel string) bool { return slices.Contains(closed, rel) }
+	w.Carry = func(string) bool { return true }
+	w.Metadata = map[string]string{
+		MetaFlavor:       "mysql",
+		MetaVersion:      f.srv.version,
+		MetaServerID:     fmt.Sprint(f.srv.serverID),
+		MetaServerUUID:   f.srv.uuid,
+		MetaChain:        strconv.Itoa(chain),
+		MetaBinlogFormat: "ROW",
+		MetaFirstBinlog:  closed[0],
+		MetaLastBinlog:   closed[len(closed)-1],
+		MetaCapture:      "files",
+	}
+
+	result, err := w.Run(f.ctx)
 	require.NoError(f.t, err)
 	require.NotNil(f.t, result)
 

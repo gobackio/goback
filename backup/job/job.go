@@ -37,8 +37,8 @@ type Env struct {
 	StatCache *statcache.Cache
 	// ObjectCache keeps the commits and trees Path diffs against.
 	ObjectCache *badger.Store
-	// TreeCache keeps the commits and trees PostgresReceive and MySQLBinlog
-	// read every run.
+	// TreeCache keeps the commits and trees PostgresReceive and MySQLReceive
+	// read every commit.
 	TreeCache *blobcache.Cache
 	// BlobCache receives every blob Path uploads.
 	BlobCache *blobcache.Cache

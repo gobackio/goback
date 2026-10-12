@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -145,10 +146,19 @@ func (s *source) position() (string, int64) {
 	srv, err := ReadServer(context.Background(), s.db)
 	require.NoError(s.t, err)
 
-	file, pos, err := Position(context.Background(), s.db, srv)
+	status := "SHOW MASTER STATUS"
+	if srv.atLeast(8, 2, 0) {
+		status = "SHOW BINARY LOG STATUS"
+	}
+
+	rows, err := s.db.Query(context.Background(), status)
+	require.NoError(s.t, err)
+	require.NotEmpty(s.t, rows)
+
+	pos, err := strconv.ParseInt(rows[0][1], 10, 64)
 	require.NoError(s.t, err)
 
-	return file, int64(pos)
+	return rows[0][0], pos
 }
 
 // committed is the binlog set's latest commit; nil without one.

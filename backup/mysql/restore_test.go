@@ -43,7 +43,7 @@ func TestRestoreLoadsTheNewestDumpAndReplaysItsChain(t *testing.T) {
 	f.srv.write()
 	f.srv.flush()
 	f.srv.write()
-	f.mustBinlog()
+	f.commitFiles(1)
 
 	result, err := f.restore("db-binlog", time.Time{})
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestRestoreToAMomentStopsInTheFileThatHoldsIt(t *testing.T) {
 	f.srv.flush()
 	f.srv.write()
 	f.srv.flush()
-	f.mustBinlog()
+	f.commitFiles(1)
 
 	result, err := f.restore("db-binlog", at)
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestRestoreWithoutBinlogSetLoadsTheDumpAlone(t *testing.T) {
 
 	f.mustDump()
 	f.srv.write()
-	f.mustBinlog()
+	f.commitFiles(1)
 
 	result, err := f.restore("", time.Time{})
 	require.NoError(t, err)
@@ -97,18 +97,18 @@ func TestRestorePicksTheDumpOfTheChainThatReachesTheMoment(t *testing.T) {
 	beforeReset := tick()
 	tick()
 	f.srv.flush()
-	f.mustBinlog()
+	f.commitFiles(1)
 
 	f.srv.resetMaster()
 	f.srv.write()
-	f.mustBinlog()
+	f.commitFiles(2)
 	afterReset := tick()
 	tick()
 
 	second := f.mustDump()
 	require.Equal(t, "2", second.Commit.Metadata[MetaChain])
 	f.srv.write()
-	f.mustBinlog()
+	f.commitFiles(2)
 
 	result, err := f.restore("db-binlog", time.Time{})
 	require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestRestoreNeedsMysqlbinlogBeforeItLoadsAnything(t *testing.T) {
 	f.mustDump()
 	f.srv.write()
 	f.srv.flush()
-	f.mustBinlog()
+	f.commitFiles(1)
 	f.srv.noBinlog = true
 
 	_, err := f.restore("db-binlog", time.Time{})
@@ -164,7 +164,7 @@ func TestRestoreToADirectoryWritesTheFilesOnly(t *testing.T) {
 	f.mustDump()
 	f.srv.write()
 	f.srv.flush()
-	f.mustBinlog()
+	f.commitFiles(1)
 
 	to := filepath.Join(t.TempDir(), "out")
 	r := &Restore{

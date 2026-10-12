@@ -5,42 +5,41 @@ import (
 	"os"
 	"slices"
 	"testing"
+	"time"
+
+	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestReadBinlogHeaderOnRealBinlogs(t *testing.T) {
+func TestReadBinlogServerIDOnRealBinlogs(t *testing.T) {
 	for _, tc := range []struct {
 		file     string
 		serverID uint32
-		inUse    bool
-		end      int64
 	}{
-		{"testdata/binlog-5.5-closed", 7, false, 107},
-		{"testdata/binlog-5.5-active", 7, true, 107},
-		{"testdata/binlog-8.0-closed", 8, false, 157},
-		{"testdata/binlog-8.0-active", 8, true, 157},
+		{"testdata/binlog-5.5-closed", 7},
+		{"testdata/binlog-5.5-active", 7},
+		{"testdata/binlog-8.0-closed", 8},
+		{"testdata/binlog-8.0-active", 8},
 	} {
 		content, err := os.ReadFile(tc.file)
 		require.NoError(t, err)
 
-		hdr, err := readBinlogHeader(bytes.NewReader(content))
+		serverID, err := readBinlogServerID(bytes.NewReader(content))
 		require.NoError(t, err, tc.file)
-		require.Equal(t, tc.serverID, hdr.serverID, tc.file)
-		require.Equal(t, tc.inUse, hdr.inUse, tc.file)
-		require.Equal(t, tc.end, hdr.end, tc.file)
+		require.Equal(t, tc.serverID, serverID, tc.file)
 	}
 }
 
-func TestReadBinlogHeaderRefusesWhatIsNoBinlog(t *testing.T) {
-	_, err := readBinlogHeader(bytes.NewReader([]byte("\xfdbin encrypted")))
+func TestReadBinlogServerIDRefusesWhatIsNoBinlog(t *testing.T) {
+	_, err := readBinlogServerID(bytes.NewReader([]byte("\xfdbin encrypted")))
 	require.Error(t, err)
 
 	content, err := os.ReadFile("testdata/binlog-8.0-closed")
 	require.NoError(t, err)
 	content[4+4] = 2
 
-	_, err = readBinlogHeader(bytes.NewReader(content))
+	_, err = readBinlogServerID(bytes.NewReader(content))
 	require.Error(t, err)
 }
 
@@ -69,4 +68,27 @@ func TestIdentityByUUIDElseServerIDAndBase(t *testing.T) {
 	require.True(t, Identity{ServerID: 1, Base: "mysql-bin"}.Same(Identity{ServerID: 1, Base: "mysql-bin"}))
 	require.False(t, Identity{ServerID: 1, Base: "mysql-bin"}.Same(Identity{ServerID: 1, Base: "other"}))
 	require.False(t, Identity{ServerID: 1}.Same(Identity{ServerID: 2}))
+}
+
+func TestWindowKeepsPerChainFromTheOldestDumpInside(t *testing.T) {
+	now := time.Now()
+	dump := func(chain, file string, age time.Duration) *proto.Commit {
+		return &proto.Commit{ReceivedAtNs: now.Add(-age).UnixNano(), Metadata: map[string]string{MetaChain: chain, MetaBinlogFile: file}}
+	}
+
+	cutoffs, ok := Window([]*proto.Commit{
+		dump("2", "b.000009", time.Hour),
+		dump("2", "b.000004", 2*time.Hour),
+		dump("1", "b.000120", 3*time.Hour),
+		dump("1", "b.000100", 30*24*time.Hour),
+	}, 14*24*time.Hour, now)
+	require.True(t, ok)
+	require.Equal(t, map[int]string{2: "b.000004", 1: "b.000120"}, cutoffs)
+
+	cutoffs, ok = Window([]*proto.Commit{dump("1", "b.000100", 30*24*time.Hour), dump("1", "b.000050", 40*24*time.Hour)}, 14*24*time.Hour, now)
+	require.True(t, ok)
+	require.Equal(t, map[int]string{1: "b.000100"}, cutoffs, "the newest dump counts when none is inside the window")
+
+	_, ok = Window(nil, time.Hour, now)
+	require.False(t, ok)
 }

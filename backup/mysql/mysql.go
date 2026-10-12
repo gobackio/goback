@@ -1,6 +1,6 @@
 // Package mysql backs up MySQL servers into goback sets: logical dumps
-// through mysqldump into one set, and the closed binary logs into another
-// for point-in-time recovery.
+// through mysqldump into one set, and the binary logs, received as a
+// replica, into another for point-in-time recovery.
 package mysql
 
 import (
@@ -43,17 +43,13 @@ const (
 	MetaEndBinlog = "mysql.end_binlog"
 	MetaEndPos    = "mysql.end_pos"
 	// MetaCapture is how a binlog commit's binlogs were collected:
-	// CaptureFiles or CaptureReplication.
+	// CaptureReplication, or files for binlogs copied from the server's
+	// binlog directory, which restore reads alike.
 	MetaCapture = "mysql.capture"
 )
 
-// The ways binlogs are collected.
-const (
-	// CaptureFiles copies closed binlogs from the server's binlog directory.
-	CaptureFiles = "files"
-	// CaptureReplication receives them as a replica does.
-	CaptureReplication = "replication"
-)
+// CaptureReplication is the MetaCapture of binlogs received as a replica.
+const CaptureReplication = "replication"
 
 // DumpFile is the name of the one file a dump commit holds.
 const DumpFile = "dump.sql"
@@ -67,9 +63,9 @@ var (
 	ErrForeignBinlog = errors.New("binlog of another server")
 	// ErrGap is returned when binlogs a dump needs are missing.
 	ErrGap = errors.New("binlogs are missing")
-	// ErrBinlogChanged is returned when a binlog the set holds changed on
-	// disk after it was closed.
-	ErrBinlogChanged = errors.New("a closed binlog changed")
+	// ErrBinlogChanged is returned when the server's copy of a binlog no
+	// longer matches what was received of it.
+	ErrBinlogChanged = errors.New("a received binlog changed on the server")
 	// ErrNoBinlog is returned when the server's binary log is off.
 	ErrNoBinlog = errors.New("the server's binary log is off")
 	// ErrMariaDB is returned for a MariaDB server, which is not supported yet.
@@ -110,7 +106,6 @@ type Server struct {
 	LogBin         bool
 	ServerID       uint32
 	ServerUUID     string
-	Datadir        string
 	BinlogBasename string
 	BinlogFormat   string
 	GTIDMode       bool
@@ -120,7 +115,7 @@ var versionNumbers = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)`)
 
 // ReadServer reads the server's version and binary log settings.
 func ReadServer(ctx context.Context, c Querier) (*Server, error) {
-	row, err := queryRow(ctx, c, "SELECT @@version, @@version_comment, @@log_bin, @@server_id, @@datadir, @@binlog_format", 6)
+	row, err := queryRow(ctx, c, "SELECT @@version, @@version_comment, @@log_bin, @@server_id, @@binlog_format", 5)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +124,7 @@ func ReadServer(ctx context.Context, c Querier) (*Server, error) {
 		return nil, fmt.Errorf("%w: the server is %s", ErrMariaDB, row[0])
 	}
 
-	s := &Server{Version: row[0], LogBin: row[2] == "1" || strings.EqualFold(row[2], "ON"), Datadir: row[4], BinlogFormat: row[5]}
+	s := &Server{Version: row[0], LogBin: row[2] == "1" || strings.EqualFold(row[2], "ON"), BinlogFormat: row[4]}
 
 	m := versionNumbers.FindStringSubmatch(s.Version)
 	if m == nil {
@@ -207,30 +202,6 @@ func BinaryLogs(ctx context.Context, c Querier) ([]Binlog, error) {
 	}
 
 	return logs, nil
-}
-
-// Position is the server's current binary log file and position.
-func Position(ctx context.Context, c Querier, s *Server) (string, uint64, error) {
-	sql := "SHOW MASTER STATUS"
-	if s.atLeast(8, 2, 0) {
-		sql = "SHOW BINARY LOG STATUS"
-	}
-
-	rows, err := c.Query(ctx, sql)
-	if err != nil {
-		return "", 0, err
-	}
-
-	if len(rows) == 0 || len(rows[0]) < 2 {
-		return "", 0, fmt.Errorf("%s returned no position", sql)
-	}
-
-	pos, err := strconv.ParseUint(rows[0][1], 10, 64)
-	if err != nil {
-		return "", 0, fmt.Errorf("%s: position %q: %w", sql, rows[0][1], err)
-	}
-
-	return rows[0][0], pos, nil
 }
 
 func queryRow(ctx context.Context, c Querier, sql string, columns int) ([]string, error) {

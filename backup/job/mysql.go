@@ -66,53 +66,6 @@ func MySQLDump(ctx context.Context, env *Env, s MySQLDumpSettings) (*backup.Walk
 	return run.Run(ctx)
 }
 
-// MySQLBinlogSettings say how MySQLBinlog commits a server's binlogs.
-type MySQLBinlogSettings struct {
-	Set    string
-	Client MySQLClient
-	// BinlogDir is where the server writes its binlogs; empty asks the
-	// server.
-	BinlogDir string
-	// DumpSet is the set the server's dumps go to.
-	DumpSet string
-	// Window is how far back point-in-time recovery reaches.
-	Window time.Duration
-}
-
-// MySQLBinlog rotates the binary log when it holds anything new and commits
-// the closed binlogs to the set. It commits nothing, and returns nil, when
-// there is no new closed binlog.
-func MySQLBinlog(ctx context.Context, env *Env, s MySQLBinlogSettings) (*backup.WalkResult, error) {
-	stderr, flush := env.stderr("mysql")
-	defer flush()
-
-	objects := backup.ObjectStore(env.Index)
-	if env.TreeCache != nil {
-		objects = cache.New(env.TreeCache, env.Index)
-	}
-
-	run := &mysql.BinlogBackup{
-		Walker: &backup.Walker{
-			Index:       env.Index,
-			Objects:     objects,
-			Sessions:    env.sessions(),
-			Set:         s.Set,
-			AgentID:     env.AgentID,
-			Key:         env.Key,
-			Logger:      env.Logger,
-			Workers:     4,
-			ReadRetries: 3,
-		},
-		Client:  s.Client.exec(stderr),
-		Dir:     s.BinlogDir,
-		DumpSet: s.DumpSet,
-		Window:  s.Window,
-		Now:     time.Now,
-	}
-
-	return run.Run(ctx)
-}
-
 // MySQLReceiveSettings say how MySQLReceive receives a server's binlogs.
 type MySQLReceiveSettings struct {
 	Set string
