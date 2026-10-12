@@ -231,7 +231,7 @@ func TestACommitAsksTheBucketForLittleBeyondWhatItWrites(t *testing.T) {
 
 	// one archive, the commit's un-tombstone beside the commit
 	most := map[string]int{
-		"put archive": 1, "put .idx": 1, "put .committed": 1, "put .begin": 1, "put .end": 1,
+		"put archive": 1, "put .idx": 1, "put .begin": 1, "put .end": 1,
 		// what an upload kept, and when the storage stamped each index
 		"head archive": 1, "head .idx": 1,
 		// the seals at begin and at commit

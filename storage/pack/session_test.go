@@ -352,6 +352,13 @@ func TestCompactionMergesSessionsIntoTheRoot(t *testing.T) {
 	all := []*proto.Object{blob, sealed, onlyA, onlyB, both}
 	require.Equal(t, []bool{true, true, true, true, true}, inSession(t, store, all...))
 
+	// the committed markers an older store wrote beside session archives
+	sessionArchives, _, err := store.archiveNames()
+	require.NoError(t, err)
+	for _, name := range sessionArchives {
+		require.NoError(t, store.storage.CreateNew(name+CommittedExt, nil))
+	}
+
 	before := timestamps(t, store)
 	compact(t, context.Background(), store)
 

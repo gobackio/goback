@@ -26,8 +26,9 @@ const (
 	ArchiveSuffix      = ".goback"
 	IndexExt           = ".idx"
 	// CommittedExt marks an archive of a session that a commit made
-	// committed. It is written before the index is told, so the storage
-	// alone says which session archives are committed.
+	// committed, in stores written before the session's end marker said so.
+	// The store still honours such a marker and deletes it with its archive,
+	// but no longer writes one.
 	CommittedExt  = ".committed"
 	varIntMaxSize = 10
 )
@@ -595,11 +596,6 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 		return fmt.Errorf("session %s ended before it committed: %w", ws.id, backup.ErrNoSession)
 	}
 
-	err = ps.markCommitted(ws.id)
-	if err != nil {
-		return err
-	}
-
 	err = ps.index.CommitSession(ws.id)
 	if err != nil {
 		return err
@@ -1139,35 +1135,6 @@ func (ps *PackStorage) archivesDeleted(names []string) {
 			observer.ArchiveDeleted(name)
 		}
 	}
-}
-
-// markCommitted writes the committed marker of every archive the session
-// is about to commit.
-func (ps *PackStorage) markCommitted(session string) error {
-	pending, err := ps.index.PendingArchives(session)
-	if err != nil {
-		return err
-	}
-
-	for _, name := range pending {
-		f, err := ps.storage.Create(name + CommittedExt)
-		if err != nil {
-			return fmt.Errorf("marking archive %s committed: %w", name, err)
-		}
-
-		_, err = f.Write([]byte(session))
-		if err == nil {
-			err = f.Close()
-		} else {
-			_ = f.Close()
-		}
-
-		if err != nil {
-			return fmt.Errorf("marking archive %s committed: %w", name, err)
-		}
-	}
-
-	return nil
 }
 
 // markedCommitted reports whether a commit marked the archive committed.

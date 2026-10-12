@@ -15,7 +15,9 @@ import (
 // SessionBeginExt and SessionEndExt name a session's markers in the
 // storage: <id>.begin holds the session as it began and <id>.end how it
 // ended. An end is only ever created once, so a commit and anything ending
-// the session agree on a single outcome.
+// the session agree on a single outcome. The end is what says a session's
+// archives are committed, so it is only deleted after its begin, once no
+// archive of the session is stored, live or retired.
 const (
 	SessionBeginExt = ".begin"
 	SessionEndExt   = ".end"
@@ -92,8 +94,9 @@ func (ps *PackStorage) sessionEnd(id string) (sessionOutcome, bool, error) {
 }
 
 // placeUnknown tells from its session's markers what an archive the index
-// does not know is, and whether to load it. Only an ended session's archive
-// is deleted: every archive a commit took had its index file first. A live
+// does not know is, and whether to load it. Every archive a session that
+// committed left is committed, even one whose index file is gone, and only
+// an archive of a session that ended without committing is deleted. A live
 // session's archive waits for its index file, and for the session to be
 // indexed, which reconcileSessions does.
 func (ps *PackStorage) placeUnknown(name string) (ArchiveInfo, bool, error) {
@@ -109,10 +112,8 @@ func (ps *PackStorage) placeUnknown(name string) (ArchiveInfo, bool, error) {
 		return ArchiveInfo{}, false, err
 	}
 
-	finalized := ps.hasIndexFile(name)
-
 	if ended {
-		if outcome == sessionCommitted && finalized {
+		if outcome == sessionCommitted {
 			return committed, true, nil
 		}
 
@@ -121,6 +122,8 @@ func (ps *PackStorage) placeUnknown(name string) (ArchiveInfo, bool, error) {
 
 		return ArchiveInfo{}, false, nil
 	}
+
+	finalized := ps.hasIndexFile(name)
 
 	if !finalized {
 		return ArchiveInfo{}, false, nil
