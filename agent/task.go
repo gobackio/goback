@@ -53,7 +53,7 @@ func (t *Task) NextDue(agent string, last, now time.Time) time.Time {
 		return now
 	}
 
-	return t.Plan.due(jitterOffset(agent, t.Name, t.Jitter), last, now)
+	return t.Plan.Due(JitterOffset(agent, t.Name, t.Jitter), last, now)
 }
 
 // Control is what the agent hands a ServeFunc.

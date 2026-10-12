@@ -33,7 +33,7 @@ func cronPlan(t *testing.T, expr string, loc *time.Location) *Plan {
 func TestEveryRunsAnIntervalAfterTheLastStart(t *testing.T) {
 	last := time.Date(2026, 10, 11, 9, 0, 7, 0, time.UTC)
 
-	require.Equal(t, last.Add(6*time.Hour), Every(6*time.Hour).due(0, last, last.Add(time.Hour)))
+	require.Equal(t, last.Add(6*time.Hour), Every(6*time.Hour).Due(0, last, last.Add(time.Hour)))
 }
 
 func TestCronRunsAtTheNextSlotInItsZone(t *testing.T) {
@@ -41,7 +41,7 @@ func TestCronRunsAtTheNextSlotInItsZone(t *testing.T) {
 	p := cronPlan(t, "0 3 * * *", loc)
 
 	last := time.Date(2026, 10, 11, 3, 0, 2, 0, loc)
-	require.Equal(t, time.Date(2026, 10, 12, 3, 0, 0, 0, loc), p.due(0, last, last.Add(time.Hour)))
+	require.Equal(t, time.Date(2026, 10, 12, 3, 0, 0, 0, loc), p.Due(0, last, last.Add(time.Hour)))
 }
 
 func TestOverdueRunsOnceNow(t *testing.T) {
@@ -51,24 +51,24 @@ func TestOverdueRunsOnceNow(t *testing.T) {
 
 	for _, missed := range []int{1, 100} {
 		now := last.AddDate(0, 0, missed).Add(5 * time.Hour)
-		require.Equal(t, now, daily.due(0, last, now))
+		require.Equal(t, now, daily.Due(0, last, now))
 
 		now = last.Add(time.Duration(missed)*time.Minute + time.Second)
-		require.Equal(t, now, Every(time.Minute).due(0, last, now))
+		require.Equal(t, now, Every(time.Minute).Due(0, last, now))
 	}
 }
 
 func TestANewSetIsDueNow(t *testing.T) {
 	now := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
 
-	require.Equal(t, now, cronPlan(t, "0 3 * * *", time.UTC).due(time.Hour, time.Time{}, now))
-	require.Equal(t, now, Every(time.Hour).due(0, time.Time{}, now))
+	require.Equal(t, now, cronPlan(t, "0 3 * * *", time.UTC).Due(time.Hour, time.Time{}, now))
+	require.Equal(t, now, Every(time.Hour).Due(0, time.Time{}, now))
 }
 
 func TestALastStartAheadOfTheClockCountsAsNow(t *testing.T) {
 	now := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
 
-	require.Equal(t, now.Add(time.Hour), Every(time.Hour).due(0, now.Add(5*time.Hour), now))
+	require.Equal(t, now.Add(time.Hour), Every(time.Hour).Due(0, now.Add(5*time.Hour), now))
 }
 
 func TestJitterIsStableAndInsideTheWindow(t *testing.T) {
@@ -76,8 +76,8 @@ func TestJitterIsStableAndInsideTheWindow(t *testing.T) {
 	offsets := map[time.Duration]bool{}
 
 	for _, agent := range []string{"a", "b", "c", "d", "e", "f"} {
-		offset := jitterOffset(agent, "world", window)
-		require.Equal(t, offset, jitterOffset(agent, "world", window))
+		offset := JitterOffset(agent, "world", window)
+		require.Equal(t, offset, JitterOffset(agent, "world", window))
 		require.GreaterOrEqual(t, offset, time.Duration(0))
 		require.Less(t, offset, window)
 
@@ -85,7 +85,7 @@ func TestJitterIsStableAndInsideTheWindow(t *testing.T) {
 	}
 
 	require.Greater(t, len(offsets), 1)
-	require.Zero(t, jitterOffset("a", "world", 0))
+	require.Zero(t, JitterOffset("a", "world", 0))
 }
 
 func TestJitterMovesEverySlotByItsOffset(t *testing.T) {
@@ -95,7 +95,7 @@ func TestJitterMovesEverySlotByItsOffset(t *testing.T) {
 	offset := 7 * time.Minute
 	last := time.Date(2026, 10, 11, 3, 7, 1, 0, loc)
 
-	require.Equal(t, time.Date(2026, 10, 12, 3, 7, 0, 0, loc), p.due(offset, last, last.Add(time.Hour)))
+	require.Equal(t, time.Date(2026, 10, 12, 3, 7, 0, 0, loc), p.Due(offset, last, last.Add(time.Hour)))
 }
 
 func TestCronAcrossDST(t *testing.T) {

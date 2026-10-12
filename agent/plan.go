@@ -98,11 +98,11 @@ func repeated(t time.Time) bool {
 	return twin.Day() == t.Day() && twin.Hour() == t.Hour() && twin.Minute() == t.Minute() && twin.Second() == t.Second()
 }
 
-// due is when a task with this plan next runs, its slots moved by offset,
+// Due is when a task with this plan next runs, its slots moved by offset,
 // given when its last run started and the time now. A task that never ran
 // is due now, as is one that missed a slot, however many; a last start
 // ahead of now counts as now.
-func (p *Plan) due(offset time.Duration, last, now time.Time) time.Time {
+func (p *Plan) Due(offset time.Duration, last, now time.Time) time.Time {
 	if last.IsZero() {
 		return now
 	}
@@ -133,9 +133,9 @@ func (p *Plan) staleAfter(now time.Time) time.Duration {
 	return 3 * second.Sub(first)
 }
 
-// jitterOffset is the offset in [0, window) every slot of the named task
+// JitterOffset is the offset in [0, window) every slot of the named task
 // of agent moves by. It is the same on every start.
-func jitterOffset(agent, task string, window time.Duration) time.Duration {
+func JitterOffset(agent, task string, window time.Duration) time.Duration {
 	if window <= 0 {
 		return 0
 	}
