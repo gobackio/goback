@@ -19,7 +19,7 @@ func (f *file) list() error {
 		return errors.Errorf("index %T lists no directories", f.index)
 	}
 
-	entries, err := lister.ReadDir(f.ctx, f.set, f.src, f.when)
+	entries, err := backup.ListDir(f.ctx, lister, f.key, f.set, f.src, f.when)
 	if err != nil {
 		return err
 	}
@@ -73,6 +73,7 @@ func lsAction(c *cli.Context) error {
 
 	f := &file{
 		ctx:   common.Context(c),
+		key:   common.StoreKey(c, store),
 		src:   c.Args().Get(0),
 		index: idx,
 		when:  time.Now().Add(-d),

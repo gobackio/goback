@@ -103,11 +103,14 @@ func openNodes(key *storekey.Key, parent []byte, nodes []*proto.TreeNode) ([]*pr
 // index stores: name tokens computed top-down when the store is
 // encrypted, escaped plain names otherwise.
 func IndexPath(key *storekey.Key, path string) string {
-	var (
-		out    string
-		parent []byte
-	)
+	out, _ := indexPath(key, path)
 
+	return out
+}
+
+// indexPath is IndexPath and the token of the directory path names, which
+// the stats of its entries are sealed under.
+func indexPath(key *storekey.Key, path string) (out string, parent []byte) {
 	for _, part := range strings.Split(strings.Trim(path, "/"), "/") {
 		if part == "" {
 			continue
@@ -122,5 +125,5 @@ func IndexPath(key *storekey.Key, path string) string {
 		out = proto.JoinPath(out, name)
 	}
 
-	return out
+	return out, parent
 }

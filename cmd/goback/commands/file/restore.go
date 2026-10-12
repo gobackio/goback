@@ -15,16 +15,9 @@ import (
 )
 
 func (f *file) restore() error {
-	files, err := f.index.FileInfo(f.ctx, f.set, backup.IndexPath(f.key, f.src), f.when, 1)
+	files, err := backup.FindFile(f.ctx, f.index, f.key, f.set, f.src, f.when, 1)
 	if err != nil {
 		return err
-	}
-
-	// a set that took a key later keeps its earlier versions under plain paths
-	if len(files) == 0 && f.key != nil {
-		if files, err = f.index.FileInfo(f.ctx, f.set, backup.IndexPath(nil, f.src), f.when, 1); err != nil {
-			return err
-		}
 	}
 
 	if len(files) != 1 {

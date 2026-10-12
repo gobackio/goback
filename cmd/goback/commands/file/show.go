@@ -4,6 +4,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func (f *file) show() error {
-	nodes, err := f.index.FileInfo(f.ctx, f.set, f.src, f.when, 10)
+	nodes, err := backup.FindFile(f.ctx, f.index, f.key, f.set, f.src, f.when, 10)
 	if err != nil {
 		return err
 	}
@@ -63,6 +64,7 @@ func showAction(c *cli.Context) error {
 
 	f := &file{
 		ctx:   common.Context(c),
+		key:   common.StoreKey(c, store),
 		src:   src,
 		index: idx,
 		when:  when,
