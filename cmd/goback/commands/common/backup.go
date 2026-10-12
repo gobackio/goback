@@ -85,14 +85,44 @@ var SalvageFlag = cli.BoolFlag{
 	Usage: "write what can be read when parts are missing, leaving holes, and report them",
 }
 
-// Salvage applies --salvage to the restorer and logs every hole it leaves.
-func Salvage(c *cli.Context, restorer *backup.Restorer) {
-	if !c.Bool("salvage") {
-		return
+// Restorer is a restorer of repo set up from the restore flags shared by
+// commit restore and file restore, or exits.
+func Restorer(c *cli.Context, repo *goback.Repo) *backup.Restorer {
+	overwrite, err := backup.ParseOverwriteMode(c.String("overwrite"))
+	if err != nil {
+		Fatal(err)
 	}
 
-	restorer.Salvage = true
-	restorer.OnHole = func(hole backup.Hole) {
-		log.Printf("missing %d bytes at offset %d of %s (%x)", hole.Length, hole.Offset, hole.Path, hole.Ref.GetHash())
+	key := StoreKey(c, repo)
+
+	restorer := &backup.Restorer{
+		Store:     repo.Store,
+		Key:       key,
+		Cache:     BlobCache(c, repo),
+		Workers:   c.Int("workers"),
+		Overwrite: overwrite,
+		Verify:    c.Bool("verify"),
+		DryRun:    c.Bool("dry-run"),
+		Rechunk:   c.Bool("rechunk"),
+		Salvage:   c.Bool("salvage"),
 	}
+
+	if restorer.Salvage {
+		restorer.OnHole = func(hole backup.Hole) {
+			log.Printf("missing %d bytes at offset %d of %s (%x)", hole.Length, hole.Offset, hole.Path, hole.Ref.GetHash())
+		}
+	}
+
+	if seeds := c.StringSlice("seed"); len(seeds) > 0 {
+		restorer.Seeds = backup.NewSeedMap(key)
+		for _, seed := range seeds {
+			if err := restorer.Seeds.Add(seed); err != nil {
+				Fatalf("indexing seed %s: %v", seed, err)
+			}
+		}
+
+		log.Printf("Indexed %d chunks from %d seeds", restorer.Seeds.Len(), len(seeds))
+	}
+
+	return restorer
 }

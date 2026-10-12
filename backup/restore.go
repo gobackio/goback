@@ -3,6 +3,7 @@ package backup
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -33,6 +34,27 @@ const (
 	// file unread.
 	OverwriteIfChanged
 )
+
+// String is the mode's name, as ParseOverwriteMode reads it.
+func (m OverwriteMode) String() string {
+	if m == OverwriteIfChanged {
+		return "if-changed"
+	}
+
+	return "always"
+}
+
+// ParseOverwriteMode reads "always" or "if-changed".
+func ParseOverwriteMode(name string) (OverwriteMode, error) {
+	switch name {
+	case "always":
+		return OverwriteAlways, nil
+	case "if-changed":
+		return OverwriteIfChanged, nil
+	}
+
+	return 0, fmt.Errorf("unknown overwrite mode %q: use always or if-changed", name)
+}
 
 // Outcome is what RestoreFile did with one file.
 type Outcome int

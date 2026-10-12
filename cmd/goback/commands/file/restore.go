@@ -80,32 +80,8 @@ func restoreAction(c *cli.Context) {
 	store := repo.Store
 	idx := repo.Index
 
-	key := common.StoreKey(c, repo)
-
-	restorer := &backup.Restorer{
-		Store:   store,
-		Key:     key,
-		Cache:   common.BlobCache(c, repo),
-		Workers: c.Int("workers"),
-		Verify:  c.Bool("verify"),
-		DryRun:  c.Bool("dry-run"),
-	}
-
-	common.Salvage(c, restorer)
-	restorer.Rechunk = c.Bool("rechunk")
-
-	if c.String("overwrite") == "if-changed" {
-		restorer.Overwrite = backup.OverwriteIfChanged
-	}
-
-	if seeds := c.StringSlice("seed"); len(seeds) > 0 {
-		restorer.Seeds = backup.NewSeedMap(key)
-		for _, seed := range seeds {
-			if err := restorer.Seeds.Add(seed); err != nil {
-				common.Fatalf("indexing seed %s: %v", seed, err)
-			}
-		}
-	}
+	restorer := common.Restorer(c, repo)
+	key := restorer.Key
 
 	f := &file{
 		ctx:      common.Context(c),

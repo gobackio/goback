@@ -235,19 +235,6 @@ func logStats(stats backup.RestoreStats) {
 	}
 }
 
-func overwriteMode(name string) backup.OverwriteMode {
-	switch name {
-	case "always":
-		return backup.OverwriteAlways
-	case "if-changed":
-		return backup.OverwriteIfChanged
-	}
-
-	common.Fatalf("unknown --overwrite mode %q: use always or if-changed", name)
-
-	return backup.OverwriteAlways
-}
-
 func restoreAction(c *cli.Context) {
 	dst := c.Args().Get(0)
 
@@ -277,31 +264,7 @@ func restoreAction(c *cli.Context) {
 	repo := common.OpenRepo(c)
 	store := repo.Store
 	index := repo.Index
-	key := common.StoreKey(c, repo)
-
-	restorer := &backup.Restorer{
-		Store:     store,
-		Key:       key,
-		Cache:     common.BlobCache(c, repo),
-		Workers:   c.Int("workers"),
-		Overwrite: overwriteMode(c.String("overwrite")),
-		Verify:    c.Bool("verify"),
-		DryRun:    c.Bool("dry-run"),
-	}
-
-	common.Salvage(c, restorer)
-	restorer.Rechunk = c.Bool("rechunk")
-
-	if seeds := c.StringSlice("seed"); len(seeds) > 0 {
-		restorer.Seeds = backup.NewSeedMap(key)
-		for _, seed := range seeds {
-			if err := restorer.Seeds.Add(seed); err != nil {
-				common.Fatalf("indexing seed %s: %v", seed, err)
-			}
-		}
-
-		log.Printf("Indexed %d chunks from %d seeds", restorer.Seeds.Len(), len(seeds))
-	}
+	restorer := common.Restorer(c, repo)
 
 	s := &commit{
 		ctx:      common.Context(c),
