@@ -23,13 +23,13 @@ func (c *commit) list() {
 	}
 
 	common.Result(out, func() {
-		for _, commit := range commits {
+		for i, commit := range commits {
 			note := ""
 			if commit.Consistent {
 				note = " consistent"
 			}
 
-			log.Printf("%s %x%s", time.Unix(commit.Timestamp, 0), commit.Tree.Hash, note)
+			log.Printf("%s %s%s", time.Unix(commit.Timestamp, 0), out[i].Ref, note)
 		}
 	})
 }
