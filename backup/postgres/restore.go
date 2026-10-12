@@ -386,12 +386,17 @@ func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key
 		return err
 	}
 
-	key, err = backup.CommitKey(ctx, objects, obj.GetCommit(), key)
+	commit := obj.GetCommit()
+	if commit == nil {
+		return fmt.Errorf("%x is not a commit", ref.Hash)
+	}
+
+	key, err = backup.CommitKey(ctx, objects, commit, key)
 	if err != nil {
 		return err
 	}
 
-	tree, err := backup.OpenTree(ctx, objects, obj.GetCommit().GetTree(), key, nil)
+	tree, err := backup.OpenTree(ctx, objects, commit.Tree, key, nil)
 	if err != nil {
 		return err
 	}

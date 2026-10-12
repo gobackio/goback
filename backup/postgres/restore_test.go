@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
@@ -214,6 +215,24 @@ func TestFetchWALWritesWhatTheCommitHolds(t *testing.T) {
 
 	err = FetchWAL(f.ctx, f.index, nil, wal.Ref, "00000002.history", dst)
 	require.ErrorIs(t, err, backup.ErrNotFound)
+}
+
+func TestFetchWALRefusesARefThatIsNoCommit(t *testing.T) {
+	f := newWALFixture(t)
+
+	name := f.spoolSegment(7, 42)
+
+	wal, err := f.run()
+	require.NoError(t, err)
+
+	obj, err := f.index.Get(f.ctx, wal.Ref)
+	require.NoError(t, err)
+
+	key, err := storekey.Generate("s1")
+	require.NoError(t, err)
+
+	err = FetchWAL(f.ctx, f.index, key, obj.GetCommit().Tree, name, filepath.Join(t.TempDir(), "RECOVERYXLOG"))
+	require.ErrorContains(t, err, "not a commit")
 }
 
 func TestARestoreReadsAWALSetArchiveCommandFilled(t *testing.T) {
