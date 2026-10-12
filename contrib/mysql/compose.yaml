@@ -16,7 +16,7 @@ services:
 
   mysql:
     image: mysql:8.0
-    # tini as PID 1 reaps what the jobs leave behind
+    # tini as PID 1 reaps what the dump job leaves behind
     init: true
     depends_on:
       goback-bin:
@@ -30,10 +30,7 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql-root-password
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-credentials
-      # the [client] section the client programs connect with
       GOBACK_MYSQL_DEFAULTS_EXTRA_FILE: /run/secrets/mysql-client.cnf
-      # mysql binlog keeps the trees it writes here, so the next run reads none
-      GOBACK_CACHE_DIR: /var/lib/goback/cache
     secrets:
       - goback-key
       - gcp-credentials
@@ -43,19 +40,46 @@ services:
       - mysqldata:/var/lib/mysql
       - goback-bin:/opt/goback:ro
       - goback:/var/lib/goback
-    # Ofelia runs these in this container; job names are host-wide
+    # Ofelia runs the dump in this container, for its mysqldump; job names are
+    # host-wide
     labels:
       ofelia.enabled: "true"
       ofelia.job-exec.mysql-dump.schedule: "@daily"
       ofelia.job-exec.mysql-dump.user: mysql
       ofelia.job-exec.mysql-dump.no-overlap: "true"
-      # each job keeps its own copy of the bucket's archive index, so the two
-      # can run at the same time
       ofelia.job-exec.mysql-dump.command: /opt/goback/goback --storage gcs://BUCKET --index /var/lib/goback/index --store-key /run/secrets/goback-key --agent-id db --set db-dump mysql dump --binlog-set db-binlog
-      ofelia.job-exec.mysql-binlog.schedule: "@every 1m"
-      ofelia.job-exec.mysql-binlog.user: mysql
-      ofelia.job-exec.mysql-binlog.no-overlap: "true"
-      ofelia.job-exec.mysql-binlog.command: /opt/goback/goback --storage gcs://BUCKET --index /var/lib/goback/index --store-key /run/secrets/goback-key --agent-id db --set db-binlog mysql binlog --dump-set db-dump
+
+  # receives the binlogs as a replica over the network, without the data volume
+  goback-receive:
+    image: goback
+    depends_on:
+      goback-bin:
+        condition: service_completed_successfully
+      mysql:
+        condition: service_started
+    restart: unless-stopped
+    # above --shutdown-grace, so the last commit finishes
+    stop_grace_period: 40s
+    command:
+      - --storage=gcs://BUCKET
+      - --index=/var/lib/goback/index
+      - --store-key=/run/secrets/goback-key
+      - --agent-id=db
+      - --set=db-binlog
+      - mysql
+      - receive
+      - --dump-set=db-dump
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-credentials
+      GOBACK_MYSQL_DEFAULTS_EXTRA_FILE: /run/secrets/mysql-client.cnf
+      GOBACK_MYSQL_SPOOL: /var/lib/goback/spool
+      GOBACK_CACHE_DIR: /var/lib/goback/cache
+    secrets:
+      - goback-key
+      - gcp-credentials
+      - mysql-client.cnf
+    volumes:
+      - goback-receive:/var/lib/goback
 
   ofelia:
     image: mcuadros/ofelia:latest
@@ -79,3 +103,4 @@ volumes:
   mysqldata:
   goback-bin:
   goback:
+  goback-receive:
