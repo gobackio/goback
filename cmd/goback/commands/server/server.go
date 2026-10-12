@@ -3,27 +3,17 @@ package server
 import (
 	"context"
 	"errors"
-	"log"
 	"net"
 	"os"
 	"strings"
 
-	"github.com/gobackio/goback/admin"
-	"github.com/gobackio/goback/auth"
-	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
-	"github.com/gobackio/goback/cmd/goback/commands/gc"
-	"github.com/gobackio/goback/health"
-	"github.com/gobackio/goback/index/sql"
-	"github.com/gobackio/goback/proto"
-	adminpb "github.com/gobackio/goback/proto/admin"
 	"github.com/gobackio/goback/storage"
 	"github.com/gobackio/goback/storage/maintenance"
 	"github.com/gobackio/goback/telemetry"
 
 	"github.com/urfave/cli"
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
-	"google.golang.org/grpc"
 )
 
 // Command is the server command.
@@ -85,26 +75,20 @@ var Command = cli.Command{
 	},
 }
 
-func serverAction(ctx *cli.Context) {
-	secret, err := sharedSecret(ctx)
+func serverAction(c *cli.Context) {
+	secret, err := sharedSecret(c)
 	if err != nil {
 		common.Fatal(err)
 	}
 
-	creds, tlsConfig, err := storage.ServerTLS(ctx.String("tls-cert"), ctx.String("tls-key"), ctx.Bool("plaintext-behind-proxy"))
+	_, tlsConfig, err := storage.ServerTLS(c.String("tls-cert"), c.String("tls-key"), c.Bool("plaintext-behind-proxy"))
 	if err != nil {
 		common.Fatal(err)
 	}
 
-	if tlsConfig == nil {
-		log.Println("Serving plaintext; a proxy must terminate TLS in front of this listener")
-	}
+	repo := common.OpenRepo(c)
 
-	repo := common.OpenRepo(ctx)
-	s := repo.Store
-	idx := repo.Index
-
-	listener, err := net.Listen("tcp", ctx.String("address"))
+	listener, err := net.Listen("tcp", c.String("address"))
 	if err != nil {
 		common.Fatal(err)
 	}
@@ -113,53 +97,18 @@ func serverAction(ctx *cli.Context) {
 		common.Fatalf("failed setting up telemetry: %s", err)
 	}
 
-	sessions, _ := s.(backup.SessionStore)
-	if sessions == nil {
-		log.Printf("Store %T has no sessions; uploads are visible as they arrive", s)
-	}
-
-	store := storage.NewStore(idx, sessions)
-
-	if _, ok := idx.(backup.PresenceIndex); !ok {
-		log.Printf("Index %T stores no presence filters; agents upload every new chunk", idx)
-	}
-
-	if _, ok := idx.(backup.RefScope); !ok {
-		log.Printf("Index %T cannot scope reads; every ref is served", idx)
-	}
-
-	remote := storage.NewServer(store)
-
-	srv := grpc.NewServer(
-		grpc.Creds(creds),
-		grpc.StatsHandler(otelgrpc.NewServerHandler(otelgrpc.WithPublicEndpoint())),
-		grpc.ChainUnaryInterceptor(health.Unary(auth.UnaryInterceptor(secret), remote.UnaryInterceptor())),
-		grpc.ChainStreamInterceptor(health.Stream(auth.StreamInterceptor(secret), remote.StreamInterceptor())),
-	)
-
-	proto.RegisterStoreServer(srv, remote)
-
-	probe := &health.Probe{}
-	probe.Register(srv)
-
-	runner := maintenance.NewRunner(s, idx, maintenance.Schedule{
-		Sweep:    ctx.Duration("sweep-interval"),
-		Compact:  ctx.Duration("compact-interval"),
-		Collect:  ctx.Duration("gc-interval"),
-		Retire:   ctx.Duration("retire-interval"),
-		Presence: ctx.Duration("presence-interval"),
-	})
-	runner.OnCollect = gc.Log
-	go runner.Run(context.Background())
-
-	if x, ok := idx.(*sql.Index); ok {
-		adminpb.RegisterAdminServer(srv, adminServer(x, runner))
-	} else {
-		log.Printf("Index %T keeps no sets or policy; the server serves no Admin service", idx)
-	}
-
-	log.Println("Listening on", listener.Addr().String())
-	common.Fatal(srv.Serve(listener))
+	common.Fatal(repo.Serve(context.Background(), listener, goback.ServeOptions{
+		Secret:               secret,
+		TLS:                  tlsConfig,
+		PlaintextBehindProxy: c.Bool("plaintext-behind-proxy"),
+		Schedule: maintenance.Schedule{
+			Sweep:    c.Duration("sweep-interval"),
+			Compact:  c.Duration("compact-interval"),
+			Collect:  c.Duration("gc-interval"),
+			Retire:   c.Duration("retire-interval"),
+			Presence: c.Duration("presence-interval"),
+		},
+	}))
 }
 
 // sharedSecret reads --secret or --secret-file; the server accepts no
@@ -184,26 +133,4 @@ func sharedSecret(ctx *cli.Context) (string, error) {
 	}
 
 	return secret, nil
-}
-
-// adminServer is the Admin service over the index and the runner's jobs.
-func adminServer(x *sql.Index, runner *maintenance.Runner) *admin.Server {
-	server := &admin.Server{Index: x, Escrow: x}
-
-	if runner.Retirer != nil {
-		server.RetireJob = runner.Retire
-	}
-
-	if runner.Collector != nil {
-		server.CollectJob = func(ctx context.Context) (string, error) {
-			report, err := runner.Collect(ctx)
-			if report == nil {
-				return "", err
-			}
-
-			return report.Summary(), err
-		}
-	}
-
-	return server
 }
