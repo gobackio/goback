@@ -436,3 +436,19 @@ func TestAWindowWithinKeepWithinKeepsEveryCommit(t *testing.T) {
 	require.True(t, windows[0].Every)
 	require.False(t, windows[6].Every)
 }
+
+func TestABracketReadsBackAsItIsWritten(t *testing.T) {
+	for _, b := range []Bracket{{Period: Daily, Count: 60}, {Period: Monthly}} {
+		read, err := ParseBracket(b.String())
+		require.NoError(t, err)
+		require.Equal(t, b, read)
+	}
+
+	for _, bad := range []string{"daily=0", "daily=", "daily=many"} {
+		_, err := ParseBracket(bad)
+		require.ErrorIs(t, err, ErrInvalidPolicy, bad)
+	}
+
+	require.Equal(t, "keep-last=1 keep=hourly=336 keep=daily=60 keep=weekly=12 keep=monthly", Default.String())
+	require.Equal(t, "keep-last=1 keep-within=forever", KeepAll.String())
+}

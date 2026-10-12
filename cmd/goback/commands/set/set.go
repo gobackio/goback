@@ -5,9 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/gobackio/goback/admin"
 	"github.com/gobackio/goback/backup/retention"
@@ -130,7 +127,7 @@ func showRetention(ctx context.Context, x admin.Index, name string) {
 			Source    string           `json:"source"`
 			TrashDays int              `json:"trash_days"`
 		}{viewPolicy(policy), source, w.TrashDays}, func() {
-			fmt.Printf("store default: %s (%s)\ntrash %d days\n", describe(policy), source, w.TrashDays)
+			fmt.Printf("store default: %s (%s)\ntrash %d days\n", policy.String(), source, w.TrashDays)
 		})
 
 		return
@@ -152,7 +149,7 @@ func showRetention(ctx context.Context, x admin.Index, name string) {
 		Source string           `json:"source"`
 		Paused bool             `json:"paused"`
 	}{name, viewPolicy(ret.Effective), source, ret.Paused}, func() {
-		fmt.Printf("set %s: %s (%s)\n", name, describe(ret.Effective), source)
+		fmt.Printf("set %s: %s (%s)\n", name, ret.Effective.String(), source)
 		if ret.Paused {
 			fmt.Println("retirement is paused since the rebuild; set a policy to resume it")
 		}
@@ -161,66 +158,26 @@ func showRetention(ctx context.Context, x admin.Index, name string) {
 
 func viewPolicy(p retention.Policy) views.PolicyView {
 	out := common.View.Policy(p)
-	out.Flags = describe(p)
+	out.Flags = p.String()
 
 	return out
 }
 
 // brackets reads the --keep flags as the stretches of a set's past,
-// newest first. A bracket without a count keeps its period forever.
+// newest first.
 func brackets(flags []string) []retention.Bracket {
-	var read []retention.Bracket
+	read := make([]retention.Bracket, len(flags))
 
-	for _, flag := range flags {
-		period, count, hasCount := strings.Cut(flag, "=")
-
-		bracket := retention.Bracket{Period: retention.Period(period)}
-		if hasCount {
-			var err error
-
-			bracket.Count, err = strconv.Atoi(count)
-			if err != nil || bracket.Count < 1 {
-				common.Fatalf("--keep %s: %q is not a number of periods", flag, count)
-			}
+	for i, flag := range flags {
+		b, err := retention.ParseBracket(flag)
+		if err != nil {
+			common.Fatalf("--keep %s: %v", flag, err)
 		}
 
-		read = append(read, bracket)
+		read[i] = b
 	}
 
 	return read
-}
-
-// describe prints a policy as its keep flags.
-func describe(p retention.Policy) string {
-	var parts []string
-	if p.KeepLast > 0 {
-		parts = append(parts, fmt.Sprintf("keep-last=%d", p.KeepLast))
-	}
-
-	for _, b := range p.Brackets {
-		if b.Count == 0 {
-			parts = append(parts, fmt.Sprintf("keep=%s", b.Period))
-
-			continue
-		}
-
-		parts = append(parts, fmt.Sprintf("keep=%s=%d", b.Period, b.Count))
-	}
-
-	if p.KeepWithin > 0 {
-		within := p.KeepWithin.String()
-		if p.KeepWithin == time.Duration(1<<63-1) {
-			within = "forever"
-		}
-
-		parts = append(parts, "keep-within="+within)
-	}
-
-	if len(parts) == 0 {
-		return "keep nothing"
-	}
-
-	return strings.Join(parts, " ")
 }
 
 func deleteAction(c *cli.Context) {
