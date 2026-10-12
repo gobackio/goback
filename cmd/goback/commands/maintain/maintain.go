@@ -3,7 +3,6 @@
 package maintain
 
 import (
-	"context"
 	"log"
 	"time"
 
@@ -94,7 +93,7 @@ var Command = cli.Command{
 			Name:  "check",
 			Usage: "Report the commits the store holds that the index has no row for and no tombstone retires",
 			Action: action(func(m *members) {
-				checker, ok := m.index.(orphanFinder)
+				checker, ok := m.index.(index.OrphanFinder)
 				if !ok {
 					common.Fatalf("Index %T keeps no commit rows", m.index)
 				}
@@ -189,16 +188,10 @@ type counted struct {
 	Count  int    `json:"count"`
 }
 
-// orphanFinder is an index that finds the commits the store holds and it
-// has no row for.
-type orphanFinder interface {
-	OrphanCommits(ctx context.Context) ([]index.OrphanCommit, error)
-}
-
-// sizeFiller is an index that can work out the size of a commit it
-// recorded without one, and measure its sets.
+// sizeFiller is an index that works out the size of each commit it
+// recorded without one, and measures its sets.
 type sizeFiller interface {
-	FillMissingSizes(ctx context.Context) (int, error)
+	index.SizeFiller
 	maintenance.Measurer
 }
 

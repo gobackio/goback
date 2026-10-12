@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/index/sql/ent"
 	"github.com/gobackio/goback/index/sql/ent/commitrow"
 	"github.com/gobackio/goback/index/sql/ent/damagedpath"
@@ -207,18 +208,10 @@ func (x *Index) MarkLost(ctx context.Context, versions []backup.FilePath) error 
 	return nil
 }
 
-// LostVersion is a stored version the store cannot read, with the live
-// commits that hold it.
-type LostVersion struct {
-	Path    string
-	Ref     *proto.Ref
-	Commits []*proto.Ref
-}
-
 // LostVersions returns the versions of a set the store cannot read and the
 // commits each one damages. A restore of those commits cannot produce that
 // path.
-func (x *Index) LostVersions(ctx context.Context, name string) ([]LostVersion, error) {
+func (x *Index) LostVersions(ctx context.Context, name string) ([]index.LostVersion, error) {
 	setID, err := findSet(ctx, x.client, name)
 	if errors.Is(err, backup.ErrNotFound) {
 		return nil, nil
@@ -236,7 +229,7 @@ func (x *Index) LostVersions(ctx context.Context, name string) ([]LostVersion, e
 	}
 
 	if len(rows) == 0 {
-		return []LostVersion{}, nil
+		return []index.LostVersion{}, nil
 	}
 
 	commits, err := x.client.CommitRow.Query().Where(commitrow.SetID(setID), liveCommit()).
@@ -245,9 +238,9 @@ func (x *Index) LostVersions(ctx context.Context, name string) ([]LostVersion, e
 		return nil, err
 	}
 
-	out := make([]LostVersion, 0, len(rows))
+	out := make([]index.LostVersion, 0, len(rows))
 	for _, row := range rows {
-		lost := LostVersion{Path: row.Path, Ref: &proto.Ref{Hash: row.Ref}}
+		lost := index.LostVersion{Path: row.Path, Ref: &proto.Ref{Hash: row.Ref}}
 		for _, c := range commits {
 			if !c.ReceivedAt.Before(row.ValidFrom) && (row.ValidUntil == nil || c.ReceivedAt.Before(*row.ValidUntil)) {
 				lost.Commits = append(lost.Commits, &proto.Ref{Hash: c.Ref})

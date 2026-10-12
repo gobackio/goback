@@ -1,7 +1,6 @@
 package commit
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"log/slog"
@@ -12,7 +11,7 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
-	"github.com/gobackio/goback/index/sql"
+	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
 
 	"github.com/dustin/go-humanize"
@@ -391,16 +390,10 @@ var restoreCmd = cli.Command{
 	}, restoreFlags...),
 }
 
-// lostLister is an index that knows which versions a repair could not
-// keep.
-type lostLister interface {
-	LostVersions(ctx context.Context, set string) ([]sql.LostVersion, error)
-}
-
 // lostHere are the file versions this commit holds that a repair recorded
 // as unrecoverable, by ref, so a failed restore can say why.
 func (c *commit) lostHere(commit *proto.Ref) map[string]bool {
-	lister, ok := c.index.(lostLister)
+	lister, ok := c.index.(index.LostLister)
 	if !ok {
 		return nil
 	}

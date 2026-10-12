@@ -12,6 +12,11 @@ import (
 	"github.com/gobackio/goback/storage/wrapped"
 )
 
+// Scrubber is a store that rehashes everything it holds.
+type Scrubber interface {
+	Scrub(ctx context.Context) (*pack.ScrubReport, error)
+}
+
 // Repairer is a store that rewrites the archives holding corrupt objects.
 type Repairer interface {
 	Repair(ctx context.Context) (*pack.RepairReport, error)

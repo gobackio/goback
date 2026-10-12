@@ -2,14 +2,12 @@
 package indexing
 
 import (
-	"context"
 	"log"
 	"os"
 
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
 	"github.com/gobackio/goback/index"
-	"github.com/gobackio/goback/proto"
 
 	"github.com/urfave/cli"
 )
@@ -30,11 +28,6 @@ var Command = cli.Command{
 			Action: commitsAction,
 		},
 	},
-}
-
-// commitIndexer is an index that can index commits the store holds.
-type commitIndexer interface {
-	IndexCommits(ctx context.Context, refs []*proto.Ref, dryRun bool) ([]index.IndexedSet, error)
 }
 
 func commitsAction(c *cli.Context) {
@@ -60,7 +53,7 @@ func commitsAction(c *cli.Context) {
 	x := repo.Index
 	defer x.Close()
 
-	indexer, ok := x.(commitIndexer)
+	indexer, ok := x.(index.CommitIndexer)
 	if !ok {
 		common.Fatalf("Index %T cannot index single commits", x)
 	}

@@ -8,17 +8,12 @@ import (
 
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
-	"github.com/gobackio/goback/storage/pack"
+	"github.com/gobackio/goback/storage/maintenance"
 	"github.com/gobackio/goback/storage/wrapped"
 
 	"github.com/dustin/go-humanize"
 	"github.com/urfave/cli"
 )
-
-// Scrubber is implemented by stores that can rehash everything they hold.
-type Scrubber interface {
-	Scrub(ctx context.Context) (*pack.ScrubReport, error)
-}
 
 // Command is the scrub command.
 var Command = cli.Command{
@@ -31,7 +26,7 @@ func scrubAction(c *cli.Context) {
 	repo := common.OpenRepo(c)
 	store := repo.Store
 
-	scrubber, ok := wrapped.Innermost(store).(Scrubber)
+	scrubber, ok := wrapped.Innermost(store).(maintenance.Scrubber)
 	if !ok {
 		common.Fatalf("storage %s cannot be scrubbed", c.GlobalString("storage"))
 	}

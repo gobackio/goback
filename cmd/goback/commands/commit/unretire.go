@@ -1,7 +1,6 @@
 package commit
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -15,12 +14,6 @@ import (
 	"github.com/urfave/cli"
 )
 
-// unretirer is an index that can bring tombstoned commits back.
-type unretirer interface {
-	TombstonedCommits(ctx context.Context, set string, since time.Time) ([]*proto.Ref, error)
-	UnretireCommits(ctx context.Context, refs []*proto.Ref, dryRun bool) ([]index.Unretired, error)
-}
-
 func unretireAction(c *cli.Context) {
 	set := c.String("set")
 	if (set == "") == (c.NArg() == 0) {
@@ -31,7 +24,7 @@ func unretireAction(c *cli.Context) {
 	idx := repo.Index
 	ctx := common.Context(c)
 
-	x, ok := idx.(unretirer)
+	x, ok := idx.(index.Unretirer)
 	if !ok {
 		common.Fatalf("Index %T cannot unretire commits", idx)
 	}
