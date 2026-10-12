@@ -247,6 +247,7 @@ func newWalkerFixture(t *testing.T) *walkerFixture {
 		Metadata:      map[string]string{"env": "test"},
 		AgentID:       "agent",
 		Root:          f.root,
+		FS:            fixtureFS,
 		Workers:       4,
 		ReadRetries:   3,
 		PrefetchDepth: 2,

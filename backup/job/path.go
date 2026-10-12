@@ -18,9 +18,12 @@ import (
 // PathSettings say how Path backs up a directory.
 type PathSettings struct {
 	Set string
-	// Dir is the directory to back up; relative to the working directory
-	// when not absolute.
+	// Dir is the directory to back up; on the local disk, relative to the
+	// working directory when not absolute.
 	Dir string
+	// FS is the tree Dir is read from; nil means the local disk, and on
+	// any other FS Dir is taken as that FS's path.
+	FS backup.FS
 	// Include and Exclude are globs over paths that start with / at Dir;
 	// an included path is backed up even when an exclude matches it.
 	Include []string
@@ -46,7 +49,7 @@ type PathSettings struct {
 // commit, wrapped in the hooks. The post hook runs however the walk ends.
 // A result that is Dirty committed with torn or unreadable files.
 func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, error) {
-	root, err := filepath.Abs(s.Dir)
+	root, err := rootOf(s.FS, s.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +71,7 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 		Key:                env.Key,
 		Logger:             logger,
 		Root:               root,
+		FS:                 s.FS,
 		Include:            includeFilter(logger, s.Include, s.Exclude),
 		Workers:            s.Workers,
 		ForceHashPercent:   s.ForceHash,
@@ -118,7 +122,7 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 	walker.Quiesced = runner.Pre != "" && err == nil
 
 	if dir := hooks.Redirect(preOut); dir != "" {
-		walker.Root, err = filepath.Abs(dir)
+		walker.Root, err = rootOf(s.FS, dir)
 		if err != nil {
 			return nil, err
 		}
@@ -137,6 +141,17 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 	}
 
 	return result, nil
+}
+
+// rootOf is dir as a walk's root: absolute on the local disk, and as given
+// on any other FS, whose paths are its own.
+func rootOf(fsys backup.FS, dir string) (string, error) {
+	switch fsys.(type) {
+	case nil, backup.LocalFS, *backup.LocalFS:
+		return filepath.Abs(dir)
+	}
+
+	return dir, nil
 }
 
 // includeFilter applies the include and exclude patterns to a path relative

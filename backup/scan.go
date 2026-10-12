@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path"
-	"path/filepath"
 	"sync"
 )
 
@@ -44,7 +43,9 @@ type scanJob struct {
 // further ahead than window entries, and the walk lists a directory itself
 // whenever the read-ahead has not got to it.
 type scanner struct {
+	ctx    context.Context
 	walker *Walker
+	fs     FS
 	window int
 
 	mtx     sync.Mutex
@@ -65,7 +66,9 @@ func newScanner(ctx context.Context, w *Walker, workers, window int) *scanner {
 	}
 
 	s := &scanner{
+		ctx:    ctx,
 		walker: w,
+		fs:     w.fs(),
 		window: window,
 		ready:  map[string]*scanned{},
 		flight: map[string]bool{},
@@ -166,7 +169,7 @@ func (s *scanner) offer(job scanJob, found *scanned) {
 		}
 
 		s.pending = append(s.pending, scanJob{
-			dir: filepath.Join(job.dir, entry.name),
+			dir: s.fs.Join(job.dir, entry.name),
 			rel: path.Join(job.rel, entry.name),
 		})
 	}
@@ -236,7 +239,7 @@ func (s *scanner) take(job scanJob) *scanned {
 // never stops short, because a truncated listing reads as a directory that
 // lost the rest of its entries.
 func (s *scanner) list(job scanJob) *scanned {
-	entries, err := os.ReadDir(job.dir)
+	entries, err := s.fs.ReadDir(s.ctx, job.dir)
 	if err != nil {
 		return &scanned{err: err}
 	}
@@ -251,7 +254,7 @@ func (s *scanner) list(job scanJob) *scanned {
 			continue
 		}
 
-		found.entries[i].info, found.entries[i].err = entryInfo(entry, filepath.Join(job.dir, name))
+		found.entries[i].info, found.entries[i].err = entry.Info()
 	}
 
 	return found

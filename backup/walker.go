@@ -10,7 +10,6 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,7 +56,12 @@ type Walker struct {
 	Objects ObjectStore
 	Set     string
 	AgentID string
-	Root    string
+	// Root is the directory backed up, a path of FS.
+	Root string
+
+	// FS is the tree Root is read from; nil means LocalFS. A run on any
+	// other FS takes no Growing files.
+	FS FS
 
 	// Metadata is recorded on the commit; the store keeps it and never
 	// interprets it.
@@ -174,6 +178,14 @@ func (w *Walker) now() time.Time {
 	return time.Now()
 }
 
+func (w *Walker) fs() FS {
+	if w.FS != nil {
+		return w.FS
+	}
+
+	return LocalFS{}
+}
+
 // WalkResult summarises one run.
 type WalkResult struct {
 	Ref    *proto.Ref
@@ -282,6 +294,10 @@ func (w *Walker) logger() *slog.Logger {
 
 // Run walks the root, writes the commit and returns its ref.
 func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
+	if len(w.Growing) > 0 && !isLocal(w.FS) {
+		return nil, errors.New("a run on a file system other than the local disk takes no growing files")
+	}
+
 	if w.Workers <= 0 {
 		w.Workers = 1
 	}
@@ -613,6 +629,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 	}
 
 	entries := found.entries
+	fsys := w.fs()
 
 	baseByName := make(map[string]*proto.TreeNode, len(base))
 	for _, node := range base {
@@ -637,7 +654,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 
 		name := entry.name
 		childRel := path.Join(rel, name)
-		childPath := filepath.Join(dir, name)
+		childPath := fsys.Join(dir, name)
 		baseNode := baseByName[name]
 
 		if !w.included(childRel) {
@@ -692,7 +709,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 			}
 
 		case info.Mode()&os.ModeSymlink != 0:
-			target, err := os.Readlink(childPath)
+			target, err := fsys.Readlink(ctx, childPath)
 			if err != nil {
 				w.logger().Warn("reading symlink failed, skipping", "path", childPath, "err", err)
 				atomic.AddInt64(&w.result.Skipped, 1)
@@ -712,7 +729,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 			index := i
 			stat := w.stat(info, "")
 
-			if w.reusable(childPath, childRel, info, stat, baseNode) {
+			if w.reusable(ctx, childPath, childRel, info, stat, baseNode) {
 				atomic.AddInt64(&w.result.Reused, 1)
 				node := &proto.TreeNode{Stat: stat, Ref: baseNode.Ref}
 				results[index] = node
@@ -803,7 +820,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 // walkSubdir walks Root as the directory Subdir of the root, whose other
 // entries are the previous commit's that Carry keeps.
 func (w *Walker) walkSubdir(ctx context.Context, base []*proto.TreeNode) ([]*proto.TreeNode, bool, error) {
-	info, err := os.Stat(w.Root)
+	info, err := w.fs().Stat(ctx, w.Root)
 	if err != nil {
 		return nil, false, err
 	}
@@ -916,7 +933,7 @@ func (w *Walker) sample() bool {
 // reusable applies the change test: same metadata as the base node, older
 // than the base run, not contradicted by the stat cache, and not picked for
 // a sampled re-hash.
-func (w *Walker) reusable(path, rel string, info os.FileInfo, stat *proto.FileInfo, baseNode *proto.TreeNode) bool {
+func (w *Walker) reusable(ctx context.Context, path, rel string, info os.FileInfo, stat *proto.FileInfo, baseNode *proto.TreeNode) bool {
 	if baseNode == nil || baseNode.Stat.GetType() != proto.NodeType_NODE_FILE || baseNode.Ref == nil {
 		return false
 	}
@@ -942,7 +959,7 @@ func (w *Walker) reusable(path, rel string, info os.FileInfo, stat *proto.FileIn
 	}
 
 	if w.ForceHashPercent > 0 && w.sample() {
-		ref, err := HashFile(path, w.Key)
+		ref, err := HashFileFS(ctx, w.fs(), path, w.Key)
 		if err != nil || !ref.Equal(baseNode.Ref) {
 			w.logger().Info("sampled re-hash differs from the recorded version, reading the file", "path", path)
 			return false
@@ -990,7 +1007,7 @@ func (w *Walker) backupFile(ctx context.Context, path, rel string, info os.FileI
 			break
 		}
 
-		after, statErr := os.Lstat(path)
+		after, statErr := w.fs().Lstat(ctx, path)
 		if statErr != nil || (after.Size() == info.Size() && after.ModTime().Equal(info.ModTime())) {
 			break
 		}
@@ -1034,7 +1051,7 @@ func (w *Walker) backupFile(ctx context.Context, path, rel string, info os.FileI
 // known or the filters say the store has them; a nil forced map disables
 // the filters and known altogether.
 func (w *Walker) readFile(ctx context.Context, path string, known map[string]struct{}, forced map[string]struct{}) (*proto.Ref, error) {
-	file, err := os.Open(path)
+	file, err := w.fs().Open(ctx, path)
 	if err != nil {
 		if IsPermissionError(err) || IsLockError(err) {
 			return nil, fmt.Errorf("%w: %v", errUnreadable, err)
@@ -1051,7 +1068,7 @@ func (w *Walker) readFile(ctx context.Context, path string, known map[string]str
 
 	writer := newFileWriter(ctx, w.Objects, w.Key, info.Size())
 	writer.sent = w.sent
-	writer.source = file
+	writer.source, _ = file.(io.ReaderAt)
 	writer.cache = w.BlobCache
 	writer.uploaded = &w.result.Uploaded
 
@@ -1232,7 +1249,7 @@ func (w *Walker) checkpoint(ctx context.Context, done []*proto.TreeNode, base []
 }
 
 func (w *Walker) stat(info os.FileInfo, linkTarget string) *proto.FileInfo {
-	user, group := OwnerNames(info)
+	user, group := w.fs().Owners(info)
 
 	return proto.GetFileInfo(proto.WithDetails(info, user, group, linkTarget))
 }
@@ -1261,10 +1278,16 @@ func nodeEqual(node, base *proto.TreeNode) bool {
 		node.Ref.Equal(base.Ref)
 }
 
-// HashFile computes the File ref a backup of path would produce without
-// storing anything.
+// HashFile computes the File ref a backup of path on the local disk would
+// produce without storing anything.
 func HashFile(path string, key *storekey.Key) (*proto.Ref, error) {
-	file, err := os.Open(path)
+	return HashFileFS(context.Background(), LocalFS{}, path, key)
+}
+
+// HashFileFS computes the File ref a backup of path on fsys would produce
+// without storing anything.
+func HashFileFS(ctx context.Context, fsys FS, path string, key *storekey.Key) (*proto.Ref, error) {
+	file, err := fsys.Open(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -1275,7 +1298,7 @@ func HashFile(path string, key *storekey.Key) (*proto.Ref, error) {
 		return nil, err
 	}
 
-	writer := newFileWriter(context.Background(), discardStore{}, key, info.Size())
+	writer := newFileWriter(ctx, discardStore{}, key, info.Size())
 
 	_, err = io.Copy(writer, file)
 	if err != nil {

@@ -83,7 +83,8 @@ func FileIdentity(info os.FileInfo) (ctimeNs int64, inode uint64) {
 	return stat.Ctim.Sec*1e9 + stat.Ctim.Nsec, stat.Ino
 }
 
-// entryInfo is the stat of a directory entry.
-func entryInfo(entry os.DirEntry, _ string) (os.FileInfo, error) {
-	return entry.Info()
+var localTraits = Traits{Identity: true, Reread: true}
+
+func localReadDir(dir string) ([]os.DirEntry, error) {
+	return os.ReadDir(dir)
 }
