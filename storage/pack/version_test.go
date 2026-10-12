@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -130,4 +132,110 @@ func TestAnArchiveTheIndexKnowsWithoutACreationTimeGetsOne(t *testing.T) {
 	info, _, err := stale.LookupArchive(loc.Archive)
 	require.NoError(t, err)
 	require.True(t, file.ModTime().Truncate(time.Microsecond).Equal(info.Created), "created %s, index file %s", info.Created, file.ModTime())
+}
+
+// failingReads fails the first read of each named file, as a bucket's
+// transient error would.
+type failingReads struct {
+	*localArchiveStorage
+
+	mtx  sync.Mutex
+	fail map[string]bool
+}
+
+var errTransient = errors.New("transient read error")
+
+func (f *failingReads) Open(name string) (File, error) {
+	file, err := f.localArchiveStorage.Open(name)
+	if err != nil {
+		return nil, err
+	}
+
+	return &failingFile{File: file, storage: f, name: name}, nil
+}
+
+type failingFile struct {
+	File
+	storage *failingReads
+	name    string
+}
+
+func (f *failingFile) Read(p []byte) (int, error) {
+	f.storage.mtx.Lock()
+	fail := f.storage.fail[f.name]
+	delete(f.storage.fail, f.name)
+	f.storage.mtx.Unlock()
+
+	if fail {
+		return 0, errTransient
+	}
+
+	return f.File.Read(p)
+}
+
+// deletedInOneArchive stores an object in one archive and its tombstone in
+// a later one, and returns the object and the first archive's name.
+func deletedInOneArchive(t *testing.T, base string) (*proto.Object, string) {
+	t.Helper()
+
+	store := newGCStore(t, base)
+	blob := makeTestData(t, 1)[0]
+	putAll(t, store, []*proto.Object{blob})
+	require.Len(t, store.archives, 1)
+	name := store.archives[0].name
+
+	// the storage's clock must tell the archives apart
+	time.Sleep(20 * time.Millisecond)
+	require.NoError(t, store.Delete(context.Background(), blob.Ref()))
+	require.NoError(t, store.Flush())
+	requirePresent(t, store, []*proto.Object{blob}, false)
+	require.NoError(t, store.Close())
+	time.Sleep(20 * time.Millisecond)
+
+	return blob, name
+}
+
+func TestAnIndexFileThatFailsToReadIsNotReplaced(t *testing.T) {
+	base := t.TempDir()
+	blob, name := deletedInOneArchive(t, base)
+
+	idxPath := filepath.Join(base, filepath.FromSlash(name)+IndexExt)
+	before, err := os.ReadFile(idxPath)
+	require.NoError(t, err)
+	stat, err := os.Stat(idxPath)
+	require.NoError(t, err)
+
+	storage := &failingReads{localArchiveStorage: newLocal(base), fail: map[string]bool{name + IndexExt: true}}
+	failing, err := NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.ErrorIs(t, failing.Open(), errTransient)
+	require.NoError(t, failing.Close())
+
+	after, err := os.ReadFile(idxPath)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	restat, err := os.Stat(idxPath)
+	require.NoError(t, err)
+	require.Equal(t, stat.ModTime(), restat.ModTime(), "the index file keeps the time that versions its records")
+
+	rebuilt := newGCStore(t, base)
+	t.Cleanup(func() { _ = rebuilt.Close() })
+	requirePresent(t, rebuilt, []*proto.Object{blob}, false)
+}
+
+func TestAMissingIndexFileIsRecoveredOnlyInMemory(t *testing.T) {
+	base := t.TempDir()
+	blob, name := deletedInOneArchive(t, base)
+
+	idxPath := filepath.Join(base, filepath.FromSlash(name)+IndexExt)
+	require.NoError(t, os.Remove(idxPath))
+
+	for range 2 {
+		rebuilt := newGCStore(t, base)
+		requirePresent(t, rebuilt, []*proto.Object{blob}, false)
+		require.NoError(t, rebuilt.Close())
+
+		_, err := os.Stat(idxPath)
+		require.True(t, os.IsNotExist(err), "no index file is written after the fact")
+	}
 }

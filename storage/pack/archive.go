@@ -176,34 +176,35 @@ func (a *archive) recoverIndex(err error) (IndexFile, error) {
 
 	a.logger.Info("recovered index", "archive", a.name, "records", len(recoveredIndex))
 
-	_, err = a.storeReadIndex(recoveredIndex)
+	sort.Sort(recoveredIndex)
 
-	return recoveredIndex, err
+	return recoveredIndex, nil
 }
 
+// getIndex reads the archive's index file. Only a missing one is recovered
+// from the archive, and only in memory: the creation time of a stored
+// index file versions the archive's records, so none is written after the
+// fact, and an index file that cannot be read is an error.
 func (a *archive) getIndex() (IndexFile, error) {
 	idxFile, err := a.storage.Open(a.indexName())
-	if err != nil {
+	if notExist(err) {
 		// TODO: recovery may take very long; make it configurable
 		return a.recoverIndex(err)
+	}
+
+	if err != nil {
+		return nil, errors.Wrapf(err, "opening the index of %s", a.name)
 	}
 	defer idxFile.Close()
 
 	idxBuf := bytes.NewBuffer(nil)
-	_, err = io.Copy(idxBuf, idxFile)
-	if err != nil {
-		idx, err := a.recoverIndex(err)
-
-		return idx, errors.Wrap(err, "Couldn't read index file")
+	if _, err := io.Copy(idxBuf, idxFile); err != nil {
+		return nil, errors.Wrapf(err, "reading the index of %s", a.name)
 	}
 
 	var index IndexFile
-
-	_, err = (&index).ReadFrom(idxBuf)
-	if err != nil {
-		index, err = a.recoverIndex(err)
-
-		return index, errors.Wrap(err, "Couldn't read index file")
+	if _, err := (&index).ReadFrom(idxBuf); err != nil {
+		return nil, errors.Wrapf(err, "reading the index of %s", a.name)
 	}
 
 	return index, nil
@@ -339,7 +340,7 @@ func (a *archive) newerThan(rec IndexRecord, v Version) bool {
 // or the archive itself when the index file is gone.
 func (a *archive) indexCreated() (time.Time, error) {
 	file, err := a.storage.Open(a.indexName())
-	if err != nil {
+	if notExist(err) {
 		file, err = a.storage.Open(a.archiveName())
 	}
 

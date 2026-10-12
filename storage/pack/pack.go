@@ -1218,25 +1218,9 @@ func (ps *PackStorage) openArchive(name string, listed *ListedFile) (*archive, e
 	}
 
 	if !known || info.Created.IsZero() {
-		created, err := a.indexCreated()
+		info.Created, err = ps.indexArchive(a, info, known)
 		if err != nil {
-			return nil, fmt.Errorf("reading when the index of %s was created: %w", name, err)
-		}
-
-		idx, err := a.getIndex()
-		if err != nil {
-			return nil, err
-		}
-
-		if !known {
-			ps.logger.Info("indexing archive", "archive", name, "state", info.State)
-		}
-
-		info.Created = created
-
-		// an archive the index knows without its creation time gets it
-		err = ps.index.IndexArchive(info, idx)
-		if err != nil {
+			_ = a.Close()
 			return nil, err
 		}
 	}
@@ -1258,6 +1242,29 @@ func (ps *PackStorage) openArchive(name string, listed *ListedFile) (*archive, e
 	ps.archives = append(ps.archives, a)
 
 	return a, nil
+}
+
+// indexArchive indexes a loaded archive as info places it, with the time
+// its index file was created, which it returns.
+func (ps *PackStorage) indexArchive(a *archive, info ArchiveInfo, known bool) (time.Time, error) {
+	created, err := a.indexCreated()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("reading when the index of %s was created: %w", a.name, err)
+	}
+
+	idx, err := a.getIndex()
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	if !known {
+		ps.logger.Info("indexing archive", "archive", a.name, "state", info.State)
+	}
+
+	info.Created = created
+
+	// an archive the index knows without its creation time gets it
+	return created, ps.index.IndexArchive(info, idx)
 }
 
 // withWritableArchive runs writer against the session's open archive,
