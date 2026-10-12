@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -148,6 +149,52 @@ func TestCommitAndRestoreRoundTrip(t *testing.T) {
 	require.Equal(t, []byte("kept"), got["extra.txt"])
 	delete(got, "extra.txt")
 	require.Equal(t, want, got)
+}
+
+func TestARestoreWritesIntoReadOnlyDirectoriesAndLeavesThemReadOnly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the binary")
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows keeps no directory modes")
+	}
+
+	home := t.TempDir()
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(home, func(p string, d fs.DirEntry, _ error) error {
+			if d != nil && d.IsDir() {
+				_ = os.Chmod(p, 0o755)
+			}
+
+			return nil
+		})
+	})
+
+	require.NoError(t, os.Mkdir(filepath.Join(home, "store"), 0o755))
+	c := &tool{t: t, bin: buildCLI(t), home: home}
+
+	src := filepath.Join(home, "world")
+	write(t, filepath.Join(src, "plugins", "config", "a.yml"), []byte("a: 1\n"))
+	require.NoError(t, os.Chmod(filepath.Join(src, "plugins", "config"), 0o555))
+	require.NoError(t, os.Chmod(filepath.Join(src, "plugins"), 0o555))
+
+	c.run("commit", "new", src)
+
+	fresh := filepath.Join(home, "fresh")
+	c.run("commit", "restore", fresh)
+	require.NoError(t, os.Chmod(filepath.Join(fresh, "plugins", "config"), 0o755))
+	write(t, filepath.Join(fresh, "plugins", "config", "a.yml"), []byte("a: 2\n"))
+	require.NoError(t, os.Chmod(filepath.Join(fresh, "plugins", "config"), 0o555))
+	c.run("commit", "restore", fresh)
+
+	require.Equal(t, snapshot(t, src), snapshot(t, fresh))
+
+	for _, dir := range []string{"plugins", "plugins/config"} {
+		info, err := os.Stat(filepath.Join(fresh, dir))
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o555), info.Mode().Perm(), dir)
+	}
 }
 
 // TestRestoreOfManyFilesIsExact restores a tree wide enough that the

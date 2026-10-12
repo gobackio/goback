@@ -25,6 +25,7 @@ import (
 
 type restoredDir struct {
 	path    string
+	mode    os.FileMode
 	modTime time.Time
 }
 
@@ -270,8 +271,10 @@ func (c *commit) restore() error {
 		restored[path] = true
 
 		if info.IsDir() {
-			// directory times are set after the subtree is written, or the children would clobber them
-			dirs = append(dirs, restoredDir{path: path, modTime: info.ModTime()})
+			// directory modes and times are set after the subtree is written:
+			// a read-only directory could not take its children, and the
+			// children would clobber its time
+			dirs = append(dirs, restoredDir{path: path, mode: info.Mode(), modTime: info.ModTime()})
 
 			if c.restorer.DryRun {
 				continue
@@ -353,8 +356,11 @@ func (c *commit) restore() error {
 
 	if !c.restorer.DryRun {
 		for i := len(dirs) - 1; i >= 0; i-- {
-			err = os.Chtimes(dirs[i].path, time.Now(), dirs[i].modTime)
-			if err != nil {
+			if err = os.Chmod(dirs[i].path, dirs[i].mode.Perm()); err != nil {
+				return err
+			}
+
+			if err = os.Chtimes(dirs[i].path, time.Now(), dirs[i].modTime); err != nil {
 				return err
 			}
 		}
@@ -378,8 +384,9 @@ func (c *commit) restore() error {
 	return nil
 }
 
-// restoreDir makes path the recorded directory: whatever else is there,
-// a file or a symlink the restore must not write through, is removed.
+// restoreDir makes path the recorded directory, which its owner can write
+// into until the restore sets mode: whatever else is there, a file or a
+// symlink the restore must not write through, is removed.
 func restoreDir(path string, mode os.FileMode) error {
 	if existing, err := os.Lstat(path); err == nil && !existing.IsDir() {
 		if err := os.Remove(path); err != nil {
@@ -387,12 +394,13 @@ func restoreDir(path string, mode os.FileMode) error {
 		}
 	}
 
-	err := os.MkdirAll(path, mode)
-	if err != nil {
+	mode = mode.Perm() | 0o300
+
+	if err := os.MkdirAll(path, mode); err != nil {
 		return err
 	}
 
-	return os.Chmod(path, mode.Perm())
+	return os.Chmod(path, mode)
 }
 
 func logStats(stats backup.RestoreStats) {
