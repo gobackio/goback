@@ -2,7 +2,7 @@ module github.com/gobackio/goback
 
 require (
 	ariga.io/atlas v0.36.2-0.20250730182955-2c6300d0a3e1
-	cloud.google.com/go/storage v1.67.1
+	cloud.google.com/go/storage v1.69.0
 	entgo.io/ent v0.14.6
 	filippo.io/age v1.3.2
 	github.com/aws/aws-sdk-go-v2 v1.41.9
@@ -123,7 +123,7 @@ require (
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/wire v0.7.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.22 // indirect
-	github.com/googleapis/gax-go/v2 v2.24.1 // indirect
+	github.com/googleapis/gax-go/v2 v2.26.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/hashicorp/hcl/v2 v2.18.1 // indirect
 	github.com/huandu/xstrings v1.6.0 // indirect
