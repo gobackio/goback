@@ -148,6 +148,8 @@ func (b *WALBackup) Run(ctx context.Context) (*backup.WalkResult, error) {
 		MetaFirstWALFile: firstSegment(names),
 		MetaLastWALFile:  lastSegment(names),
 		MetaCapture:      CaptureReplication,
+		MetaBaseSet:      b.BaseSet,
+		MetaWindow:       b.Window.String(),
 	}
 
 	if systemID != 0 {

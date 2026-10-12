@@ -46,6 +46,11 @@ const (
 	// CaptureReplication, or files for binlogs copied from the server's
 	// binlog directory, which restore reads alike.
 	MetaCapture = "mysql.capture"
+	// MetaDumpSet and MetaWindow are, on a binlog commit, the set its dumps
+	// go to and how far back point-in-time recovery reaches, as a Go
+	// duration.
+	MetaDumpSet = "mysql.dump_set"
+	MetaWindow  = "mysql.window"
 )
 
 // CaptureReplication is the MetaCapture of binlogs received as a replica.

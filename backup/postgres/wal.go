@@ -36,6 +36,11 @@ const (
 	// or archive for WAL that archive_command delivered, which restore reads
 	// alike.
 	MetaCapture = "pg.capture"
+	// MetaBaseSet and MetaWindow are, on a WAL commit, the set its base
+	// backups go to and how far back point-in-time recovery reaches, as a
+	// Go duration.
+	MetaBaseSet = "pg.base_set"
+	MetaWindow  = "pg.window"
 )
 
 // CaptureReplication is the MetaCapture of WAL a receiver streamed.

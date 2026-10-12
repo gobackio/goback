@@ -230,6 +230,11 @@ func TestTheReceiverCommitsTheOpenBinlogAsPartialAndThenWhole(t *testing.T) {
 	require.Equal(t, []string{"binlog.000001:4"}, rf.dump.dials, "receiving starts at the dump's binlog")
 	require.Equal(t, map[int][]string{1: {"binlog.000001.partial"}}, rf.chains())
 
+	commits, err := rf.index.CommitInfo(rf.ctx, "db-binlog", t0.Add(time.Hour), 1)
+	require.NoError(t, err)
+	require.Equal(t, "db-dump", commits[0].GetMetadata()[MetaDumpSet])
+	require.Equal(t, "336h0m0s", commits[0].GetMetadata()[MetaWindow])
+
 	partial := rf.node(1, "binlog.000001.partial")
 	require.EqualValues(t, 4+100+50+50, partial.GetSize())
 	require.Equal(t, t0.Add(2*time.Second), time.Unix(0, partial.GetMtimeNs()).UTC(), "the partial binlog's mtime is its last event's time")

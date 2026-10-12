@@ -172,6 +172,8 @@ func (c *spoolCommit) Run(ctx context.Context) (*backup.WalkResult, error) {
 		MetaCapture:      CaptureReplication,
 		MetaFirstBinlog:  names[0],
 		MetaLastBinlog:   lastWhole(names),
+		MetaDumpSet:      c.DumpSet,
+		MetaWindow:       c.Window.String(),
 	}
 	c.ID.metadata(w.Metadata)
 
