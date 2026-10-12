@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -70,7 +69,7 @@ func restoreAction(c *cli.Context) error {
 	goback := c.String("goback")
 	if goback == "" {
 		var err error
-		if goback, err = invocation(); err != nil {
+		if goback, err = invocation(c); err != nil {
 			return err
 		}
 	}
@@ -182,23 +181,33 @@ func headOf(store backup.ObjectStore, id uint64) (*proto.Ref, error) {
 
 // invocation is this binary with the global flags it was started with, quoted
 // for the shell restore_command runs in.
-func invocation() (string, error) {
+func invocation(c *cli.Context) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
 
-	end := slices.Index(os.Args, "postgres")
-	if end < 0 {
-		end = 1
-	}
-
 	words := []string{shellQuote(exe)}
-	for _, arg := range os.Args[1:end] {
+	for _, arg := range globalArgs(c, os.Args) {
 		words = append(words, shellQuote(arg))
 	}
 
 	return strings.Join(words, " "), nil
+}
+
+// globalArgs is the part of args, the command line c was parsed from, that
+// the app's own flags took: what comes before the first command's name.
+func globalArgs(c *cli.Context, args []string) []string {
+	for c.Parent() != nil {
+		c = c.Parent()
+	}
+
+	end := len(args) - len(c.Args())
+	if end < 1 {
+		return nil
+	}
+
+	return args[1:end]
 }
 
 func shellQuote(s string) string {
