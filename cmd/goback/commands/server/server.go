@@ -219,7 +219,7 @@ func adminServer(x *sql.Index, retirer backup.Retirer, collector pack.Collector)
 
 	if collector != nil {
 		server.CollectJob = func(ctx context.Context) (string, error) {
-			report, err := collector.Collect(ctx, pack.CollectOptions{})
+			report, err := maintenance.Collect(ctx, collector, x, pack.CollectOptions{})
 			if err != nil {
 				return "", err
 			}
