@@ -18,7 +18,7 @@ func TestAnS3StoreKeepsItsArchivesInTheIndexAndCachesUnderTheCacheDir(t *testing
 	u := parse(t, location)
 	cacheDir := t.TempDir()
 
-	store, err := initS3(u, StoreSettings{Index: t.TempDir(), Storage: location, CacheDir: cacheDir})
+	store, err := initS3(u, StoreSettings{Index: t.TempDir(), Storage: location, CacheDir: cacheDir, MetadataCacheSize: "1GiB"})
 	require.NoError(t, err)
 	require.Contains(t, storeIndexes, store)
 	t.Cleanup(func() { CloseStore(store) })
