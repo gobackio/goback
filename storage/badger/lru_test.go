@@ -10,6 +10,7 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
@@ -195,4 +196,87 @@ func TestASecondOpenOfAStoreFailsAsLocked(t *testing.T) {
 
 	_, err = New(dir)
 	require.ErrorIs(t, err, ErrLocked)
+}
+
+// rewriteUses rewrites every used key of the store at dir as a store
+// before sizes were recorded wrote it, the time alone, and drops the
+// sized mark unless keepMark.
+func rewriteUses(t *testing.T, dir string, keepMark bool) {
+	t.Helper()
+
+	s, err := New(dir, WithCapacity(1<<30))
+	require.NoError(t, err)
+
+	require.NoError(t, s.db.Update(func(txn *badger.Txn) error {
+		for el := s.lru.order.Front(); el != nil; el = el.Next() {
+			e := el.Value.(*lruEntry)
+			if err := txn.Set(usedKey([]byte(e.hash)), encodeUse(e.used, e.size)[:8]); err != nil {
+				return err
+			}
+		}
+
+		if keepMark {
+			return nil
+		}
+
+		return txn.Delete([]byte(sizedKey))
+	}))
+	require.NoError(t, s.db.Close())
+}
+
+func TestABoundedStoreLoadsWhatAnOlderStoreWrote(t *testing.T) {
+	for _, keepMark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("mark=%v", keepMark), func(t *testing.T) {
+			ctx := context.Background()
+			dir := t.TempDir()
+			c := &clock{t: time.Unix(1_000_000, 0)}
+			s := openBounded(t, dir, 4, c)
+
+			objs := objects(4)
+			for _, obj := range objs {
+				c.advance(time.Second)
+				require.NoError(t, s.Put(ctx, obj))
+			}
+
+			c.advance(time.Second)
+			_, err := s.Get(ctx, objs[0].Ref())
+			require.NoError(t, err)
+
+			size := s.lru.size
+			require.NoError(t, s.Close())
+
+			rewriteUses(t, dir, keepMark)
+
+			s = openBounded(t, dir, 4, c)
+			require.Equal(t, size, s.lru.size)
+			require.NoError(t, s.Close())
+
+			s = openBounded(t, dir, 2, c)
+			defer s.Close()
+			require.Equal(t, []bool{true, false, false, true}, held(t, s, objs))
+		})
+	}
+}
+
+func TestABoundedStoreCountsWhatItHeldUnbounded(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	c := &clock{t: time.Unix(1_000_000, 0)}
+	objs := objects(4)
+
+	s := openBounded(t, dir, 4, c)
+	require.NoError(t, s.Put(ctx, objs[0]))
+	one := s.lru.size
+	require.NoError(t, s.Close())
+
+	unbounded, err := New(dir)
+	require.NoError(t, err)
+	for _, obj := range objs[1:] {
+		require.NoError(t, unbounded.Put(ctx, obj))
+	}
+	require.NoError(t, unbounded.Close())
+
+	s = openBounded(t, dir, 4, c)
+	defer s.Close()
+	require.Equal(t, 4*one, s.lru.size)
 }

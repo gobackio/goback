@@ -40,10 +40,16 @@ func New(path string, with ...Option) (*Store, error) {
 	}
 
 	if s.lru != nil {
-		if err := s.lru.load(db); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("loading the cache's last uses: %w", err)
-		}
+		err = s.lru.load(db)
+	} else {
+		// objects put without bound have no used key to load from
+		err = db.Update(func(txn *badger.Txn) error {
+			return txn.Delete([]byte(sizedKey))
+		})
+	}
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("loading the cache's last uses: %w", err)
 	}
 
 	return s, nil

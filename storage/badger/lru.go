@@ -3,6 +3,7 @@ package badger
 import (
 	"container/list"
 	"encoding/binary"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -37,12 +38,38 @@ const stampEvery = 10 * time.Minute
 
 const usedKeyPrefix = "used|"
 
+// sizedKey marks that every object has a used key holding its size, so a
+// load reads the used keys alone instead of every object's key.
+const sizedKey = "lru|sized"
+
 func usedKey(hash []byte) []byte {
 	return append([]byte(usedKeyPrefix), hash...)
 }
 
-func encodeTime(t time.Time) []byte {
-	return binary.BigEndian.AppendUint64(nil, uint64(t.UnixNano()))
+func encodeUse(used time.Time, size int64) []byte {
+	var nanos int64
+	if !used.IsZero() {
+		nanos = used.UnixNano()
+	}
+
+	val := binary.BigEndian.AppendUint64(nil, uint64(nanos))
+
+	return binary.BigEndian.AppendUint64(val, uint64(size))
+}
+
+// decodeUse reads a used value; size is -1 for one an older store wrote
+// with the time alone.
+func decodeUse(val []byte) (used time.Time, size int64) {
+	if len(val) != 8 && len(val) != 16 {
+		return time.Time{}, -1
+	}
+
+	used = time.Unix(0, int64(binary.BigEndian.Uint64(val)))
+	if len(val) == 8 {
+		return used, -1
+	}
+
+	return used, int64(binary.BigEndian.Uint64(val[8:]))
 }
 
 // lru keeps every object's size and last use, most recent first. All
@@ -68,11 +95,131 @@ func (l *lru) load(db *badger.DB) error {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
-	var loaded []*lruEntry
-	byHash := map[string]*lruEntry{}
-	var orphans [][]byte
+	var sized bool
 
 	err := db.View(func(txn *badger.Txn) error {
+		_, err := txn.Get([]byte(sizedKey))
+		sized = err == nil
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			return nil
+		}
+
+		return err
+	})
+	if err != nil {
+		return err
+	}
+
+	var loaded, unsized []*lruEntry
+	var orphans [][]byte
+
+	if sized {
+		loaded, unsized, orphans, err = loadUses(db)
+	} else {
+		loaded, orphans, err = scanObjects(db)
+		unsized = loaded
+	}
+	if err != nil {
+		return err
+	}
+
+	sort.SliceStable(loaded, func(i, j int) bool { return loaded[i].used.After(loaded[j].used) })
+
+	for _, e := range loaded {
+		l.entries[e.hash] = l.order.PushBack(e)
+		l.size += e.size
+	}
+
+	batch := db.NewWriteBatch()
+	defer batch.Cancel()
+
+	for _, key := range orphans {
+		if err := batch.Delete(key); err != nil {
+			return err
+		}
+	}
+
+	if err := l.evict(batch); err != nil {
+		return err
+	}
+
+	for _, e := range unsized {
+		if _, ok := l.entries[e.hash]; !ok {
+			continue
+		}
+
+		if err := batch.Set(usedKey([]byte(e.hash)), encodeUse(e.used, e.size)); err != nil {
+			return err
+		}
+	}
+
+	if err := batch.Flush(); err != nil {
+		return err
+	}
+
+	if sized {
+		return nil
+	}
+
+	return db.Update(func(txn *badger.Txn) error {
+		return txn.Set([]byte(sizedKey), nil)
+	})
+}
+
+// loadUses reads the entries from the used keys alone, looking up the
+// size of those an older store wrote without it.
+func loadUses(db *badger.DB) (loaded, unsized []*lruEntry, orphans [][]byte, err error) {
+	err = db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = []byte(usedKeyPrefix)
+
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			hash := item.Key()[len(usedKeyPrefix):]
+			e := &lruEntry{hash: string(hash)}
+
+			err := item.Value(func(val []byte) error {
+				e.used, e.size = decodeUse(val)
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+
+			e.stamped = e.used
+
+			if e.size < 0 {
+				obj, err := txn.Get(objectKey(hash))
+				if errors.Is(err, badger.ErrKeyNotFound) {
+					orphans = append(orphans, item.KeyCopy(nil))
+					continue
+				}
+				if err != nil {
+					return err
+				}
+
+				e.size = int64(len(obj.Key())) + obj.ValueSize()
+				unsized = append(unsized, e)
+			}
+
+			loaded = append(loaded, e)
+		}
+
+		return nil
+	})
+
+	return loaded, unsized, orphans, err
+}
+
+// scanObjects reads the entries from every object's key and the used
+// keys beside them.
+func scanObjects(db *badger.DB) (loaded []*lruEntry, orphans [][]byte, err error) {
+	byHash := map[string]*lruEntry{}
+
+	err = db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
 		opts.Prefix = []byte(objectKeyPrefix)
@@ -105,10 +252,8 @@ func (l *lru) load(db *badger.DB) error {
 			}
 
 			err := item.Value(func(val []byte) error {
-				if len(val) == 8 {
-					e.used = time.Unix(0, int64(binary.BigEndian.Uint64(val)))
-					e.stamped = e.used
-				}
+				e.used, _ = decodeUse(val)
+				e.stamped = e.used
 
 				return nil
 			})
@@ -119,31 +264,8 @@ func (l *lru) load(db *badger.DB) error {
 
 		return nil
 	})
-	if err != nil {
-		return err
-	}
 
-	sort.SliceStable(loaded, func(i, j int) bool { return loaded[i].used.After(loaded[j].used) })
-
-	for _, e := range loaded {
-		l.entries[e.hash] = l.order.PushBack(e)
-		l.size += e.size
-	}
-
-	batch := db.NewWriteBatch()
-	defer batch.Cancel()
-
-	for _, key := range orphans {
-		if err := batch.Delete(key); err != nil {
-			return err
-		}
-	}
-
-	if err := l.evict(batch); err != nil {
-		return err
-	}
-
-	return batch.Flush()
+	return loaded, orphans, err
 }
 
 func (l *lru) put(db *badger.DB, entry *badger.Entry) error {
@@ -158,19 +280,20 @@ func (l *lru) put(db *badger.DB, entry *badger.Entry) error {
 	}
 
 	now := l.now()
+	size := int64(len(entry.Key) + len(entry.Value))
 
 	err := db.Update(func(txn *badger.Txn) error {
 		if err := txn.SetEntry(entry); err != nil {
 			return err
 		}
 
-		return txn.Set(usedKey(hash), encodeTime(now))
+		return txn.Set(usedKey(hash), encodeUse(now, size))
 	})
 	if err != nil {
 		return err
 	}
 
-	e := &lruEntry{hash: string(hash), size: int64(len(entry.Key) + len(entry.Value)), used: now, stamped: now}
+	e := &lruEntry{hash: string(hash), size: size, used: now, stamped: now}
 	l.entries[e.hash] = l.order.PushFront(e)
 	l.size += e.size
 
@@ -209,7 +332,7 @@ func (l *lru) touch(db *badger.DB, el *list.Element) {
 	}
 
 	err := db.Update(func(txn *badger.Txn) error {
-		return txn.Set(usedKey([]byte(e.hash)), encodeTime(e.used))
+		return txn.Set(usedKey([]byte(e.hash)), encodeUse(e.used, e.size))
 	})
 	if err == nil {
 		e.stamped = e.used
@@ -275,7 +398,7 @@ func (l *lru) flush(db *badger.DB) {
 	for el := l.order.Front(); el != nil; el = el.Next() {
 		e := el.Value.(*lruEntry)
 		if e.used.After(e.stamped) {
-			if batch.Set(usedKey([]byte(e.hash)), encodeTime(e.used)) != nil {
+			if batch.Set(usedKey([]byte(e.hash)), encodeUse(e.used, e.size)) != nil {
 				return
 			}
 			e.stamped = e.used
