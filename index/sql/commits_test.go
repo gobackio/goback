@@ -1116,12 +1116,14 @@ func TestACommitPlannedBeforeAnotherOfItsSetLandedWritesNothingStale(t *testing.
 	planned := f.tree(f.dir("d", f.file("a.txt", "three")))
 
 	// the other commit lands while the planned one reads its directory;
-	// it was received later, so the planned one is the older and goes
+	// it was received later, so the planned one is the older and fails
 	f.store.beforeGet = map[string]func(){string(planned.GetTree().Nodes[0].Ref.Hash): func() {
 		f.commit("world", other, false)
 	}}
 
-	plannedRef := f.commit("world", planned, false)
+	plannedObj := proto.NewObject(&proto.Commit{Timestamp: f.clock.Unix(), Tree: planned.Ref(), BackupSet: "world", AgentId: "node-1"})
+	require.Error(t, f.x.Put(f.ctx, plannedObj))
+	plannedRef := plannedObj.Ref()
 
 	var versions []rangeRow
 	for _, r := range f.ranges(f.x, "files") {

@@ -178,7 +178,8 @@ func (x *Index) ensureSet(ctx context.Context, c *ent.Client, commit *proto.Comm
 // backup.ErrDanglingRef; otherwise it is indexed around the objects the
 // store lost and marked incomplete, and a set with directories it can no
 // longer list is read in full by its next run. Commits of a set are
-// indexed one at a time, in receipt order.
+// indexed one at a time, in receipt order: strict mode fails a commit
+// received before the set's newest, which otherwise is left out.
 func (x *Index) indexCommit(ctx context.Context, commit *proto.Commit, ref *proto.Ref, strict, evaluate bool) (placement, error) {
 	treeObj, err := x.ObjectStore.Get(ctx, commit.Tree)
 	if errors.Is(err, backup.ErrNotFound) && strict {
@@ -283,6 +284,12 @@ func (x *Index) planCommit(ctx context.Context, commit *proto.Commit, ref *proto
 			"ref", fmt.Sprintf("%x", ref.Hash), "received", plan.at, "newest", fmt.Sprintf("%x", newest.Ref))
 		plan.placement, plan.at = tied, received.Add(receiptGrain)
 	default:
+		// another commit of the set, stamped later, was stored first
+		if strict {
+			return commitPlan{}, fmt.Errorf("commit %x received at %s, before the set's newest %x at %s, is not indexed",
+				ref.Hash, plan.at.Format(time.RFC3339Nano), newest.Ref, newest.ReceivedAt.Format(time.RFC3339Nano))
+		}
+
 		x.logger().Warn("ignoring commit received before the set's newest", "ref", fmt.Sprintf("%x", ref.Hash), "received", plan.at, "newest", newest.ReceivedAt)
 		return commitPlan{placement: behind}, nil
 	}

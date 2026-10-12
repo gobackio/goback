@@ -226,6 +226,7 @@ func TestPostgres(t *testing.T) {
 		"LatestCommitFollowsReceiptOrder":  TestLatestCommitFollowsReceiptOrder,
 		"PutStampsReceiptTime":             TestPutStampsReceiptTime,
 		"PutRejectsDanglingCommit":         TestPutRejectsDanglingCommit,
+		"PutRefusesACommitBehind":          TestPutIndexesOrRefusesACommitStoredAfterANewerOne,
 		"FileInfoOrdersVersions":           TestFileInfoOrdersVersionsByBackupTime,
 		"CommitDetailsBefore":              TestCommitDetailsBeforeKeepsInstantsWhole,
 		"VersionsBefore":                   TestVersionsBeforePagesNewestFirst,

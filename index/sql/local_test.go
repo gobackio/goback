@@ -129,6 +129,47 @@ func TestPutStampsReceiptTime(t *testing.T) {
 	require.Equal(t, obj.GetCommit().ReceivedAtNs, commits[0].ReceivedAtNs, "the stamp survives the round trip")
 }
 
+// slowCommitStore holds the Put of a commit with timestamp 1 until
+// release is closed, after closing stored.
+type slowCommitStore struct {
+	*memStore
+	stored, release chan struct{}
+}
+
+func (s *slowCommitStore) Put(ctx context.Context, obj *proto.Object) error {
+	if obj.GetCommit().GetTimestamp() == 1 {
+		close(s.stored)
+		<-s.release
+	}
+
+	return s.memStore.Put(ctx, obj)
+}
+
+// TestPutIndexesOrRefusesACommitStoredAfterANewerOne races two commits of
+// one set: the one received first is stored last.
+func TestPutIndexesOrRefusesACommitStoredAfterANewerOne(t *testing.T) {
+	store := &slowCommitStore{memStore: newMemStore(), stored: make(chan struct{}), release: make(chan struct{})}
+	x := openIndex(t, store)
+	x.DefaultPolicy = &retention.KeepAll
+	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{AgentID: "local"})
+
+	tree := proto.NewObject(&proto.Tree{})
+	require.NoError(t, x.Put(ctx, tree))
+
+	slow := proto.NewObject(&proto.Commit{Timestamp: 1, Tree: tree.Ref(), BackupSet: "a"})
+	done := make(chan error, 1)
+	go func() { done <- x.Put(ctx, slow) }()
+
+	<-store.stored
+	require.NoError(t, x.Put(ctx, proto.NewObject(&proto.Commit{Timestamp: 2, Tree: tree.Ref(), BackupSet: "a"})))
+	close(store.release)
+
+	if err := <-done; err == nil {
+		_, err = x.GetCommitDetail(ctx, "a", slow.Ref())
+		require.NoError(t, err, "a commit Put took is indexed")
+	}
+}
+
 func TestPutRejectsDanglingCommit(t *testing.T) {
 	l := newLocalIndex(t)
 
