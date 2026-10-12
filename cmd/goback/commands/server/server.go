@@ -36,8 +36,8 @@ var Command = cli.Command{
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:  "address",
-			Usage: "address the server listens on",
-			Value: ":6060",
+			Usage: "address the server listens on; :6060 serves agents on other hosts",
+			Value: "127.0.0.1:6060",
 		},
 		cli.StringFlag{
 			Name:  "secret",
