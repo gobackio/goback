@@ -229,12 +229,11 @@ func TestACommitAsksTheBucketForLittleBeyondWhatItWrites(t *testing.T) {
 	root := treeOf(append(file, previous[len(previous)-3]))
 	commit(append(append(blob, file...), root, proto.NewObject(&proto.Commit{Tree: root.Ref(), Timestamp: 2, BackupSet: "world"})))
 
-	// two archives: the session's, then the one its commit's un-tombstone
-	// is flushed in before the seals are read
+	// one archive, the commit's un-tombstone beside the commit
 	most := map[string]int{
-		"put archive": 2, "put .idx": 2, "put .committed": 2, "put .begin": 1, "put .end": 1,
+		"put archive": 1, "put .idx": 1, "put .committed": 1, "put .begin": 1, "put .end": 1,
 		// what an upload kept, and when the storage stamped each index
-		"head archive": 2, "head .idx": 2,
+		"head archive": 1, "head .idx": 1,
 		// the seals at begin and at commit
 		"list .seal": 2,
 	}

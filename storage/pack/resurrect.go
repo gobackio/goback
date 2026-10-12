@@ -14,18 +14,17 @@ import (
 var commitAfterResurrect func()
 
 // resurrect protects what a committing session relied on without storing
-// it. It takes back the tombstones of every ref the session's objects
-// reference outside its own archives, and when a collection sealed
-// tombstones since the session began, it copies whatever those condemn
-// under the skipped refs into the session.
+// it. The commit's un-tombstone, stored with the commit, keeps what the
+// commit reaches; resurrect takes back the tombstones standing against the
+// refs the session's objects reference outside its own archives, and when
+// a collection sealed tombstones since the session began, it copies
+// whatever those condemn under the skipped refs into the session.
 func (ps *PackStorage) resurrect(ctx context.Context, ws *writeSession, commit *proto.Object) error {
 	skipped, err := ps.skippedRefs(ctx, ws, commit)
 	if err != nil || len(skipped) == 0 {
 		return err
 	}
 
-	// an un-tombstone of the commit keeps everything the commit reaches,
-	// so only a skipped ref a tombstone stands against needs its own
 	tombstoned, err := ps.tombstoned(ctx, skipped)
 	if err != nil {
 		return err
@@ -35,7 +34,7 @@ func (ps *PackStorage) resurrect(ctx context.Context, ws *writeSession, commit *
 	// collection either reads them or sealed before; they stay the
 	// session's, so no other session relies on them before the copies
 	// below are made
-	for _, ref := range append([]*proto.Ref{commit.Ref()}, tombstoned...) {
+	for _, ref := range tombstoned {
 		if err := ps.putTombstone(ctx, ws, proto.TombstoneRef(ref), false); err != nil {
 			return fmt.Errorf("taking back the tombstones of what session %s relied on: %w", ws.id, err)
 		}

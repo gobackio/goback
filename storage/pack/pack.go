@@ -546,6 +546,14 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 		return fmt.Errorf("session %s lost an archive: %w", ws.id, err)
 	}
 
+	// the commit's un-tombstone keeps everything the commit reaches; it is
+	// stored by the flush below, before resurrect reads the seals
+	if ws.session != nil {
+		if err := ps.putTombstone(ctx, ws, proto.TombstoneRef(commit.Ref()), false); err != nil {
+			return fmt.Errorf("taking back the tombstones of what session %s relied on: %w", ws.id, err)
+		}
+	}
+
 	// an archive of ours that lapsed is lost now, which settle answers for
 	err := ps.flushSession(ws)
 	if err != nil && !lapsed(err) {

@@ -99,7 +99,8 @@ func TestSessionWritesAreVisibleOnlyToTheSessionUntilCommit(t *testing.T) {
 		walked++
 		return nil
 	}))
-	require.Equal(t, len(objects)+1, walked, "Walk sees committed archives")
+	// the commit's un-tombstone is a record of its own
+	require.Equal(t, len(objects)+2, walked, "Walk sees committed archives")
 
 	// the commit ended the session
 	_, err = store.LookupSession(root, sessionA.ID)

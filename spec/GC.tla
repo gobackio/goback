@@ -9,7 +9,8 @@
    Unretiring, an operator revives a retired backup whose objects all still
    have copies, while no maintainer runs, and it is a root again. With
    Compaction, a rewrite moves a tombstone out of the archive it was written
-   in, keeping its version.
+   in, keeping its version. With SplitUntomb, a committing session stores its
+   commit's un-tombstone with its data and looks up tombstones only after.
 
    Safe: no committed backup ever references an object without a committed
    copy. Collectable: no horizon passes over a tombstone the store holds, so
@@ -46,7 +47,9 @@ CONSTANTS
     SkipReviveCheck, \* mutation: a revival does not check that every object it reaches has a copy
     SkipReviveLock,  \* mutation: a revival runs while a maintainer is mid-run
     Compaction,  \* compaction moves tombstones out of the archives they were written in
-    SkipCarried  \* mutation: a horizon covers a moved tombstone only if an earlier one did
+    SkipCarried, \* mutation: a horizon covers a moved tombstone only if an earlier one did
+    SplitUntomb, \* the commit's un-tombstone is stored with its data, before the session looks up tombstones
+    LateUntomb   \* mutation: the commit's un-tombstone is stored after the session read the seals
 
 None == "none"
 
@@ -155,6 +158,7 @@ Use(s, o) ==
 Untomb(s) ==
     LET tombed == {o \in dedup[s] : \E t \in Visible(s) : t.kind = "tomb" /\ t.obj = o}
     IN /\ Resurrect
+       /\ ~SplitUntomb
        /\ phase[s] = "active"
        /\ phase' = [phase EXCEPT ![s] = "untombed"]
        /\ \E U \in SUBSET refs[s] :
@@ -165,6 +169,35 @@ Untomb(s) ==
                  /\ clock' = IF U = {} THEN clock ELSE
                                LET top == CHOOSE v \in {ver[o] : o \in U} : \A o \in U : ver[o] <= v
                                IN IF top > clock THEN top ELSE clock
+       /\ UNCHANGED <<moved, refs, roots, gc, lease, cycles, dedup, sealed, plans, rw, state, seen, retired>>
+
+\* with SplitUntomb, Untomb takes two steps: the commit's un-tombstone, whose
+\* closure holds all the session deduplicated, is stored with the commit's
+\* data; the deduplicated objects a tombstone names, looked up after that,
+\* get theirs next
+CommitUntomb(s) ==
+    /\ Resurrect /\ SplitUntomb
+    /\ phase[s] = IF LateUntomb THEN "checked" ELSE "active"
+    /\ phase' = [phase EXCEPT ![s] = IF LateUntomb THEN "late" ELSE "flushed"]
+    /\ \E U \in SUBSET refs[s] :
+         /\ SkipCover \/ dedup[s] \subseteq Closure(U)
+         /\ \E ver \in [U -> NewVersions] :
+              /\ records' = records \cup {Record("untomb", o, ver[o], s, s) : o \in U}
+              /\ clock' = IF U = {} THEN clock ELSE
+                            LET top == CHOOSE v \in {ver[o] : o \in U} : \A o \in U : ver[o] <= v
+                            IN IF top > clock THEN top ELSE clock
+    /\ UNCHANGED <<moved, refs, roots, gc, lease, cycles, dedup, sealed, plans, rw, state, seen, retired>>
+
+TombedUntomb(s) ==
+    LET tombed == {o \in dedup[s] : \E t \in Visible(s) : t.kind = "tomb" /\ t.obj = o}
+    IN /\ Resurrect /\ SplitUntomb
+       /\ phase[s] = IF LateUntomb THEN "active" ELSE "flushed"
+       /\ phase' = [phase EXCEPT ![s] = "untombed"]
+       /\ \E ver \in [tombed -> NewVersions] :
+            /\ records' = records \cup {Record("untomb", o, ver[o], s, s) : o \in tombed}
+            /\ clock' = IF tombed = {} THEN clock ELSE
+                          LET top == CHOOSE v \in {ver[o] : o \in tombed} : \A o \in tombed : ver[o] <= v
+                          IN IF top > clock THEN top ELSE clock
        /\ UNCHANGED <<moved, refs, roots, gc, lease, cycles, dedup, sealed, plans, rw, state, seen, retired>>
 
 \* after its un-tombstones are written, a session uploads again whatever a
@@ -187,7 +220,7 @@ Check(s) ==
 
 \* an agent uploads an object only after handling what it references
 Commit(s) ==
-    /\ phase[s] = IF Resurrect THEN "checked" ELSE "active"
+    /\ phase[s] = IF ~Resurrect THEN "active" ELSE IF SplitUntomb /\ LateUntomb THEN "late" ELSE "checked"
     /\ \A r \in records : (r.kind = "copy" /\ r.owner = s /\ r.obj \notin dedup[s]) => Children(r.obj) \subseteq refs[s]
     /\ phase' = [phase EXCEPT ![s] = "committed"]
     /\ records' = {IF r.owner = s THEN [r EXCEPT !.owner = None] ELSE r : r \in records}
@@ -197,7 +230,7 @@ Commit(s) ==
 \* a session ends without committing, by choice or because the reaper ended
 \* it after a crash; its end marker keeps it from ever committing
 Abort(s) ==
-    /\ phase[s] \in {"active", "untombed", "checked"}
+    /\ phase[s] \in {"active", "flushed", "untombed", "checked", "late"}
     /\ phase' = [phase EXCEPT ![s] = "aborted"]
     /\ records' = {r \in records : r.owner # s}
     /\ UNCHANGED <<moved, clock, refs, roots, gc, lease, cycles, dedup, sealed, plans, rw, state, seen, retired>>
@@ -487,7 +520,7 @@ Crash(m) ==
     /\ UNCHANGED <<moved, records, clock, phase, refs, roots, cycles, dedup, sealed, plans, rw, state, seen, retired>>
 
 Next ==
-    \/ \E s \in Sessions : Begin(s) \/ Untomb(s) \/ Check(s) \/ Commit(s) \/ Abort(s)
+    \/ \E s \in Sessions : Begin(s) \/ Untomb(s) \/ CommitUntomb(s) \/ TombedUntomb(s) \/ Check(s) \/ Commit(s) \/ Abort(s)
     \/ \E s \in Sessions, o \in Objects : Use(s, o)
     \/ \E p \in roots : Retire(p)
     \/ \E p \in retired : Unretire(p)
@@ -510,7 +543,7 @@ Safe == \A o \in Reachable : \E r \in Committed : r.kind = "copy" /\ r.obj = o
 Collectable == state.stood \cap records \subseteq state.tombs
 
 TypeOK ==
-    /\ phase \in [Sessions -> {"new", "active", "untombed", "checked", "committed", "aborted"}]
+    /\ phase \in [Sessions -> {"new", "active", "flushed", "untombed", "checked", "late", "committed", "aborted"}]
     /\ refs \in [Sessions -> SUBSET Objects]
     /\ roots \subseteq Sessions \X Objects
 =============================================================================

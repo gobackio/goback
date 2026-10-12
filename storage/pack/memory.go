@@ -448,6 +448,19 @@ func (i *InMemoryIndex) Lost(session string) ([]*proto.Ref, error) {
 
 	seen := make(map[[proto.HashSize]byte]bool)
 
+	for name, info := range i.archives {
+		if info.Session != session || (info.State != ArchiveLost && info.State != ArchivePending) {
+			continue
+		}
+
+		for sum, record := range i.index[name] {
+			if record.Type == uint32(proto.ObjectType_COMMIT) {
+				untomb := proto.TombstoneRef(proto.TombstoneRef(&proto.Ref{Hash: sum[:]}))
+				seen[[proto.HashSize]byte(untomb.Hash)] = true
+			}
+		}
+	}
+
 	var lost []*proto.Ref
 	for name, info := range i.archives {
 		if info.Session != session || info.State != ArchiveLost {

@@ -488,6 +488,21 @@ func (x *Index) Lost(id string) ([]*proto.Ref, error) {
 		return nil, err
 	}
 
+	commits, err := x.client.Object.Query().
+		Where(
+			object.HasArchiveWith(archive.SessionID(id), archive.StateIn(int(pack.ArchiveLost), int(pack.ArchivePending))),
+			object.Type(uint32(proto.ObjectType_COMMIT)),
+		).
+		Select(object.FieldRef).All(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	untombs := make(map[string]bool, len(commits))
+	for _, row := range commits {
+		untombs[string(proto.TombstoneRef(proto.TombstoneRef(&proto.Ref{Hash: row.Ref})).Hash)] = true
+	}
+
 	kept := archive.Or(
 		archive.State(int(pack.ArchiveCommitted)),
 		archive.And(archive.SessionID(id), archive.State(int(pack.ArchivePending))),
@@ -497,7 +512,7 @@ func (x *Index) Lost(id string) ([]*proto.Ref, error) {
 
 	var refs [][]byte
 	for _, row := range lostRows {
-		if !seen[string(row.Ref)] {
+		if !seen[string(row.Ref)] && !untombs[string(row.Ref)] {
 			seen[string(row.Ref)] = true
 			refs = append(refs, row.Ref)
 		}

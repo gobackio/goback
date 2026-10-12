@@ -2,6 +2,8 @@ package pack
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +62,49 @@ func TestACommitTakesBackItselfAndTheTombstonesOfWhatItSkipped(t *testing.T) {
 	requireUntombed(t, store, []*proto.Object{commit, blobs[0]}, true)
 	requireUntombed(t, store, blobs[1:], false)
 	requireUntombed(t, store, own[:len(own)-1], false)
+}
+
+func TestACommitThatDeduplicatedStoresItsUntombstoneInItsOwnArchive(t *testing.T) {
+	base := t.TempDir()
+	store := newGCStore(t, base)
+	ctx := context.Background()
+
+	blobs := makeTestData(t, 10)
+	putAll(t, store, blobs)
+
+	chain := makeChain(blobs)
+	own := chain[len(blobs):]
+	commit := own[len(own)-1]
+
+	sctx, session := beginSession(t, store, "agent-a")
+	for _, obj := range own {
+		require.NoError(t, store.Put(sctx, obj))
+	}
+
+	archives := archiveFiles(t, filepath.Join(base, session.ID))
+	require.Len(t, archives, 1)
+
+	name := session.ID + "/" + strings.TrimSuffix(filepath.Base(archives[0]), ArchiveSuffix)
+	untomb := proto.TombstoneRef(proto.TombstoneRef(commit.Ref()))
+	found, err := store.index.LocateCopies([]*proto.Ref{commit.Ref(), untomb}, Scope{})
+	require.NoError(t, err)
+	require.Equal(t, name, found[string(commit.Ref().Hash)][0].Archive)
+	require.Equal(t, name, found[string(untomb.Hash)][0].Archive)
+
+	requirePresent(t, store, chain, true)
+	requireStored(t, store, chain, true)
+	require.NoError(t, store.Close())
+
+	rebuilt := newGCStore(t, base)
+	t.Cleanup(func() { _ = rebuilt.Close() })
+
+	requirePresent(t, rebuilt, chain, true)
+	requireStored(t, rebuilt, chain, true)
+	requireUntombed(t, rebuilt, []*proto.Object{commit}, true)
+
+	_, err = rebuilt.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+	requirePresent(t, rebuilt, chain, true)
 }
 
 func TestTheUntombstoneOfACommitDoesNotUndoItsRetirement(t *testing.T) {

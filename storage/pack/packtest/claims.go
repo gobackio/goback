@@ -83,7 +83,9 @@ func TestClaimIndex(t *testing.T, idx ClaimingIndex) {
 	stray := RandomArchive(5)
 	require.NoError(t, idx.OpenArchive(stray.name, session.ID))
 	refused := pack.IndexRecord{Sum: RandomIndexFile(1)[0].Sum, Type: uint32(proto.ObjectType_COMMIT)}
-	require.NoError(t, idx.AddObjects(stray.name, append(stray.index, open.index[0], refused)))
+	untomb := pack.IndexRecord{Type: uint32(proto.ObjectType_TOMBSTONE)}
+	copy(untomb.Sum[:], proto.TombstoneRef(proto.TombstoneRef(&proto.Ref{Hash: refused.Sum[:]})).Hash)
+	require.NoError(t, idx.AddObjects(stray.name, append(stray.index, open.index[0], refused, untomb)))
 
 	abandoned, err := idx.Abandon(stray.name, time.Hour)
 	require.NoError(t, err)
@@ -108,7 +110,7 @@ func TestClaimIndex(t *testing.T, idx ClaimingIndex) {
 
 	lost, err := idx.Lost(session.ID)
 	require.NoError(t, err)
-	require.ElementsMatch(t, refs(stray.index), lost, "what the pending archive also has is not lost, nor the refused commit")
+	require.ElementsMatch(t, refs(stray.index), lost, "what the pending archive also has is not lost, nor the refused commit and its un-tombstone")
 
 	lost, err = idx.Lost(other.ID)
 	require.NoError(t, err)
