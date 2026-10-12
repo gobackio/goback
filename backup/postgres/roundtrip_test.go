@@ -8,7 +8,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -23,30 +22,26 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-func TestARoundTripThroughPostgres(t *testing.T) {
+func TestABaseBackupRoundTripThroughPostgres(t *testing.T) {
 	for _, version := range []string{"9.6", "17"} {
 		t.Run(version, func(t *testing.T) { roundTrip(t, version) })
 	}
 }
 
-// roundTrip takes a base backup of a live cluster, archives WAL written
-// after it, restores both into a new cluster and checks it holds every row.
+// roundTrip takes a base backup of a live cluster with pg_basebackup,
+// restores it alone into a new cluster and checks it holds the rows written
+// before it.
 func roundTrip(t *testing.T, version string) {
 	if testing.Short() {
 		t.Skip("short mode")
 	}
 
 	image := "postgres:" + version + "-alpine"
-	switchWAL, walFileName := "pg_switch_wal", "pg_walfile_name"
-	if version == "9.6" {
-		switchWAL, walFileName = "pg_switch_xlog", "pg_xlogfile_name"
-	}
 
 	primary := startPostgres(t, testcontainers.ContainerRequest{
-		Image: image,
-		Env:   map[string]string{"POSTGRES_PASSWORD": "goback"},
-		Cmd: []string{"postgres", "-c", "fsync=off", "-c", "wal_level=replica", "-c", "max_wal_senders=4", "-c", "archive_mode=on",
-			"-c", "archive_command=mkdir -p /tmp/spool && cp %p /tmp/spool/%f.tmp && mv /tmp/spool/%f.tmp /tmp/spool/%f"},
+		Image:      image,
+		Env:        map[string]string{"POSTGRES_PASSWORD": "goback"},
+		Cmd:        []string{"postgres", "-c", "fsync=off", "-c", "wal_level=replica", "-c", "max_wal_senders=4"},
 		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(3 * time.Minute),
 	})
 
@@ -59,63 +54,32 @@ func roundTrip(t *testing.T, version string) {
 	content := []byte(primary.run("pg_basebackup", "-D", "-", "-Ft", "-X", "fetch", "--checkpoint=fast"))
 	base, err := f.runBase(content, nil)
 	require.NoError(t, err)
-
-	primary.psql("INSERT INTO rows SELECT 'after', generate_series(1, 1000)")
-	switched := primary.psql("SELECT " + walFileName + "(" + switchWAL + "())")
-	primary.waitFor("test -f /tmp/spool/" + switched)
-
-	spooled := strings.Fields(primary.run("ls", "/tmp/spool"))
-	local := t.TempDir()
-	for _, name := range spooled {
-		if strings.HasSuffix(name, ".tmp") {
-			continue
-		}
-
-		file := filepath.Join(local, name)
-		primary.copyOut("/tmp/spool/"+name, file)
-		require.NoError(t, f.spool.Add(file, name))
-
-		if strings.HasPrefix(name, base.Commit.Metadata[MetaStartWALFile]+".") && strings.HasSuffix(name, ".backup") {
-			history, err := os.ReadFile(file)
-			require.NoError(t, err)
-			require.Equal(t, stopLocation(t, history), base.Commit.Metadata[MetaStopLSN], "the stop location Postgres archived")
-		}
-	}
-
 	require.Equal(t, base.Commit.Metadata[MetaStopLSN], FormatLSN(stopInWAL(t, content, base.Commit.Metadata[MetaStartLSN])), "the stop location the WAL holds")
 
-	_, err = f.run()
-	require.NoError(t, err)
+	primary.psql("INSERT INTO rows SELECT 'after', generate_series(1, 1000)")
 
 	r := &Restore{
-		Objects:        f.index,
-		Latest:         func(ctx context.Context, set string) (*proto.Ref, error) { return f.index.LatestCommit(ctx, set) },
-		BaseSet:        "db-base",
-		WALSet:         "db-wal",
-		RestoreCommand: func(*proto.Ref) string { return "cp /wal/%f %p" },
+		Objects: f.index,
+		Latest:  func(ctx context.Context, set string) (*proto.Ref, error) { return f.index.LatestCommit(ctx, set) },
+		BaseSet: "db-base",
 	}
 
 	data := filepath.Join(t.TempDir(), "data")
 	restored, err := r.Run(f.ctx, data)
 	require.NoError(t, err)
-	require.NotNil(t, restored.WAL)
+	require.Nil(t, restored.WAL)
 
-	wal := t.TempDir()
-	for _, name := range walFiles(t, f, restored.WAL) {
-		require.NoError(t, FetchWAL(f.ctx, f.index, nil, restored.WAL, name, filepath.Join(wal, name)))
-	}
-
-	bundle := tarDirs(t, map[string]string{"var/lib/postgresql/data": data, "wal": wal})
+	bundle := tarDirs(t, map[string]string{"var/lib/postgresql/data": data})
 
 	recovered := startPostgres(t, testcontainers.ContainerRequest{
 		Image: image,
-		Entrypoint: []string{"sh", "-c", "set -e; tar -xf /tmp/restore.tar -C /; chown -R postgres:postgres /var/lib/postgresql/data /wal; " +
+		Entrypoint: []string{"sh", "-c", "set -e; tar -xf /tmp/restore.tar -C /; chown -R postgres:postgres /var/lib/postgresql/data; " +
 			"chmod 700 /var/lib/postgresql/data; exec docker-entrypoint.sh postgres"},
 		Files: []testcontainers.ContainerFile{{Reader: bytes.NewReader(bundle), ContainerFilePath: "/tmp/restore.tar", FileMode: 0o644}},
 	})
 
 	recovered.waitFor(`[ "$(psql -tAc 'SELECT pg_is_in_recovery()')" = f ]`)
-	require.Equal(t, "before|1000\nafter|1000", recovered.psql("SELECT phase, count(*) FROM rows GROUP BY phase ORDER BY phase DESC"))
+	require.Equal(t, "before|1000", recovered.psql("SELECT phase, count(*) FROM rows GROUP BY phase"))
 }
 
 type pgContainer struct {
@@ -204,29 +168,6 @@ func (c *pgContainer) waitFor(condition string) {
 		require.True(c.t, state.Running, "the container exited waiting for %s", condition)
 		require.True(c.t, time.Now().Before(deadline), "waiting for %s", condition)
 	}
-}
-
-func (c *pgContainer) copyOut(src, dst string) {
-	c.t.Helper()
-
-	r, err := c.CopyFileFromContainer(c.ctx, src)
-	require.NoError(c.t, err)
-	defer r.Close()
-
-	content, err := io.ReadAll(r)
-	require.NoError(c.t, err)
-	require.NoError(c.t, os.WriteFile(dst, content, 0o600))
-}
-
-var stopWAL = regexp.MustCompile(`(?m)^STOP WAL LOCATION: ([0-9A-F]+/[0-9A-F]+) `)
-
-func stopLocation(t *testing.T, history []byte) string {
-	t.Helper()
-
-	m := stopWAL.FindSubmatch(history)
-	require.NotNil(t, m, "a backup history file names its stop")
-
-	return string(m[1])
 }
 
 // stopInWAL reads where the base backup that started at start stopped out

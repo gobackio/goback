@@ -6,22 +6,14 @@ import (
 	"github.com/urfave/cli"
 )
 
-var spoolFlag = cli.StringFlag{
-	Name:   "spool",
-	Usage:  "directory archive_command copies WAL files into and the WAL backup commits from",
-	EnvVar: "GOBACK_POSTGRES_SPOOL",
-}
-
 // Command is the postgres command.
 var Command = cli.Command{
 	Name:        "postgres",
-	Description: "Back up and restore Postgres 9.6 through 17 clusters: base backups and the WAL archive, each in a set of its own",
+	Description: "Back up and restore Postgres clusters: base backups from 9.6 on, and from 14 on the WAL streamed through a replication slot, each in a set of its own",
 	Subcommands: []cli.Command{
-		archiveCmd,
 		baseCmd,
 		receiveCmd,
 		restoreCmd,
-		walCmd,
 		walGetCmd,
 	},
 }

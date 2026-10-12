@@ -47,15 +47,12 @@ func newWALFixture(t *testing.T) *walFixture {
 	return &walFixture{t: t, ctx: context.Background(), index: index, spool: Spool{Dir: t.TempDir()}, now: time.Now().Add(time.Minute)}
 }
 
-// archive spools the segment of the cluster systemID at segment n of
-// timeline 1.
-func (f *walFixture) archive(n uint64, systemID uint64) string {
+// spoolSegment spools segment n of timeline 1 of the cluster systemID.
+func (f *walFixture) spoolSegment(n uint64, systemID uint64) string {
 	f.t.Helper()
 
 	name := walName(1, n)
-	path := filepath.Join(f.t.TempDir(), name)
-	require.NoError(f.t, os.WriteFile(path, append(header(1, n*segSize, systemID), byte(n)), 0o600))
-	require.NoError(f.t, f.spool.Add(path, name))
+	require.NoError(f.t, f.spool.put(name, append(header(1, n*segSize, systemID), byte(n))))
 
 	return name
 }
@@ -79,12 +76,24 @@ func (f *walFixture) base(n uint64) {
 }
 
 func (f *walFixture) run() (*backup.WalkResult, error) {
+	return f.commit(f.index, nil, nil)
+}
+
+// commit commits what the spool holds, and open, as the receiver does.
+func (f *walFixture) commit(objects backup.ObjectStore, key *storekey.Key, open *OpenSegment) (*backup.WalkResult, error) {
+	f.t.Helper()
+
+	files, err := f.spool.Files()
+	require.NoError(f.t, err)
+
 	b := &WALBackup{
-		Walker:  &backup.Walker{Index: f.index, Objects: f.index, Set: "db-wal", AgentID: "a", Root: f.spool.Dir, Workers: 2},
+		Walker:  &backup.Walker{Index: f.index, Objects: objects, Set: "db-wal", AgentID: "a", Root: f.spool.Dir, Workers: 2, Key: key},
 		Spool:   f.spool,
 		BaseSet: "db-base",
 		Window:  14 * 24 * time.Hour,
 		Now:     func() time.Time { return f.now },
+		Files:   files,
+		Open:    open,
 	}
 
 	return b.Run(f.ctx)
@@ -120,7 +129,7 @@ func TestEachWALCommitHoldsEverythingBackToTheOldestBase(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, result, "an empty spool commits nothing")
 
-	one, two := f.archive(1, 42), f.archive(2, 42)
+	one, two := f.spoolSegment(1, 42), f.spoolSegment(2, 42)
 	result, err = f.run()
 	require.NoError(t, err)
 	require.Equal(t, []string{one, two}, f.held(result))
@@ -128,7 +137,7 @@ func TestEachWALCommitHoldsEverythingBackToTheOldestBase(t *testing.T) {
 	require.Empty(t, f.spooled())
 
 	f.base(2)
-	three := f.archive(3, 42)
+	three := f.spoolSegment(3, 42)
 
 	result, err = f.run()
 	require.NoError(t, err)
@@ -140,17 +149,17 @@ func TestEachWALCommitHoldsEverythingBackToTheOldestBase(t *testing.T) {
 func TestWALFromAnotherClusterOrWithAGapStaysInTheSpool(t *testing.T) {
 	f := newWALFixture(t)
 
-	f.archive(1, 42)
+	f.spoolSegment(1, 42)
 	_, err := f.run()
 	require.NoError(t, err)
 
-	foreign := f.archive(2, 7)
+	foreign := f.spoolSegment(2, 7)
 	_, err = f.run()
 	require.ErrorIs(t, err, ErrForeignSegment)
 	require.Equal(t, []string{foreign}, f.spooled())
 	require.NoError(t, f.spool.Remove(foreign))
 
-	skipped := f.archive(3, 42)
+	skipped := f.spoolSegment(3, 42)
 	_, err = f.run()
 	require.ErrorIs(t, err, ErrGap)
 	require.Equal(t, []string{skipped}, f.spooled())
@@ -199,15 +208,7 @@ func (c *readCounting) reads() int64 {
 }
 
 func (f *walFixture) runOver(objects backup.ObjectStore, key *storekey.Key) (*backup.WalkResult, error) {
-	b := &WALBackup{
-		Walker:  &backup.Walker{Index: f.index, Objects: objects, Set: "db-wal", AgentID: "a", Root: f.spool.Dir, Workers: 2, Key: key},
-		Spool:   f.spool,
-		BaseSet: "db-base",
-		Window:  14 * 24 * time.Hour,
-		Now:     func() time.Time { return f.now },
-	}
-
-	return b.Run(f.ctx)
+	return f.commit(objects, key, nil)
 }
 
 // cached is the store a new process sees with the tree cache in dir.
@@ -224,13 +225,13 @@ func TestAWALCommitReadsThePreviousCommitAndTreeOnce(t *testing.T) {
 	f := newWALFixture(t)
 
 	for n := uint64(1); n <= 600; n++ {
-		f.archive(n, 42)
+		f.spoolSegment(n, 42)
 	}
 
 	_, err := f.run()
 	require.NoError(t, err)
 
-	f.archive(601, 42)
+	f.spoolSegment(601, 42)
 
 	objects := &readCounting{Index: f.index}
 	result, err := f.runOver(objects, nil)
@@ -246,14 +247,14 @@ func TestSteadyWALCommitsReadNoCommitOrTreeFromTheStore(t *testing.T) {
 	dir := t.TempDir()
 
 	for n := uint64(1); n <= 600; n++ {
-		f.archive(n, 42)
+		f.spoolSegment(n, 42)
 	}
 
 	_, err := f.run()
 	require.NoError(t, err)
 
 	for n := uint64(601); n <= 603; n++ {
-		f.archive(n, 42)
+		f.spoolSegment(n, 42)
 
 		objects := &readCounting{Index: f.index}
 		result, err := f.runOver(f.cached(dir, objects), nil)
@@ -273,15 +274,15 @@ func TestAWALCommitOverAnotherAgentsCommitReadsItFromTheStore(t *testing.T) {
 	f := newWALFixture(t)
 	dir := t.TempDir()
 
-	one := f.archive(1, 42)
+	one := f.spoolSegment(1, 42)
 	_, err := f.runOver(f.cached(dir, f.index), nil)
 	require.NoError(t, err)
 
-	two := f.archive(2, 42)
+	two := f.spoolSegment(2, 42)
 	_, err = f.run()
 	require.NoError(t, err)
 
-	three := f.archive(3, 42)
+	three := f.spoolSegment(3, 42)
 	objects := &readCounting{Index: f.index}
 	result, err := f.runOver(f.cached(dir, objects), nil)
 	require.NoError(t, err)
@@ -297,14 +298,14 @@ func TestASealedWALSetsTreeCacheHoldsNoNames(t *testing.T) {
 	key, err := storekey.Generate("s1")
 	require.NoError(t, err)
 
-	f.archive(1, 42)
-	middle := f.archive(2, 42)
-	f.archive(3, 42)
+	f.spoolSegment(1, 42)
+	middle := f.spoolSegment(2, 42)
+	f.spoolSegment(3, 42)
 
 	_, err = f.runOver(f.cached(dir, f.index), key)
 	require.NoError(t, err)
 
-	f.archive(4, 42)
+	f.spoolSegment(4, 42)
 	_, err = f.runOver(f.cached(dir, f.index), key)
 	require.NoError(t, err)
 
@@ -360,21 +361,7 @@ func (f *walFixture) put(name string, timeline uint32, n uint64, size int) {
 }
 
 func (f *walFixture) receive(open *OpenSegment) (*backup.WalkResult, error) {
-	files, err := f.spool.Files()
-	require.NoError(f.t, err)
-
-	b := &WALBackup{
-		Walker:  &backup.Walker{Index: f.index, Objects: f.index, Set: "db-wal", AgentID: "a", Root: f.spool.Dir, Workers: 2},
-		Spool:   f.spool,
-		BaseSet: "db-base",
-		Window:  14 * 24 * time.Hour,
-		Now:     func() time.Time { return f.now },
-		Files:   append([]string{}, files...),
-		Open:    open,
-		Capture: CaptureReplication,
-	}
-
-	return b.Run(f.ctx)
+	return f.commit(f.index, nil, open)
 }
 
 func (f *walFixture) sizes(result *backup.WalkResult) map[string]int64 {
@@ -394,7 +381,7 @@ func (f *walFixture) sizes(result *backup.WalkResult) map[string]int64 {
 func TestTheSegmentBeingReceivedIsCommittedAsPartialUntilItIsWhole(t *testing.T) {
 	f := newWALFixture(t)
 
-	one := f.archive(1, 42)
+	one := f.spoolSegment(1, 42)
 
 	result, err := f.receive(f.receiving(1, 2, 1000))
 	require.NoError(t, err)
@@ -431,7 +418,7 @@ func TestTheSegmentBeingReceivedIsCommittedAsPartialUntilItIsWhole(t *testing.T)
 func TestAPartialSegmentThatSkipsOneIsRefused(t *testing.T) {
 	f := newWALFixture(t)
 
-	f.archive(1, 42)
+	f.spoolSegment(1, 42)
 
 	_, err := f.receive(f.receiving(1, 3, 1000))
 	require.ErrorIs(t, err, ErrGap)
@@ -440,7 +427,7 @@ func TestAPartialSegmentThatSkipsOneIsRefused(t *testing.T) {
 func TestAnOlderTimelinesPartialSegmentStaysBesideTheNewOnes(t *testing.T) {
 	f := newWALFixture(t)
 
-	one := f.archive(1, 42)
+	one := f.spoolSegment(1, 42)
 
 	_, err := f.receive(f.receiving(1, 2, 1000))
 	require.NoError(t, err)

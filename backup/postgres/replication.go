@@ -337,8 +337,12 @@ func isRemovedWAL(err error) bool {
 	return errors.As(err, &pgErr) && strings.Contains(pgErr.Message, "has already been removed")
 }
 
-// put writes a whole file into the spool under name, as Add does.
+// put writes a whole file into the spool under name.
 func (s Spool) put(name string, content []byte) error {
+	if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
+		return fmt.Errorf("%q is not a WAL file name", name)
+	}
+
 	if err := os.MkdirAll(s.receiving(), 0o700); err != nil {
 		return err
 	}
@@ -350,7 +354,7 @@ func (s Spool) put(name string, content []byte) error {
 		return err
 	}
 
-	return s.Add(tmp, name)
+	return s.adopt(tmp, name)
 }
 
 func writeSynced(path string, content []byte) error {

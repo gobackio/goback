@@ -291,7 +291,6 @@ func (r *Receiver) commit(ctx context.Context, c *cut) (*backup.WalkResult, erro
 		Now:     time.Now,
 		Files:   c.files,
 		Open:    c.open,
-		Capture: CaptureReplication,
 	}
 
 	return b.Run(ctx)

@@ -32,16 +32,14 @@ const (
 	// MetaEndLSN is where the WAL a WAL commit holds ends, its open
 	// segment included; MetaTimeline then names the timeline it ends on.
 	MetaEndLSN = "pg.end_lsn"
-	// MetaCapture says how a WAL commit's WAL was collected: CaptureArchive
-	// or CaptureReplication.
+	// MetaCapture says how a WAL commit's WAL was collected: CaptureReplication,
+	// or archive for WAL that archive_command delivered, which restore reads
+	// alike.
 	MetaCapture = "pg.capture"
 )
 
-// The values of MetaCapture.
-const (
-	CaptureArchive     = "archive"
-	CaptureReplication = "replication"
-)
+// CaptureReplication is the MetaCapture of WAL a receiver streamed.
+const CaptureReplication = "replication"
 
 // partialSuffix marks a segment Postgres or the receiver did not finish.
 const partialSuffix = ".partial"

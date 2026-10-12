@@ -95,50 +95,6 @@ func PostgresBase(ctx context.Context, env *Env, s PostgresBaseSettings) (*backu
 	return result, err
 }
 
-// PostgresWALSettings say how PostgresWAL commits the spool.
-type PostgresWALSettings struct {
-	Set string
-	// Spool is the directory archive_command copies WAL files into.
-	Spool string
-	// BaseSet is the set the cluster's base backups go to.
-	BaseSet string
-	// Window is how far back point-in-time recovery reaches.
-	Window time.Duration
-}
-
-// PostgresWAL commits the spooled WAL files to the set, then deletes them
-// from the spool. It commits nothing, and returns nil, when the spool is
-// empty.
-func PostgresWAL(ctx context.Context, env *Env, s PostgresWALSettings) (*backup.WalkResult, error) {
-	spool := postgres.Spool{Dir: s.Spool}
-
-	objects := backup.ObjectStore(env.Index)
-	if env.TreeCache != nil {
-		objects = cache.New(env.TreeCache, env.Index)
-	}
-
-	run := &postgres.WALBackup{
-		Walker: &backup.Walker{
-			Index:       env.Index,
-			Objects:     objects,
-			Sessions:    env.sessions(),
-			Set:         s.Set,
-			AgentID:     env.AgentID,
-			Key:         env.Key,
-			Logger:      env.Logger,
-			Root:        spool.Dir,
-			Workers:     4,
-			ReadRetries: 3,
-		},
-		Spool:   spool,
-		BaseSet: s.BaseSet,
-		Window:  s.Window,
-		Now:     time.Now,
-	}
-
-	return run.Run(ctx)
-}
-
 // PostgresReceiveSettings say how PostgresReceive streams WAL.
 type PostgresReceiveSettings struct {
 	Set string

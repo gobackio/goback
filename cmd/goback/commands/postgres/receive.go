@@ -29,7 +29,10 @@ var receiveCmd = cli.Command{
 			Usage:  "directory WAL waits in for its commit",
 			EnvVar: "GOBACK_POSTGRES_SPOOL",
 		},
-		baseSetFlag,
+		cli.StringFlag{
+			Name:  "base-set",
+			Usage: "set the cluster's base backups go to",
+		},
 		cli.StringFlag{
 			Name:   "dbname",
 			Usage:  "connection string the receiver connects with",

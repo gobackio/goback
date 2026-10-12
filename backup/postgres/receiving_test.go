@@ -49,7 +49,6 @@ func TestTheOpenSegmentIsWrittenInPlaceAndCutAtTheLastMessage(t *testing.T) {
 	c, err := w.cut()
 	require.NoError(t, err)
 	require.Empty(t, c.files, "the open segment is not in the spool")
-	require.NotNil(t, c.files)
 	require.Equal(t, uint64(segSize+150), c.end)
 	require.Equal(t, &OpenSegment{Name: walName(1, 1), Path: filepath.Join(spool.Dir, receivingDir, walName(1, 1)), Size: 150}, c.open)
 

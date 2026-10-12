@@ -44,8 +44,8 @@ func TestARestoreWritesTheNewestBaseAndRecoversFromTheWALSet(t *testing.T) {
 	_, err := f.runBase(content, nil)
 	require.NoError(t, err)
 
-	f.archive(7, 42)
-	f.archive(8, 42)
+	f.spoolSegment(7, 42)
+	f.spoolSegment(8, 42)
 	wal, err := f.run()
 	require.NoError(t, err)
 
@@ -82,7 +82,7 @@ func TestARestoreBeforePostgres12RecoversThroughRecoveryConf(t *testing.T) {
 	_, err := f.runBase(oldBaseTar(t), nil)
 	require.NoError(t, err)
 
-	f.archive(3, 42)
+	f.spoolSegment(3, 42)
 	wal, err := f.run()
 	require.NoError(t, err)
 
@@ -104,7 +104,7 @@ func TestARestoreToAMomentSetsItAsTheTarget(t *testing.T) {
 	_, err := f.runBase(baseTar(t, 42), nil)
 	require.NoError(t, err)
 
-	f.archive(7, 42)
+	f.spoolSegment(7, 42)
 	_, err = f.run()
 	require.NoError(t, err)
 
@@ -126,7 +126,7 @@ func TestARestoreRefusesABaseTheWALSetCannotContinue(t *testing.T) {
 	_, err := f.runBase(baseTar(t, 42), nil)
 	require.NoError(t, err)
 
-	f.archive(8, 42)
+	f.spoolSegment(8, 42)
 	_, err = f.run()
 	require.NoError(t, err)
 
@@ -141,7 +141,7 @@ func TestARestoreRefusesABaseOfAnotherCluster(t *testing.T) {
 	_, err := f.runBase(baseTar(t, 42), nil)
 	require.NoError(t, err)
 
-	f.archive(7, 43)
+	f.spoolSegment(7, 43)
 	_, err = f.run()
 	require.NoError(t, err)
 
@@ -168,7 +168,7 @@ func TestARestoreWithoutAWALSetRestoresTheBaseAlone(t *testing.T) {
 	_, err := f.runBase(baseTar(t, 42), nil)
 	require.NoError(t, err)
 
-	f.archive(7, 42)
+	f.spoolSegment(7, 42)
 	_, err = f.run()
 	require.NoError(t, err)
 
@@ -198,7 +198,7 @@ func TestARestoreLeavesADirectoryInUseAlone(t *testing.T) {
 func TestFetchWALWritesWhatTheCommitHolds(t *testing.T) {
 	f := newWALFixture(t)
 
-	name := f.archive(7, 42)
+	name := f.spoolSegment(7, 42)
 	want, err := os.ReadFile(filepath.Join(f.spool.Dir, name))
 	require.NoError(t, err)
 
@@ -214,6 +214,35 @@ func TestFetchWALWritesWhatTheCommitHolds(t *testing.T) {
 
 	err = FetchWAL(f.ctx, f.index, nil, wal.Ref, "00000002.history", dst)
 	require.ErrorIs(t, err, backup.ErrNotFound)
+}
+
+func TestARestoreReadsAWALSetArchiveCommandFilled(t *testing.T) {
+	f := newWALFixture(t)
+
+	_, err := f.runBase(baseTar(t, 42), nil)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	name := walName(1, 7)
+	want := append(header(1, 7*segSize, 42), 7)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), want, 0o600))
+
+	w := &backup.Walker{Index: f.index, Objects: f.index, Set: "db-wal", AgentID: "a", Root: dir, Workers: 1, Metadata: map[string]string{
+		MetaFirstWALFile: name, MetaLastWALFile: name, MetaSystemID: "42", MetaCapture: "archive",
+	}}
+	wal, err := w.Run(f.ctx)
+	require.NoError(t, err)
+
+	result, _, err := f.restore(time.Time{})
+	require.NoError(t, err)
+	require.Equal(t, wal.Ref.Hash, result.WAL.Hash)
+
+	dst := filepath.Join(t.TempDir(), "RECOVERYXLOG")
+	require.NoError(t, FetchWAL(f.ctx, f.index, nil, wal.Ref, name, dst))
+
+	got, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
 }
 
 // streamingStore serves a file's parts only through ReadParts, like the
@@ -264,9 +293,7 @@ func TestFetchWALStreamsFromAStoreThatServesNoParts(t *testing.T) {
 	_, err := rand.Read(want[len(want)-1<<20:])
 	require.NoError(t, err)
 
-	path := filepath.Join(t.TempDir(), name)
-	require.NoError(t, os.WriteFile(path, want, 0o600))
-	require.NoError(t, f.spool.Add(path, name))
+	require.NoError(t, f.spool.put(name, want))
 
 	wal, err := f.run()
 	require.NoError(t, err)

@@ -14,9 +14,9 @@ import (
 	"github.com/gobackio/goback/storage/cache"
 )
 
-// WALBackup commits the spool to the WAL set. Every commit holds each WAL
-// file back to the oldest base backup inside Window, so any one commit
-// replays on its own.
+// WALBackup commits what a receiver's spool holds to the WAL set. Every
+// commit holds each WAL file back to the oldest base backup inside Window,
+// so any one commit replays on its own.
 type WALBackup struct {
 	// Walker stores the commit; its Root is the spool's directory and its
 	// Set the WAL set. Run sets its Include, Carry, Growing and Metadata.
@@ -26,15 +26,12 @@ type WALBackup struct {
 	BaseSet string
 	Window  time.Duration
 	Now     func() time.Time
-	// Files, when set, are the spool's files to commit instead of all it
-	// holds.
+	// Files are the spool's whole files to commit.
 	Files []string
 	// Open, when set, is the segment still being received; the commit
 	// holds it up to its length as <name>.partial, in place of the previous
 	// commit's partial segment of its timeline.
 	Open *OpenSegment
-	// Capture is recorded as MetaCapture; empty means CaptureArchive.
-	Capture string
 }
 
 // OpenSegment is a WAL segment a receiver is still writing.
@@ -50,18 +47,12 @@ type OpenSegment struct {
 // maxBases bounds the base backups read to find the cutoff.
 const maxBases = 1000
 
-// Run commits what the spool holds and then deletes it from the spool. It
-// commits nothing, and returns nil, when the spool is empty and nothing is
-// open. It refuses WAL from another cluster than the set's and WAL that
-// skips a segment, and then leaves the spool as it was.
+// Run commits Files and Open and then deletes Files from the spool. It
+// commits nothing, and returns nil, when both are empty. It refuses WAL
+// from another cluster than the set's and WAL that skips a segment, and
+// then leaves the spool as it was.
 func (b *WALBackup) Run(ctx context.Context) (*backup.WalkResult, error) {
 	spooled := b.Files
-	if spooled == nil {
-		var err error
-		if spooled, err = b.Spool.Files(); err != nil {
-			return nil, err
-		}
-	}
 
 	if len(spooled) == 0 && b.Open == nil {
 		return nil, nil
@@ -154,11 +145,7 @@ func (b *WALBackup) Run(ctx context.Context) (*backup.WalkResult, error) {
 	w.Metadata = map[string]string{
 		MetaFirstWALFile: firstSegment(names),
 		MetaLastWALFile:  lastSegment(names),
-		MetaCapture:      CaptureArchive,
-	}
-
-	if b.Capture != "" {
-		w.Metadata[MetaCapture] = b.Capture
+		MetaCapture:      CaptureReplication,
 	}
 
 	if systemID != 0 {

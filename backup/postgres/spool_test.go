@@ -8,23 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func segment(t *testing.T, content string) string {
-	t.Helper()
-
-	path := filepath.Join(t.TempDir(), "segment")
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
-
-	return path
-}
-
-func TestTheSpoolHoldsOnlyWholeFiles(t *testing.T) {
+func TestTheSpoolListsOnlyWholeFiles(t *testing.T) {
 	spool := Spool{Dir: t.TempDir()}
 
-	require.NoError(t, spool.Add(segment(t, "first"), "000000010000000000000002"))
-	require.NoError(t, spool.Add(segment(t, "zeroth"), "000000010000000000000001"))
-
-	// a copy a crash cut short
-	require.NoError(t, os.WriteFile(filepath.Join(spool.Dir, "000000010000000000000003"+spoolingSuffix), []byte("fir"), 0o600))
+	require.NoError(t, spool.put("000000010000000000000002", []byte("first")))
+	require.NoError(t, spool.put("000000010000000000000001", []byte("zeroth")))
+	require.NoError(t, os.WriteFile(filepath.Join(spool.receiving(), "000000010000000000000003"), []byte("fir"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(spool.Dir, ".lock"), nil, 0o600))
 
 	files, err := spool.Files()
 	require.NoError(t, err)
@@ -37,13 +27,13 @@ func TestTheSpoolHoldsOnlyWholeFiles(t *testing.T) {
 	require.Equal(t, []string{"000000010000000000000002"}, files)
 }
 
-func TestArchivingAgainSucceedsOnlyWithTheSameContents(t *testing.T) {
+func TestReceivingAFileAgainSucceedsOnlyWithTheSameContents(t *testing.T) {
 	spool := Spool{Dir: t.TempDir()}
-	name := "000000010000000000000002"
+	name := "00000002.history"
 
-	require.NoError(t, spool.Add(segment(t, "first"), name))
-	require.NoError(t, spool.Add(segment(t, "first"), name))
-	require.ErrorIs(t, spool.Add(segment(t, "other"), name), ErrConflict)
+	require.NoError(t, spool.put(name, []byte("first")))
+	require.NoError(t, spool.put(name, []byte("first")))
+	require.ErrorIs(t, spool.put(name, []byte("other")), ErrConflict)
 
 	held, err := os.ReadFile(filepath.Join(spool.Dir, name))
 	require.NoError(t, err)
@@ -53,7 +43,7 @@ func TestArchivingAgainSucceedsOnlyWithTheSameContents(t *testing.T) {
 func TestTheSpoolRefusesNamesOutsideIt(t *testing.T) {
 	spool := Spool{Dir: t.TempDir()}
 
-	for _, name := range []string{"", "../x", "a/b", ".hidden", "x" + spoolingSuffix} {
-		require.Error(t, spool.Add(segment(t, "x"), name), name)
+	for _, name := range []string{"", "../x", "a/b", ".hidden"} {
+		require.Error(t, spool.put(name, []byte("x")), name)
 	}
 }

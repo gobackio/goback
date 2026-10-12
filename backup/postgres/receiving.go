@@ -1,8 +1,6 @@
 package postgres
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -132,34 +130,8 @@ func (w *segmentWriter) close(name string) error {
 }
 
 // move renames a whole segment of the receiving directory into the spool.
-// A file the spool already holds under that name must be the same.
 func (w *segmentWriter) move(from, to string) error {
-	src, dst := w.path(from), w.spool.path(to)
-
-	if held, err := os.ReadFile(dst); err == nil {
-		received, err := os.ReadFile(src)
-		if err != nil {
-			return err
-		}
-
-		if !bytes.Equal(held, received) {
-			return fmt.Errorf("%w: %s", ErrConflict, to)
-		}
-
-		return os.Remove(src)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-
-	if err := os.Rename(src, dst); err != nil {
-		return err
-	}
-
-	if err := syncDir(w.spool.receiving()); err != nil {
-		return err
-	}
-
-	return syncDir(w.spool.Dir)
+	return w.spool.adopt(w.path(from), to)
 }
 
 // switchTimeline closes the open segment as a partial one, as Postgres
@@ -180,8 +152,7 @@ func (w *segmentWriter) switchTimeline(timeline uint32, from uint64) error {
 
 // cut is what one commit takes from the spool.
 type cut struct {
-	// files are the spool's whole files; never nil, so a commit takes
-	// these and not what the spool holds by then.
+	// files are the spool's whole files.
 	files []string
 	// open is the segment being received, up to the end of the WAL written
 	// to it; nil when it holds nothing yet.
@@ -221,7 +192,7 @@ func (w *segmentWriter) cut() (*cut, error) {
 		return nil, err
 	}
 
-	c.files = append([]string{}, files...)
+	c.files = files
 
 	return c, nil
 }

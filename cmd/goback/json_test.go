@@ -107,7 +107,7 @@ func TestJSONModeKeepsResultsOnStdoutAndLogsAsLinesOnStderr(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &failure), out)
 	require.NotEmpty(t, failure.Error)
 
-	out, _, code = c.runJSON("postgres", "archive")
+	out, _, code = c.runJSON("postgres", "receive")
 	require.Equal(t, 2, code, "a usage error keeps its own exit code")
 	require.NoError(t, json.Unmarshal([]byte(out), &failure), out)
 }
