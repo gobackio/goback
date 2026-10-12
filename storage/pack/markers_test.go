@@ -2,8 +2,11 @@ package pack
 
 import (
 	"context"
+	"errors"
 	"io"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gobackio/goback/backup"
 
@@ -96,4 +99,133 @@ func TestOpeningAStoreBringsTheIndexInLineWithTheMarkers(t *testing.T) {
 
 	_, err = second.LookupSession(context.Background(), ended.ID)
 	require.ErrorIs(t, err, backup.ErrNoSession, "an indexed session that ended is ended")
+}
+
+func requireMarkers(t *testing.T, store *PackStorage, id string, begin, end bool) {
+	t.Helper()
+
+	require.Equal(t, begin, store.stored(id+SessionBeginExt), "begin of %s", id)
+	require.Equal(t, end, store.stored(id+SessionEndExt), "end of %s", id)
+}
+
+func TestACollectionDeletesASessionsMarkersOnceNoArchiveOrHorizonHoldsIt(t *testing.T) {
+	base := t.TempDir()
+	store := newTestStore(t, base, WithCompaction(CompactionConfig{MinimumCandidates: 0}))
+	ctx := context.Background()
+
+	chain := makeChain(makeTestData(t, 10))
+	sctx, committed := beginSession(t, store, "agent-a")
+	for _, obj := range chain {
+		require.NoError(t, store.Put(sctx, obj))
+	}
+
+	actx, empty := beginSession(t, store, "agent-b")
+	require.NoError(t, store.EndSession(actx))
+
+	hctx, spanning := beginSession(t, store, "agent-c")
+
+	_, err := store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+	requireMarkers(t, store, empty.ID, false, false)
+	requireMarkers(t, store, committed.ID, true, true)
+	requireMarkers(t, store, spanning.ID, true, false)
+
+	// it ended after the generation listed it in its horizon
+	require.NoError(t, store.EndSession(hctx))
+	_, err = store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+	requireMarkers(t, store, spanning.ID, true, true)
+
+	// the committed session's archives are retired, then purged
+	compact(t, ctx, store)
+	_, err = store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+	requireMarkers(t, store, spanning.ID, false, false)
+	requireMarkers(t, store, committed.ID, true, true)
+
+	_, err = store.Collect(ctx, gcOptions(t, 72*time.Hour))
+	require.NoError(t, err)
+	requireMarkers(t, store, committed.ID, false, false)
+
+	archives, err := store.storage.List(ArchiveSuffix)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	rebuilt := newTestStore(t, base)
+	t.Cleanup(func() { _ = rebuilt.Close() })
+
+	after, err := rebuilt.storage.List(ArchiveSuffix)
+	require.NoError(t, err)
+	require.ElementsMatch(t, archives, after, "a rebuild deletes nothing")
+
+	for _, obj := range chain {
+		requireVisible(t, rebuilt, ctx, obj, true)
+	}
+}
+
+// crashingMarkerDeletes refuses every marker delete after the first while
+// set, as a process that dies between them leaves the storage.
+type crashingMarkerDeletes struct {
+	*localArchiveStorage
+
+	crashing bool
+	deleted  int
+}
+
+func (c *crashingMarkerDeletes) Delete(name string) error {
+	marker := strings.HasSuffix(name, SessionBeginExt) || strings.HasSuffix(name, SessionEndExt)
+	if c.crashing && marker {
+		if c.deleted++; c.deleted > 1 {
+			return errors.New("crashed")
+		}
+	}
+
+	return c.localArchiveStorage.Delete(name)
+}
+
+func TestACrashWhileDeletingASessionsMarkersLeavesNoSessionLive(t *testing.T) {
+	base := t.TempDir()
+	storage := &crashingMarkerDeletes{localArchiveStorage: newLocal(base)}
+	store, err := NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	ctx := context.Background()
+
+	chain := makeChain(makeTestData(t, 5))
+	putAll(t, store, chain)
+
+	actx, aborted := beginSession(t, store, "agent-a")
+	require.NoError(t, store.Put(actx, makeTestData(t, 1)[0]))
+	require.NoError(t, store.EndSession(actx))
+
+	storage.crashing = true
+	_, err = store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	begun := store.stored(aborted.ID + SessionBeginExt)
+	ended := store.stored(aborted.ID + SessionEndExt)
+	require.NotEqual(t, begun, ended, "the crash came between the two deletes")
+	require.False(t, begun && !ended, "a session never looks begun without its end")
+
+	storage.crashing = false
+	reopened, err := NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, reopened.Open())
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	_, err = reopened.LookupSession(ctx, aborted.ID)
+	require.ErrorIs(t, err, backup.ErrNoSession)
+
+	live, err := newGCRun(reopened, CollectOptions{}, nil, newGCReads()).liveSessions()
+	require.NoError(t, err)
+	require.False(t, live[aborted.ID])
+
+	for _, obj := range chain {
+		requireVisible(t, reopened, ctx, obj, true)
+	}
+
+	_, err = reopened.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+	requireMarkers(t, reopened, aborted.ID, false, false)
 }

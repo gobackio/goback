@@ -184,13 +184,10 @@ func deletedInOneArchive(t *testing.T, base string) (*proto.Object, string) {
 	require.Len(t, store.archives, 1)
 	name := store.archives[0].name
 
-	// the storage's clock must tell the archives apart
-	time.Sleep(20 * time.Millisecond)
 	require.NoError(t, store.Delete(context.Background(), blob.Ref()))
 	require.NoError(t, store.Flush())
 	requirePresent(t, store, []*proto.Object{blob}, false)
 	require.NoError(t, store.Close())
-	time.Sleep(20 * time.Millisecond)
 
 	return blob, name
 }

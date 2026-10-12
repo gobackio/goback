@@ -208,6 +208,62 @@ func (ps *PackStorage) reconcileSessions(listed map[string]*ListedFile) error {
 	return nil
 }
 
+// pruneSessionMarkers deletes the markers of every session that ended,
+// that no horizon lists and that live does not hold, once no archive of
+// the session is stored, live or retired, and returns how many sessions
+// it pruned. The begin goes first, so a session never looks begun without
+// its end, and a session whose begin stays keeps its end.
+func (ps *PackStorage) pruneSessionMarkers(live map[string]bool, horizons ...[]string) (int, error) {
+	ended, err := ps.markerIDs(SessionEndExt)
+	if err != nil || len(ended) == 0 {
+		return 0, err
+	}
+
+	archives, err := ps.storage.List(ArchiveSuffix)
+	if err != nil {
+		return 0, err
+	}
+
+	held := make(map[string]bool, len(live))
+	for id := range live {
+		held[id] = true
+	}
+
+	for _, horizon := range horizons {
+		for _, id := range horizon {
+			held[id] = true
+		}
+	}
+
+	for _, name := range archives {
+		if id := ParsePlacement(strings.TrimSuffix(name, ArchiveSuffix)).Session; id != "" {
+			held[id] = true
+		}
+	}
+
+	pruned := 0
+
+	for id := range ended {
+		if held[id] {
+			continue
+		}
+
+		if err := ps.storage.Delete(id + SessionBeginExt); err != nil && !notExist(err) {
+			ps.logger.Warn("deleting the begin of an ended session failed", "session", id, "err", err)
+			continue
+		}
+
+		if err := ps.storage.Delete(id + SessionEndExt); err != nil && !notExist(err) {
+			ps.logger.Warn("deleting the end of an ended session failed", "session", id, "err", err)
+			continue
+		}
+
+		pruned++
+	}
+
+	return pruned, nil
+}
+
 func (ps *PackStorage) markerIDs(ext string) (map[string]bool, error) {
 	names, err := ps.storage.List(ext)
 	if err != nil {

@@ -564,6 +564,20 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 	ps.logger.Info("gc purged the quarantine", "generation", run.gen, "purged", report.Purged,
 		"retired", humanize.Bytes(report.RetiredBytes), "took", time.Since(purgeStart).Round(time.Millisecond))
 
+	var horizons [][]string
+	if prev != nil {
+		horizons = append(horizons, prev.Horizon)
+	}
+
+	pruned, err := ps.pruneSessionMarkers(sessions, append(horizons, state.Horizon)...)
+	if err != nil {
+		return nil, errors.Wrap(err, "pruning session markers")
+	}
+
+	if pruned > 0 {
+		ps.logger.Info("gc deleted the markers of sessions that left no archive", "generation", run.gen, "sessions", pruned)
+	}
+
 	report.Duration = time.Since(started)
 
 	return report, nil
