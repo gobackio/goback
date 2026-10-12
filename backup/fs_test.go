@@ -3,6 +3,7 @@ package backup
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -10,8 +11,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
 )
@@ -287,4 +291,179 @@ func TestHashFileFSMatchesTheStoredRef(t *testing.T) {
 	ref, err := HashFileFS(context.Background(), fsys, "/big.bin", nil)
 	require.NoError(t, err)
 	require.True(t, ref.Equal(f.tree(result.Commit.Tree)["big.bin"].Ref))
+}
+
+// noon is when the weak-timestamp tests' files are first written.
+var noon = time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+
+func TestAWeakMtimeRereadsAFileRewrittenWithinItsResolution(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		resolution               time.Duration
+		written, scan, rewritten time.Duration
+	}{
+		{"minute", time.Minute, 10 * time.Second, 30 * time.Second, 40 * time.Second},
+		{"second", time.Second, 100 * time.Millisecond, 500 * time.Millisecond, 800 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, fsys, now := newMemFSFixture(t, Traits{Resolution: tc.resolution})
+			fsys.write("/level.dat", "version-1", noon.Add(tc.written))
+
+			*now = noon.Add(tc.scan)
+			f.run()
+
+			// same size, and the same mtime once truncated to the resolution
+			fsys.write("/level.dat", "version-2", noon.Add(tc.rewritten))
+
+			*now = noon.Add(5 * time.Minute)
+			second := f.run()
+			require.EqualValues(t, 1, second.Read)
+			require.Equal(t, "version-2", f.content(second.Commit.Tree, "level.dat"))
+
+			*now = noon.Add(10 * time.Minute)
+			third := f.run()
+			require.EqualValues(t, 1, third.Reused)
+			require.EqualValues(t, 0, third.Read)
+		})
+	}
+}
+
+func TestSkewWidensTheRacyWindow(t *testing.T) {
+	f, fsys, now := newMemFSFixture(t, Traits{Resolution: time.Second, Skew: 2 * time.Minute})
+	fsys.behind = 90 * time.Second
+
+	*now = noon
+	fsys.write("/level.dat", "version-1", noon.Add(200*time.Millisecond))
+	f.run()
+
+	fsys.write("/level.dat", "version-2", noon.Add(700*time.Millisecond))
+
+	*now = noon.Add(5 * time.Minute)
+	second := f.run()
+	require.EqualValues(t, 1, second.Read, "the change just after the scan is read though the FS stamps it 90s earlier")
+	require.Equal(t, "version-2", f.content(second.Commit.Tree, "level.dat"))
+
+	*now = noon.Add(10 * time.Minute)
+	require.EqualValues(t, 1, f.run().Reused)
+}
+
+func TestMtimesTruncatedByTheDriverKeepAFlappingServerFromRereading(t *testing.T) {
+	f, fsys, now := newMemFSFixture(t, Traits{Resolution: time.Second})
+	fsys.write("/level.dat", "level", noon.Add(300*time.Millisecond))
+	fsys.write("/region/r.0.0.mca", "region", noon.Add(600*time.Millisecond))
+
+	*now = noon.Add(time.Hour)
+	f.run()
+
+	for run := range 4 {
+		fsys.coarse = run%2 == 0
+		*now = noon.Add(time.Duration(run+2) * time.Hour)
+
+		result := f.run()
+		require.EqualValues(t, 2, result.Reused)
+		require.EqualValues(t, 0, result.Read)
+	}
+}
+
+func TestVerifyReadsEveryFileAndUploadsNoChunkAgain(t *testing.T) {
+	f, fsys, now := newMemFSFixture(t, Traits{Resolution: time.Second})
+	fsys.write("/region/r.0.0.mca", string(f.random(300<<10)), noon)
+	fsys.write("/region/r.0.1.mca", string(f.random(200<<10)), noon)
+
+	*now = noon.Add(time.Hour)
+	first := f.run()
+
+	f.walker.Verify = true
+	*now = noon.Add(2 * time.Hour)
+	second := f.run()
+	require.EqualValues(t, 2, second.Read)
+	require.EqualValues(t, 0, second.Reused)
+	require.EqualValues(t, 0, second.Uploaded)
+	require.True(t, second.Commit.Tree.Equal(first.Commit.Tree))
+}
+
+func TestVerifyCatchesAWriteThatKeptMtimeAndSize(t *testing.T) {
+	f, fsys, now := newMemFSFixture(t, Traits{Resolution: time.Second})
+	fsys.write("/level.dat", "version-1", noon)
+
+	*now = noon.Add(time.Hour)
+	f.run()
+
+	// touch -r: new content under the old mtime
+	fsys.write("/level.dat", "version-2", noon)
+
+	*now = noon.Add(2 * time.Hour)
+	missed := f.run()
+	require.Equal(t, "version-1", f.content(missed.Commit.Tree, "level.dat"))
+
+	f.walker.Verify = true
+	*now = noon.Add(3 * time.Hour)
+	verified := f.run()
+	require.Equal(t, "version-2", f.content(verified.Commit.Tree, "level.dat"))
+}
+
+// vetoingStatCache counts its calls and contradicts every file it is asked
+// about.
+type vetoingStatCache struct {
+	calls atomic.Int64
+}
+
+func (c *vetoingStatCache) Lookup(string, os.FileInfo) (bool, bool) {
+	c.calls.Add(1)
+	return true, false
+}
+
+func (c *vetoingStatCache) Store(string, os.FileInfo, *proto.Ref) error {
+	c.calls.Add(1)
+	return nil
+}
+
+func TestTheStatCacheIsConsultedOnlyWithIdentity(t *testing.T) {
+	for _, identity := range []bool{false, true} {
+		t.Run(fmt.Sprint("identity ", identity), func(t *testing.T) {
+			f, fsys, now := newMemFSFixture(t, Traits{Identity: identity})
+			cache := &vetoingStatCache{}
+			f.walker.Cache = cache
+			fsys.write("/level.dat", "level", noon)
+
+			*now = noon.Add(time.Hour)
+			f.run()
+
+			*now = noon.Add(2 * time.Hour)
+			second := f.run()
+
+			if identity {
+				require.EqualValues(t, 1, second.Read)
+				require.NotZero(t, cache.calls.Load())
+			} else {
+				require.EqualValues(t, 1, second.Reused)
+				require.Zero(t, cache.calls.Load())
+			}
+		})
+	}
+}
+
+func TestSampledRehashesNeedReread(t *testing.T) {
+	for _, reread := range []bool{false, true} {
+		t.Run(fmt.Sprint("reread ", reread), func(t *testing.T) {
+			f, fsys, now := newMemFSFixture(t, Traits{Reread: reread})
+			f.walker.ForceHashPercent = 100
+			fsys.write("/level.dat", "level", noon)
+			fsys.write("/region/r.0.0.mca", "region", noon)
+
+			*now = noon.Add(time.Hour)
+			f.run()
+			opened := fsys.openCount()
+
+			*now = noon.Add(2 * time.Hour)
+			second := f.run()
+			require.EqualValues(t, 2, second.Reused)
+
+			if reread {
+				require.Equal(t, opened+2, fsys.openCount())
+			} else {
+				require.Equal(t, opened, fsys.openCount())
+			}
+		})
+	}
 }

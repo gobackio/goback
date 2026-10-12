@@ -25,6 +25,7 @@ type FS interface {
 	Join(dir, name string) string
 	// Owners names a file's user and group; empty when unknown.
 	Owners(info os.FileInfo) (user, group string)
+	// Traits is read once as a walk starts.
 	Traits() Traits
 }
 

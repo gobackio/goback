@@ -110,7 +110,13 @@ type Walker struct {
 	// is visible to others before its commit.
 	Sessions SessionStore
 
-	Workers            int
+	// Verify reads every file, even one the change test would reuse, which
+	// catches a write that kept a file's mtime and size.
+	Verify bool
+
+	Workers int
+	// ForceHashPercent is the share of reused files re-hashed as a check;
+	// ignored on an FS whose Traits do not allow a Reread.
 	ForceHashPercent   int
 	CheckpointInterval time.Duration
 	ReadRetries        int
@@ -129,7 +135,8 @@ type Walker struct {
 
 	// Quiesced records that a pre hook paused the application before the
 	// walk; a clean run then commits as consistent.
-	Quiesced      bool
+	Quiesced bool
+	// Cache is consulted only on an FS whose Traits carry Identity.
 	Cache         StatCache
 	PrefetchDepth uint32
 
@@ -149,6 +156,7 @@ type Walker struct {
 	window    *chunkWindow
 	gate      *syncutil.Gate
 	scan      *scanner
+	traits    Traits
 	trees     *treeSource
 	scanStart int64
 	// policyVersion is what the commit records, kept apart from Key
@@ -362,6 +370,7 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 	w.scanStart = w.started.UnixNano()
 	w.result = WalkResult{}
 	w.sent = newSentSet()
+	w.traits = w.fs().Traits()
 
 	workers := w.ScanWorkers
 	if workers == 0 {
@@ -934,7 +943,7 @@ func (w *Walker) sample() bool {
 // than the base run, not contradicted by the stat cache, and not picked for
 // a sampled re-hash.
 func (w *Walker) reusable(ctx context.Context, path, rel string, info os.FileInfo, stat *proto.FileInfo, baseNode *proto.TreeNode) bool {
-	if baseNode == nil || baseNode.Stat.GetType() != proto.NodeType_NODE_FILE || baseNode.Ref == nil {
+	if w.Verify || baseNode == nil || baseNode.Stat.GetType() != proto.NodeType_NODE_FILE || baseNode.Ref == nil {
 		return false
 	}
 
@@ -947,18 +956,19 @@ func (w *Walker) reusable(ctx context.Context, path, rel string, info os.FileInf
 	}
 
 	// the racy rule: a file touched during or after the base run may have
-	// been rewritten within the same timestamp tick
-	if stat.MtimeNs >= w.baseScan {
+	// been rewritten within the same timestamp tick, which on a coarse or
+	// skewed FS reaches back by its resolution and skew
+	if stat.MtimeNs+int64(w.traits.Resolution+w.traits.Skew) >= w.baseScan {
 		return false
 	}
 
-	if w.Cache != nil {
+	if w.Cache != nil && w.traits.Identity {
 		if present, matches := w.Cache.Lookup(path, info); present && !matches {
 			return false
 		}
 	}
 
-	if w.ForceHashPercent > 0 && w.sample() {
+	if w.ForceHashPercent > 0 && w.traits.Reread && w.sample() {
 		ref, err := HashFileFS(ctx, w.fs(), path, w.Key)
 		if err != nil || !ref.Equal(baseNode.Ref) {
 			w.logger().Info("sampled re-hash differs from the recorded version, reading the file", "path", path)
@@ -1038,7 +1048,7 @@ func (w *Walker) backupFile(ctx context.Context, path, rel string, info os.FileI
 
 	atomic.AddInt64(&w.result.Read, 1)
 
-	if w.Cache != nil {
+	if w.Cache != nil && w.traits.Identity {
 		if cErr := w.Cache.Store(path, info, ref); cErr != nil {
 			w.logger().Warn("updating the stat cache failed", "path", path, "err", cErr)
 		}

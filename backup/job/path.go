@@ -30,7 +30,9 @@ type PathSettings struct {
 	Exclude []string
 	Workers int
 	// ForceHash is the percent of unchanged files re-hashed as a check.
-	ForceHash          int
+	ForceHash int
+	// Verify reads every file, changed or not.
+	Verify             bool
 	CheckpointInterval time.Duration
 	ScanWorkers        int
 	ReadRetries        int
@@ -75,6 +77,7 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 		Include:            includeFilter(logger, s.Include, s.Exclude),
 		Workers:            s.Workers,
 		ForceHashPercent:   s.ForceHash,
+		Verify:             s.Verify,
 		CheckpointInterval: s.CheckpointInterval,
 		ReadRetries:        s.ReadRetries,
 		LostRetries:        s.LostRetries,
