@@ -135,8 +135,8 @@ func TestJSONErrorNamesTheCodeOfAStoreServerRefusingTheKey(t *testing.T) {
 
 	lines := bufio.NewScanner(logs)
 	for addr == "" && lines.Scan() {
-		if _, after, ok := strings.Cut(lines.Text(), "Listening on "); ok {
-			addr = strings.Trim(after, `"`)
+		if _, after, ok := strings.Cut(lines.Text(), "listening address="); ok {
+			addr = after
 		}
 	}
 
