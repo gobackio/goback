@@ -4,7 +4,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -157,23 +156,6 @@ func (s *setup) reloadInto(a *agent.Agent, logger *slog.Logger) {
 	a.Reload(tasks)
 }
 
-// database is what check found missing in a backup's database.
-type database struct {
-	Backup   string   `json:"backup"`
-	Problems []string `json:"problems"`
-}
-
-// planned is one job as check reports it.
-type planned struct {
-	Name    string    `json:"name"`
-	Backup  string    `json:"backup"`
-	Set     string    `json:"set"`
-	Kind    string    `json:"kind"`
-	Plan    string    `json:"plan"`
-	LastRun time.Time `json:"last_run,omitzero"`
-	NextDue time.Time `json:"next_due,omitzero"`
-}
-
 func checkAction(c *cli.Context) error {
 	s, err := loadFlags(c)
 	if err != nil {
@@ -192,55 +174,12 @@ func checkAction(c *cli.Context) error {
 		return cli.NewExitError(err.Error(), 2)
 	}
 
-	now := time.Now()
-
-	var jobs []planned
-
-	var errs []error
-
-	for _, t := range s.cfg.Tasks() {
-		p := planned{Name: t.Name, Backup: t.Backup, Set: t.Set, Kind: t.Kind}
-
-		switch {
-		case t.Plan != nil:
-			p.Plan = t.Plan.String()
-		case t.Serve != nil:
-			p.Plan = "always"
-		}
-
-		last, _, err := agent.LastRun(ctx, repo.Index, t.Set, now)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: reading the last run: %w", t.Name, err))
-		} else {
-			p.LastRun = last
-			p.NextDue = t.NextDue(s.settings.AgentID, last, now)
-		}
-
-		jobs = append(jobs, p)
-	}
-
-	var databases []database
-
-	for i := range s.cfg.Backups {
-		b := &s.cfg.Backups[i]
-
-		problems := b.CheckDatabase(ctx)
-		if problems == nil {
-			continue
-		}
-
-		databases = append(databases, database{Backup: b.Name, Problems: problems})
-
-		for _, p := range problems {
-			errs = append(errs, fmt.Errorf("%s: %s", b.Name, p))
-		}
-	}
+	checked, err := s.cfg.Check(ctx, repo.Index, s.settings.AgentID, time.Now())
 
 	common.Result(struct {
 		Overrides []override `json:"overrides"`
-		Jobs      []planned  `json:"jobs"`
-		Databases []database `json:"databases"`
-	}{s.overrides, jobs, databases}, func() {
+		agent.Checked
+	}{s.overrides, checked}, func() {
 		for _, o := range s.overrides {
 			fmt.Printf("%s from %s\n", o.Key, o.Source)
 		}
@@ -248,14 +187,14 @@ func checkAction(c *cli.Context) error {
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(w, "JOB\tKIND\tPLAN\tLAST RUN\tNEXT DUE")
 
-		for _, j := range jobs {
+		for _, j := range checked.Jobs {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", j.Name, j.Kind, j.Plan, when(j.LastRun, "never"), when(j.NextDue, ""))
 		}
 
 		_ = w.Flush()
 	})
 
-	if err := errors.Join(errs...); err != nil {
+	if err != nil {
 		return cli.NewExitError(err.Error(), 2)
 	}
 
