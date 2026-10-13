@@ -60,6 +60,24 @@ backups:
 	}, got)
 }
 
+func TestDecodeNestsNamesInGroups(t *testing.T) {
+	cfg, err := decode(t, `
+backups:
+  - {name: srv1/db, postgres: {}}
+  - {name: srv1/files, every: 1h, path: {dir: /srv}}
+  - {name: srv1, every: 1h, path: {dir: /etc}}
+`)
+	require.NoError(t, err)
+
+	var sets []string
+	for _, task := range cfg.Tasks() {
+		sets = append(sets, task.Set)
+	}
+
+	require.Equal(t, []string{"srv1/db/base", "srv1/db/wal", "srv1/files", "srv1"}, sets)
+	require.Equal(t, "goback_srv1_db_wal", cfg.Backups[0].Postgres.slot(&cfg.Backups[0]))
+}
+
 func TestDecodeTakesPITROff(t *testing.T) {
 	cfg, err := decode(t, `
 backups:
@@ -123,6 +141,20 @@ backups: [{name: db, postgres: {commit-every: 5s}}]`,
 backups: [{name: db, postgres: {commit-bytes: lots}}]`,
 		"mysql without binlog positions but with pitr": `
 backups: [{name: shop, mysql: {no-binlog-position: true}}]`,
+		"an empty name part": `
+backups: [{name: srv1//db, every: 1h, path: {dir: /w}}]`,
+		"a dot-dot name part": `
+backups: [{name: srv1/../db, every: 1h, path: {dir: /w}}]`,
+		"a backslash": `
+backups: [{name: 'srv1\db', every: 1h, path: {dir: /w}}]`,
+		"a path backup writing a database backup's set": `
+backups:
+  - {name: srv1/db, postgres: {}}
+  - {name: srv1/db/wal, every: 1h, path: {dir: /w}}`,
+		"a log set under another log set": `
+backups:
+  - {name: srv1/db, postgres: {}}
+  - {name: srv1/db/wal/x, mysql: {}}`,
 		"no backups": `
 store: {storage: /backups}`,
 		"zero concurrency": `

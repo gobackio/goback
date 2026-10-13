@@ -58,6 +58,8 @@ type Schedule struct {
 // Backup is one thing to protect: exactly one of Path, Postgres and MySQL
 // is set.
 type Backup struct {
+	// Name is the set a path backup writes, and the group a database
+	// backup's sets go under; slashes nest it in groups, as in srv1/db.
 	Name string `yaml:"name"`
 	// Every and Cron say when full backups run; the kind's default when
 	// both are empty.
@@ -156,7 +158,56 @@ func (c *Config) validate() error {
 		names[b.Name] = true
 	}
 
+	if len(errs) == 0 {
+		errs = append(errs, c.checkSets()...)
+	}
+
 	return errors.Join(errs...)
+}
+
+func validName(name string) bool {
+	if strings.TrimSpace(name) != name || strings.Contains(name, `\`) {
+		return false
+	}
+
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+
+	return true
+}
+
+// checkSets refuses two backups writing one set, and a set named under a
+// WAL or binlog set, whose spool directory would hold the other's.
+func (c *Config) checkSets() []error {
+	var errs []error
+
+	tasks := c.Tasks()
+	by := map[string]*Task{}
+
+	for _, t := range tasks {
+		if o, ok := by[t.Set]; ok {
+			errs = append(errs, fmt.Errorf("backups %s and %s both write the set %s", o.Backup, t.Backup, t.Set))
+		}
+
+		by[t.Set] = t
+	}
+
+	for _, logTask := range tasks {
+		if logTask.Serve == nil {
+			continue
+		}
+
+		for _, t := range tasks {
+			if strings.HasPrefix(t.Set, logTask.Set+"/") {
+				errs = append(errs, fmt.Errorf("backup %s: the set %s lies under %s, the log set of backup %s", t.Backup, t.Set, logTask.Set, logTask.Backup))
+			}
+		}
+	}
+
+	return errs
 }
 
 func (s *Store) validate() []error {
@@ -177,8 +228,8 @@ func (b *Backup) validate() []error {
 
 	if b.Name == "" {
 		errs = append(errs, errors.New("name is required"))
-	} else if strings.ContainsAny(b.Name, "/\\") || strings.TrimSpace(b.Name) != b.Name {
-		errs = append(errs, fmt.Errorf("name %q must not hold slashes or surrounding spaces", b.Name))
+	} else if !validName(b.Name) {
+		errs = append(errs, fmt.Errorf("name %q must be parts joined by single slashes, none empty, . or .., without backslashes or surrounding spaces", b.Name))
 	}
 
 	kinds := b.kinds()
