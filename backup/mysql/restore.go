@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,6 +42,8 @@ type Restore struct {
 	// To, when set, only writes the dump and the binlogs into this empty
 	// directory, for the caller to apply.
 	To string
+	// FS is the tree To names a directory of; nil is the local disk.
+	FS backup.WriteFS
 	// Force loads into a server that holds databases already.
 	Force bool
 }
@@ -56,16 +59,16 @@ type RestoreResult struct {
 	// Binlogs names the binlogs replayed, in order.
 	Binlogs []string
 	// ReplayArgs are mysqlbinlog's arguments; empty when nothing is
-	// replayed.
+	// replayed. With To, they name the binlogs as FS names them.
 	ReplayArgs []string
-	// DumpPath is where a restore with To wrote the dump.
+	// DumpPath is where a restore with To wrote the dump, as FS names it.
 	DumpPath string
 }
 
 // Run restores into the server, or into To.
 func (r *Restore) Run(ctx context.Context) (*RestoreResult, error) {
 	if r.To != "" {
-		if err := emptyDir(r.To); err != nil {
+		if err := emptyDir(ctx, r.fs(), r.To); err != nil {
 			return nil, err
 		}
 	}
@@ -322,9 +325,10 @@ func (r *Restore) load(ctx context.Context, dump *proto.Commit, ref *proto.Ref, 
 		return r.Client.Load(ctx, content)
 	}
 
-	result.DumpPath = filepath.Join(r.To, DumpFile)
+	fsys := r.fs()
+	result.DumpPath = fsys.Join(r.To, DumpFile)
 
-	return writeFile(result.DumpPath, content)
+	return writeFile(ctx, fsys, result.DumpPath, content)
 }
 
 // replay fetches the planned binlogs and replays them from the dump's
@@ -336,8 +340,10 @@ func (r *Restore) replay(ctx context.Context, dump *proto.Commit, plan replayPla
 	}
 	defer end()
 
-	dir := r.To
+	fsys, dir := r.fs(), r.To
 	if dir == "" {
+		fsys = backup.LocalFS{}
+
 		var err error
 		if dir, err = os.MkdirTemp(r.WorkDir, "goback-binlogs-"); err != nil {
 			return err
@@ -345,7 +351,7 @@ func (r *Restore) replay(ctx context.Context, dump *proto.Commit, plan replayPla
 		defer os.RemoveAll(dir)
 	}
 
-	restorer := &backup.Restorer{Store: r.Objects, Key: plan.key}
+	restorer := &backup.Restorer{Store: r.Objects, Key: plan.key, FS: fsys}
 
 	paths := make([]string, 0, len(plan.files))
 	for _, node := range plan.files {
@@ -355,7 +361,7 @@ func (r *Restore) replay(ctx context.Context, dump *proto.Commit, plan replayPla
 			return fmt.Errorf("the binlog set holds %q", name)
 		}
 
-		path := filepath.Join(dir, name)
+		path := fsys.Join(dir, name)
 		if _, err := restorer.RestoreFile(ctx, path, node.Stat, node.Ref); err != nil {
 			return fmt.Errorf("fetching %s: %w", name, err)
 		}
@@ -441,10 +447,28 @@ func getCommit(ctx context.Context, objects backup.Getter, ref *proto.Ref) (*pro
 	return obj.GetCommit(), nil
 }
 
-func emptyDir(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return os.MkdirAll(dir, 0o700)
+func (r *Restore) fs() backup.WriteFS {
+	if r.FS == nil {
+		return backup.LocalFS{}
+	}
+
+	return r.FS
+}
+
+// emptyDir checks that dir is empty, or makes it for its owner only, as
+// far as the tree holds modes.
+func emptyDir(ctx context.Context, fsys backup.WriteFS, dir string) error {
+	entries, err := fsys.ReadDir(ctx, dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := fsys.MkdirAll(ctx, dir); err != nil {
+			return err
+		}
+
+		if err := fsys.Chmod(ctx, dir, 0o700); err != nil && !errors.Is(err, errors.ErrUnsupported) {
+			return err
+		}
+
+		return nil
 	}
 
 	if err != nil {
@@ -458,16 +482,17 @@ func emptyDir(dir string) error {
 	return nil
 }
 
-func writeFile(path string, content io.Reader) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
+// writeFile writes content to path, refusing a file there.
+func writeFile(ctx context.Context, fsys backup.WriteFS, path string, content io.Reader) error {
+	if _, err := fsys.Lstat(ctx, path); !errors.Is(err, fs.ErrNotExist) {
+		if err == nil {
+			err = &fs.PathError{Op: "write", Path: path, Err: fs.ErrExist}
+		}
+
 		return err
 	}
 
-	if _, err := io.Copy(f, content); err != nil {
-		_ = f.Close()
-		return err
-	}
+	_, err := fsys.WriteFile(ctx, path, content)
 
-	return f.Close()
+	return err
 }
