@@ -97,7 +97,7 @@ func TestTheAgentBacksUpPostgresWithPointInTimeRecoveryFromAnEmptyKind(t *testin
 	require.Empty(t, s.cfg.Backups[0].CheckDatabase(ctx))
 
 	runUntil(t, s, func(status *agent.Status) bool {
-		return jobNamed(status, "db-base").LastResult == agent.ResultOK && jobNamed(status, "db-wal").LastCommit != ""
+		return jobNamed(status, "db/base").LastResult == agent.ResultOK && jobNamed(status, "db/wal").LastCommit != ""
 	})
 
 	psql(t, c, "INSERT INTO rows SELECT generate_series(1, 1000)")
@@ -106,18 +106,18 @@ func TestTheAgentBacksUpPostgresWithPointInTimeRecoveryFromAnEmptyKind(t *testin
 	require.NoError(t, err)
 
 	status := runUntil(t, s, func(status *agent.Status) bool {
-		details, _ := jobNamed(status, "db-wal").Details.(map[string]any)
+		details, _ := jobNamed(status, "db/wal").Details.(map[string]any)
 		committed, _ := details["committed"].(string)
 		lsn, err := postgres.ParseLSN(committed)
 
 		return err == nil && lsn >= current
 	})
 
-	wal := jobNamed(status, "db-wal")
+	wal := jobNamed(status, "db/wal")
 	require.Equal(t, "postgres-receive", wal.Kind)
 	require.EqualValues(t, 30, wal.StaleAfter)
 
-	files, err := os.ReadDir(filepath.Join(s.stateDir, "spool", "db-wal"))
+	files, err := os.ReadDir(filepath.Join(s.stateDir, "spool", "db/wal"))
 	require.NoError(t, err, "the spool is under the state dir")
 	require.NotEmpty(t, files)
 
@@ -132,8 +132,8 @@ func TestTheAgentBacksUpPostgresWithPointInTimeRecoveryFromAnEmptyKind(t *testin
 		Objects:        repo.Index,
 		Key:            key,
 		Latest:         func(ctx context.Context, set string) (*proto.Ref, error) { return repo.Index.LatestCommit(ctx, set) },
-		BaseSet:        "db-base",
-		WALSet:         "db-wal",
+		BaseSet:        "db/base",
+		WALSet:         "db/wal",
 		RestoreCommand: func(*proto.Ref) string { return "true" },
 	}
 

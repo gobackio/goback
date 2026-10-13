@@ -2,8 +2,8 @@
 
 `compose.yaml` backs up a MySQL 8.0 container into a GCS bucket:
 
-- The `agent` service runs `goback agent run` with `goback.yaml`. Its one backup, `db`, dumps the server every day at 03:00 into the `db-dump` set, through `mysqldump`, which is why the agent runs from the `mysql:8.0` image.
-- The same agent connects to the server as a replica, receives its binlogs as they are written into a spool, and commits them to the `db-binlog` set every minute. It needs no access to the data directory, only the MySQL port, so it works for a server on another host too.
+- The `agent` service runs `goback agent run` with `goback.yaml`. Its one backup, `db`, dumps the server every day at 03:00 into the `db/dump` set, through `mysqldump`, which is why the agent runs from the `mysql:8.0` image.
+- The same agent connects to the server as a replica, receives its binlogs as they are written into a spool, and commits them to the `db/binlog` set every minute. It needs no access to the data directory, only the MySQL port, so it works for a server on another host too.
 - goback reaches the agent's container through the `goback-bin` volume. A one-shot service copies the static binary there on every `docker compose up`, so `docker compose build` followed by `docker compose up -d` upgrades it.
 - The dump and the receiver read the password from the option file `defaults-extra-file` names. The receiver keeps it in memory only.
 
@@ -30,17 +30,17 @@
      REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'goback'@'%';
    ```
 
-7. Run `docker compose up -d`, and check with `docker compose exec agent /opt/goback/goback agent check`. The agent dumps at once when `db-dump` holds no dump; the receiver starts at the binlog of the newest dump.
+7. Run `docker compose up -d`, and check with `docker compose exec agent /opt/goback/goback agent check`. The agent dumps at once when `db/dump` holds no dump; the receiver starts at the binlog of the newest dump.
 
 Details:
 
 - **Dumps only.** Point-in-time recovery is optional: with `pitr: false` under `mysql:`, the agent takes the daily dumps alone, and they restore on their own. With `log_bin` on, a dump still records its binlog position, so binlogs received later can start from it.
-- **Point-in-time recovery window.** The agent keeps binlogs back to the oldest dump within `window` (14 days by default). Dumps are kept by the `db-dump` set's retention.
-- **Retention of the two sets.** Each `db-binlog` commit holds the whole window, so the set needs only its newest few: `goback set retention db-binlog --keep-last 60`. Kept by age, it holds binlogs from long before the window. `db-dump` must keep every dump within the window, or recovery reaches back less far: `goback set retention db-dump --keep-within 360h`, the window and a day.
+- **Point-in-time recovery window.** The agent keeps binlogs back to the oldest dump within `window` (14 days by default). Dumps are kept by the `db/dump` set's retention.
+- **Retention of the two sets.** Each `db/binlog` commit holds the whole window, so the set needs only its newest few: `goback set retention db/binlog --keep-last 60`. Kept by age, it holds binlogs from long before the window. `db/dump` must keep every dump within the window, or recovery reaches back less far: `goback set retention db/dump --keep-within 360h`, the window and a day.
 - **Non-transactional tables.** A dump is consistent through one transaction, which covers InnoDB only. When user tables of another engine, such as MyISAM, exist, the dump locks all tables until it ends and logs which tables caused it. Writes wait for that long.
 - **The open binlog.** Each commit holds the binlog being written as `<binlog>.partial`, so a restore reaches the last commit, not the last rotation.
 - **Commits.** Every minute (`commit-every`), sooner past 256 MiB (`commit-bytes`), and none while the server writes nothing.
-- **Server id.** The agent connects with a server id derived from the `db-binlog` set's name. When another replica uses it, receiving fails with an error; set `server-id`.
+- **Server id.** The agent connects with a server id derived from the `db/binlog` set's name. When another replica uses it, receiving fails with an error; set `server-id`.
 - **Stopping.** On SIGTERM the agent makes a last commit within its shutdown grace (30 s). `stop_grace_period` is longer, so Docker doesn't kill it first.
 - **Gaps.** The server keeps binlogs for its expiry only. An agent that comes back after the server purged binlogs it hadn't received fails to receive until a newer dump exists.
 - **Resets.** After `RESET MASTER`, or a server restored in place, the agent goes on in a new chain of the same set. A restore replays only within the chain of the dump it picks. A server of another identity fails.
@@ -85,7 +85,7 @@ docker run -d --name mysql-restored -e MYSQL_ROOT_PASSWORD=… mysql:8.0
 /opt/goback/goback --storage "gcs://BUCKET" \
   --index /var/lib/goback/index --store-key goback.key \
   mysql restore --defaults-extra-file restored.cnf \
-  --dump-set db-dump --binlog-set db-binlog --at 2026-10-02T14:30:00Z
+  --dump-set db/dump --binlog-set db/binlog --at 2026-10-02T14:30:00Z
 ```
 
 `restored.cnf` names the second server in its `[client]` section.

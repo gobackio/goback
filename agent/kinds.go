@@ -240,11 +240,11 @@ func (p *PostgresBackup) slot(b *Backup) string {
 		return p.Slot
 	}
 
-	return postgres.SlotName(b.Name + "-wal")
+	return postgres.SlotName(b.Name + "/wal")
 }
 
 func (p *PostgresBackup) tasks(b *Backup) []*Task {
-	base, wal := b.Name+"-base", b.Name+"-wal"
+	base, wal := b.Name+"/base", b.Name+"/wal"
 
 	baseSettings := job.PostgresBaseSettings{Set: base, DBName: p.DBName, PGBasebackup: p.PGBasebackup}
 	tasks := []*Task{b.fullTask("postgres-base", base, defaultDatabasePlan, func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
@@ -385,7 +385,7 @@ func (m *MySQLBackup) serverID(b *Backup) uint32 {
 		return m.ServerID
 	}
 
-	return mysql.ReplicaServerID(b.Name + "-binlog")
+	return mysql.ReplicaServerID(b.Name + "/binlog")
 }
 
 // noBinlogWait is how long a receiver waits before it looks again at a
@@ -393,7 +393,7 @@ func (m *MySQLBackup) serverID(b *Backup) uint32 {
 const noBinlogWait = time.Minute
 
 func (m *MySQLBackup) tasks(b *Backup) []*Task {
-	dump, binlog := b.Name+"-dump", b.Name+"-binlog"
+	dump, binlog := b.Name+"/dump", b.Name+"/binlog"
 
 	client := job.MySQLClient{DefaultsExtraFile: m.DefaultsExtraFile, Mysql: m.Mysql, Mysqldump: m.Mysqldump}
 

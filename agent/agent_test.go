@@ -377,16 +377,16 @@ func TestALogTaskWaitsForItsBase(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t)
 
-		wal := h.fake("db-wal", Every(time.Minute), time.Second, nil)
+		wal := h.fake("db/wal", Every(time.Minute), time.Second, nil)
 		wal.Log = true
-		wal.After = "db-base"
+		wal.After = "db/base"
 
-		h.run(h.fake("db-base", Every(24*time.Hour), 5*time.Minute, nil), wal)
+		h.run(h.fake("db/base", Every(24*time.Hour), 5*time.Minute, nil), wal)
 
 		time.Sleep(7*time.Minute - time.Second)
 		h.stop()
 
-		require.Equal(t, minutes(5, 6), h.startsOf("db-wal"))
+		require.Equal(t, minutes(5, 6), h.startsOf("db/wal"))
 	})
 }
 
@@ -425,7 +425,7 @@ func TestAServeTaskRestartsWithBackoffAndCommitsOnStop(t *testing.T) {
 
 		var commits atomic.Int32
 
-		task := &Task{Name: "db-wal", Set: "db-wal", Kind: "postgres-receive", Log: true}
+		task := &Task{Name: "db/wal", Set: "db/wal", Kind: "postgres-receive", Log: true}
 		task.Serve = func(ctx context.Context, _ *job.Env, c *Control) error {
 			starts = append(starts, h.since())
 			if len(starts) < 3 {
@@ -474,7 +474,7 @@ func TestAServeTaskIsJudgedByItsHealthReports(t *testing.T) {
 
 		var stateDir string
 
-		task := &Task{Name: "db-wal", Set: "db-wal", Kind: "postgres-receive", Log: true, StaleAfter: 3 * time.Minute}
+		task := &Task{Name: "db/wal", Set: "db/wal", Kind: "postgres-receive", Log: true, StaleAfter: 3 * time.Minute}
 		task.Serve = func(ctx context.Context, _ *job.Env, c *Control) error {
 			stateDir = c.StateDir()
 

@@ -132,7 +132,6 @@ func (c *Config) validate() error {
 	}
 
 	names := map[string]bool{}
-	sets := map[string]string{}
 
 	for i := range c.Backups {
 		b := &c.Backups[i]
@@ -152,24 +151,9 @@ func (c *Config) validate() error {
 
 		if names[b.Name] {
 			errs = append(errs, fmt.Errorf("backup %s: the name is used twice", b.Name))
-			continue
 		}
 
 		names[b.Name] = true
-
-		k := b.kind()
-		if k == nil {
-			continue
-		}
-
-		for _, t := range k.tasks(b) {
-			if other, ok := sets[t.Set]; ok {
-				errs = append(errs, fmt.Errorf("backup %s: set %s is also backup %s's; one backup per set", b.Name, t.Set, other))
-				continue
-			}
-
-			sets[t.Set] = b.Name
-		}
 	}
 
 	return errors.Join(errs...)

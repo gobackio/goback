@@ -52,10 +52,10 @@ backups:
 	}
 
 	require.Equal(t, []shape{
-		{"db-base", "postgres-base", "", false, true},
-		{"db-wal", "postgres-receive", "", true, false},
-		{"shop-dump", "mysql-dump", "", false, true},
-		{"shop-binlog", "mysql-receive", "shop-dump", true, false},
+		{"db/base", "postgres-base", "", false, true},
+		{"db/wal", "postgres-receive", "", true, false},
+		{"shop/dump", "mysql-dump", "", false, true},
+		{"shop/binlog", "mysql-receive", "shop/dump", true, false},
 		{"world", "path", "", false, true},
 	}, got)
 }
@@ -77,7 +77,7 @@ backups:
 		sets = append(sets, task.Set)
 	}
 
-	require.Equal(t, []string{"db-base", "shop-dump"}, sets)
+	require.Equal(t, []string{"db/base", "shop/dump"}, sets)
 }
 
 func TestDecodeRefuses(t *testing.T) {
@@ -94,10 +94,6 @@ backups: [{name: w, every: 1h, path: {dir: /w}}]`,
 backups: [{name: w, every: 1h}]`,
 		"two kinds": `
 backups: [{name: w, every: 1h, path: {dir: /w}, mysql: {}}]`,
-		"two backups on one set": `
-backups:
-  - {name: db-base, every: 1h, path: {dir: /w}}
-  - {name: db, postgres: {pitr: false}}`,
 		"one name twice": `
 backups:
   - {name: w, every: 1h, path: {dir: /w}}
