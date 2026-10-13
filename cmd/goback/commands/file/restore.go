@@ -1,10 +1,7 @@
 package file
 
 import (
-	"errors"
 	"log"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -15,36 +12,13 @@ import (
 )
 
 func (f *file) restore() error {
-	files, err := backup.FindFile(f.ctx, f.index, f.key, f.set, f.src, f.when, 1)
+	node, outcome, err := f.restorer.RestorePath(f.ctx, f.index, f.set, f.src, f.when, f.dst)
 	if err != nil {
 		return err
 	}
 
-	if len(files) != 1 {
-		return errors.New("Couldn't find file")
-	}
-
-	info := files[0].Stat
-
+	info := node.Stat
 	log.Printf("name: %s, size: %d, mod: %s", info.Name, info.Size, info.ModTime())
-
-	ctx, done, err := backup.HoldRestore(f.ctx, f.store, f.set, files[0].Ref)
-	if err != nil {
-		return err
-	}
-	defer done()
-	f.ctx = ctx
-
-	if !f.restorer.DryRun {
-		if err := os.MkdirAll(filepath.Dir(f.dst), 0775); err != nil {
-			return err
-		}
-	}
-
-	outcome, err := f.restorer.RestoreFile(f.ctx, f.dst, info, files[0].Ref)
-	if err != nil {
-		return err
-	}
 
 	stats := f.restorer.Stats()
 
@@ -53,7 +27,7 @@ func (f *file) restore() error {
 		Outcome string              `json:"outcome"`
 		Path    string              `json:"path"`
 		Stats   backup.RestoreStats `json:"stats"`
-	}{common.View.Node(files[0]), outcome.String(), f.dst, stats}, func() {
+	}{common.View.Node(node), outcome.String(), f.dst, stats}, func() {
 		log.Printf("%s: %s", outcome, f.dst)
 		log.Printf("bytes from destination %d, seeds %d, cache %d, store %d", stats.BytesFromDestination, stats.BytesFromSeeds, stats.BytesFromCache, stats.BytesFromStore)
 	})
