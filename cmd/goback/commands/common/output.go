@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/urfave/cli"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -133,4 +134,23 @@ func Fatalf(format string, v ...any) {
 func Fatalln(v ...any) {
 	fail(strings.TrimSuffix(fmt.Sprintln(v...), "\n"), firstError(v), 2)
 	exit(1)
+}
+
+// Problems reports what a check found missing, as a list under "problems"
+// in JSON mode or a line each otherwise, and returns an exit error naming
+// them when there are any.
+func Problems(problems []string) error {
+	Result(struct {
+		Problems []string `json:"problems"`
+	}{append([]string{}, problems...)}, func() {
+		for _, p := range problems {
+			fmt.Fprintln(stdout, p)
+		}
+	})
+
+	if len(problems) == 0 {
+		return nil
+	}
+
+	return cli.NewExitError("the check found something missing", 1)
 }

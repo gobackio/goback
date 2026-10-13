@@ -14,6 +14,7 @@ var Command = cli.Command{
 		"Postgres 14 and later. Base backups and WAL go into separate sets.",
 	Subcommands: []cli.Command{
 		baseCmd,
+		checkCmd,
 		receiveCmd,
 		restoreCmd,
 		walGetCmd,

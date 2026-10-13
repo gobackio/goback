@@ -63,6 +63,7 @@ var Command = cli.Command{
 	Subcommands: []cli.Command{
 		receiveCmd,
 		dumpCmd,
+		checkCmd,
 		restoreCmd,
 	},
 }
