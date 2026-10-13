@@ -1,0 +1,11 @@
+store:
+  storage: gcs://BUCKET
+  index: /var/lib/goback/index
+  store-key: /run/secrets/goback-key
+  agent-id: db
+  cache-dir: /var/lib/goback/cache
+
+backups:
+  - name: db
+    postgres:
+      dbname: host=postgres user=goback dbname=postgres

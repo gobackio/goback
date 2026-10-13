@@ -1,7 +1,7 @@
 name: goback-postgres
 
 services:
-  # copies goback into the volume the Postgres container runs it from, on
+  # copies goback into the volume the Postgres container restores with, on
   # every `docker compose up`
   goback-bin:
     image: goback
@@ -16,22 +16,17 @@ services:
 
   postgres:
     image: postgres:17
-    # tini as PID 1 reaps what the base backup job leaves behind; the
-    # postmaster restarts the whole cluster when an unknown child of it dies
-    # abnormally
-    init: true
     depends_on:
       goback-bin:
         condition: service_completed_successfully
     command:
       - -c
-      # what pg_wal may grow by while the receiver is down
+      # what pg_wal may grow by while the agent is down
       - max_slot_wal_keep_size=10GB
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-credentials
       GOBACK_CACHE_DIR: /var/lib/goback/cache
-      PGHOST: /var/run/postgresql
     secrets:
       - goback-key
       - gcp-credentials
@@ -40,17 +35,10 @@ services:
       - pgdata:/var/lib/postgresql/data
       - goback-bin:/opt/goback:ro
       - goback:/var/lib/goback
-    # Ofelia runs the base backup in this container; job names are host-wide
-    labels:
-      ofelia.enabled: "true"
-      ofelia.job-exec.pg-base.schedule: "@daily"
-      ofelia.job-exec.pg-base.user: postgres
-      ofelia.job-exec.pg-base.no-overlap: "true"
-      ofelia.job-exec.pg-base.command: /opt/goback/goback --storage gcs://BUCKET --index /var/lib/goback/index --store-key /run/secrets/goback-key --agent-id db --set db-base postgres base
 
-  # streams the WAL through a replication slot over the network, without the
-  # data volume
-  goback-receive:
+  # runs goback.yaml: a daily base backup, and the WAL streamed through a
+  # replication slot over the network, without the data volume
+  agent:
     image: goback
     depends_on:
       goback-bin:
@@ -58,37 +46,25 @@ services:
       postgres:
         condition: service_started
     restart: unless-stopped
-    # above --shutdown-grace, so the last commit finishes
+    # above the agent's shutdown grace, so the last commit finishes
     stop_grace_period: 40s
-    command:
-      - --storage=gcs://BUCKET
-      - --index=/var/lib/goback/index
-      - --store-key=/run/secrets/goback-key
-      - --agent-id=db
-      - --set=db-wal
-      - postgres
-      - receive
-      - --base-set=db-base
+    command: [agent, run]
     environment:
+      GOBACK_CONFIG: /etc/goback/goback.yaml
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-credentials
-      GOBACK_POSTGRES_DBNAME: host=postgres user=goback dbname=postgres
       PGPASSFILE: /run/secrets/goback.pgpass
-      GOBACK_POSTGRES_SPOOL: /var/lib/goback/spool
-      GOBACK_CACHE_DIR: /var/lib/goback/cache
     secrets:
       - goback-key
       - gcp-credentials
       - goback.pgpass
     volumes:
-      - goback-receive:/var/lib/goback
-
-  ofelia:
-    image: mcuadros/ofelia:latest
-    depends_on:
-      - postgres
-    command: daemon --docker
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./goback.yaml:/etc/goback/goback.yaml:ro
+      - goback-agent:/var/lib/goback
+    healthcheck:
+      test: [CMD, /root/binary, agent, status, --check]
+      interval: 1m
+      timeout: 10s
+      start_period: 2m
 
 secrets:
   goback-key:
@@ -104,4 +80,4 @@ volumes:
   pgdata:
   goback-bin:
   goback:
-  goback-receive:
+  goback-agent:

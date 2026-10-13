@@ -1,0 +1,11 @@
+store:
+  storage: gcs://BUCKET
+  index: /var/lib/goback/index
+  store-key: /run/secrets/goback-key
+  agent-id: db
+  cache-dir: /var/lib/goback/cache
+
+backups:
+  - name: db
+    mysql:
+      defaults-extra-file: /run/secrets/mysql-client.cnf
