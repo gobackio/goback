@@ -3,12 +3,14 @@
 package ent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/index/sql/ent/session"
 )
 
@@ -27,6 +29,8 @@ type Session struct {
 	LastSeen time.Time `json:"last_seen,omitempty"`
 	// RestoreRef holds the value of the "restore_ref" field.
 	RestoreRef []byte `json:"restore_ref,omitempty"`
+	// InitialRetention holds the value of the "initial_retention" field.
+	InitialRetention *retention.Policy `json:"initial_retention,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the SessionQuery when eager-loading is set.
 	Edges        SessionEdges `json:"edges"`
@@ -56,7 +60,7 @@ func (*Session) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case session.FieldRestoreRef:
+		case session.FieldRestoreRef, session.FieldInitialRetention:
 			values[i] = new([]byte)
 		case session.FieldID, session.FieldAgentID, session.FieldBackupSet:
 			values[i] = new(sql.NullString)
@@ -113,6 +117,14 @@ func (_m *Session) assignValues(columns []string, values []any) error {
 			} else if value != nil {
 				_m.RestoreRef = *value
 			}
+		case session.FieldInitialRetention:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field initial_retention", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.InitialRetention); err != nil {
+					return fmt.Errorf("unmarshal field initial_retention: %w", err)
+				}
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -168,6 +180,9 @@ func (_m *Session) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("restore_ref=")
 	builder.WriteString(fmt.Sprintf("%v", _m.RestoreRef))
+	builder.WriteString(", ")
+	builder.WriteString("initial_retention=")
+	builder.WriteString(fmt.Sprintf("%v", _m.InitialRetention))
 	builder.WriteByte(')')
 	return builder.String()
 }

@@ -11,6 +11,7 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/index/sql/ent/archive"
 	"github.com/gobackio/goback/index/sql/ent/commitrow"
 	"github.com/gobackio/goback/index/sql/ent/damagedpath"
@@ -6845,21 +6846,22 @@ func (m *ReindexMutation) ResetEdge(name string) error {
 // SessionMutation represents an operation that mutates the Session nodes in the graph.
 type SessionMutation struct {
 	config
-	op              Op
-	typ             string
-	id              *string
-	agent_id        *string
-	backup_set      *string
-	started_at      *time.Time
-	last_seen       *time.Time
-	restore_ref     *[]byte
-	clearedFields   map[string]struct{}
-	archives        map[string]struct{}
-	removedarchives map[string]struct{}
-	clearedarchives bool
-	done            bool
-	oldValue        func(context.Context) (*Session, error)
-	predicates      []predicate.Session
+	op                Op
+	typ               string
+	id                *string
+	agent_id          *string
+	backup_set        *string
+	started_at        *time.Time
+	last_seen         *time.Time
+	restore_ref       *[]byte
+	initial_retention **retention.Policy
+	clearedFields     map[string]struct{}
+	archives          map[string]struct{}
+	removedarchives   map[string]struct{}
+	clearedarchives   bool
+	done              bool
+	oldValue          func(context.Context) (*Session, error)
+	predicates        []predicate.Session
 }
 
 var _ ent.Mutation = (*SessionMutation)(nil)
@@ -7159,6 +7161,55 @@ func (m *SessionMutation) ResetRestoreRef() {
 	delete(m.clearedFields, session.FieldRestoreRef)
 }
 
+// SetInitialRetention sets the "initial_retention" field.
+func (m *SessionMutation) SetInitialRetention(r *retention.Policy) {
+	m.initial_retention = &r
+}
+
+// InitialRetention returns the value of the "initial_retention" field in the mutation.
+func (m *SessionMutation) InitialRetention() (r *retention.Policy, exists bool) {
+	v := m.initial_retention
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldInitialRetention returns the old "initial_retention" field's value of the Session entity.
+// If the Session object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SessionMutation) OldInitialRetention(ctx context.Context) (v *retention.Policy, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldInitialRetention is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldInitialRetention requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldInitialRetention: %w", err)
+	}
+	return oldValue.InitialRetention, nil
+}
+
+// ClearInitialRetention clears the value of the "initial_retention" field.
+func (m *SessionMutation) ClearInitialRetention() {
+	m.initial_retention = nil
+	m.clearedFields[session.FieldInitialRetention] = struct{}{}
+}
+
+// InitialRetentionCleared returns if the "initial_retention" field was cleared in this mutation.
+func (m *SessionMutation) InitialRetentionCleared() bool {
+	_, ok := m.clearedFields[session.FieldInitialRetention]
+	return ok
+}
+
+// ResetInitialRetention resets all changes to the "initial_retention" field.
+func (m *SessionMutation) ResetInitialRetention() {
+	m.initial_retention = nil
+	delete(m.clearedFields, session.FieldInitialRetention)
+}
+
 // AddArchiveIDs adds the "archives" edge to the Archive entity by ids.
 func (m *SessionMutation) AddArchiveIDs(ids ...string) {
 	if m.archives == nil {
@@ -7247,7 +7298,7 @@ func (m *SessionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SessionMutation) Fields() []string {
-	fields := make([]string, 0, 5)
+	fields := make([]string, 0, 6)
 	if m.agent_id != nil {
 		fields = append(fields, session.FieldAgentID)
 	}
@@ -7262,6 +7313,9 @@ func (m *SessionMutation) Fields() []string {
 	}
 	if m.restore_ref != nil {
 		fields = append(fields, session.FieldRestoreRef)
+	}
+	if m.initial_retention != nil {
+		fields = append(fields, session.FieldInitialRetention)
 	}
 	return fields
 }
@@ -7281,6 +7335,8 @@ func (m *SessionMutation) Field(name string) (ent.Value, bool) {
 		return m.LastSeen()
 	case session.FieldRestoreRef:
 		return m.RestoreRef()
+	case session.FieldInitialRetention:
+		return m.InitialRetention()
 	}
 	return nil, false
 }
@@ -7300,6 +7356,8 @@ func (m *SessionMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldLastSeen(ctx)
 	case session.FieldRestoreRef:
 		return m.OldRestoreRef(ctx)
+	case session.FieldInitialRetention:
+		return m.OldInitialRetention(ctx)
 	}
 	return nil, fmt.Errorf("unknown Session field %s", name)
 }
@@ -7344,6 +7402,13 @@ func (m *SessionMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRestoreRef(v)
 		return nil
+	case session.FieldInitialRetention:
+		v, ok := value.(*retention.Policy)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetInitialRetention(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Session field %s", name)
 }
@@ -7377,6 +7442,9 @@ func (m *SessionMutation) ClearedFields() []string {
 	if m.FieldCleared(session.FieldRestoreRef) {
 		fields = append(fields, session.FieldRestoreRef)
 	}
+	if m.FieldCleared(session.FieldInitialRetention) {
+		fields = append(fields, session.FieldInitialRetention)
+	}
 	return fields
 }
 
@@ -7393,6 +7461,9 @@ func (m *SessionMutation) ClearField(name string) error {
 	switch name {
 	case session.FieldRestoreRef:
 		m.ClearRestoreRef()
+		return nil
+	case session.FieldInitialRetention:
+		m.ClearInitialRetention()
 		return nil
 	}
 	return fmt.Errorf("unknown Session nullable field %s", name)
@@ -7416,6 +7487,9 @@ func (m *SessionMutation) ResetField(name string) error {
 		return nil
 	case session.FieldRestoreRef:
 		m.ResetRestoreRef()
+		return nil
+	case session.FieldInitialRetention:
+		m.ResetInitialRetention()
 		return nil
 	}
 	return fmt.Errorf("unknown Session field %s", name)

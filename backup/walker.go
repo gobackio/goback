@@ -16,6 +16,7 @@ import (
 
 	"github.com/gobackio/goback/backup/blobcache"
 	"github.com/gobackio/goback/backup/presence"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
 
@@ -109,6 +110,11 @@ type Walker struct {
 	// Sessions, when set, wraps the run in a session, so nothing it uploads
 	// is visible to others before its commit.
 	Sessions SessionStore
+
+	// InitialRetention, when set, is the retention policy Set starts with
+	// if this run creates it; it travels with the session, so a run
+	// without Sessions sends none.
+	InitialRetention *retention.Policy
 
 	// Verify reads every file, even one the change test would reuse, which
 	// catches a write that kept a file's mtime and size.
@@ -306,6 +312,12 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 		return nil, errors.New("a run on a file system other than the local disk takes no growing files")
 	}
 
+	if w.InitialRetention != nil {
+		if err := w.InitialRetention.Validate(); err != nil {
+			return nil, fmt.Errorf("initial retention: %w", err)
+		}
+	}
+
 	if w.Workers <= 0 {
 		w.Workers = 1
 	}
@@ -316,6 +328,24 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 	}
 	w.rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
+	if w.Sessions != nil {
+		sctx, err := w.Sessions.BeginSession(ctx, &Session{AgentID: w.AgentID, Set: w.Set, InitialRetention: w.InitialRetention})
+		if err != nil {
+			return nil, fmt.Errorf("beginning session: %w", err)
+		}
+
+		ctx = sctx
+
+		// a commit ends the session itself
+		defer func() {
+			if err := w.Sessions.EndSession(ctx); err != nil && !errors.Is(err, ErrNoSession) {
+				w.logger().Warn("ending the session failed", "err", err)
+			}
+		}()
+	}
+
+	// inside the session, so a set the gate creates starts with the
+	// session's initial retention
 	if gate, ok := w.Index.(CommitGate); ok {
 		grant, err := gate.BeginCommit(ctx, w.Set)
 		if err != nil {
@@ -333,22 +363,6 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 	w.policyVersion = 0
 	if w.Key != nil {
 		w.policyVersion = w.Key.Policy.Version
-	}
-
-	if w.Sessions != nil {
-		sctx, err := w.Sessions.BeginSession(ctx, &Session{AgentID: w.AgentID, Set: w.Set})
-		if err != nil {
-			return nil, fmt.Errorf("beginning session: %w", err)
-		}
-
-		ctx = sctx
-
-		// a commit ends the session itself
-		defer func() {
-			if err := w.Sessions.EndSession(ctx); err != nil && !errors.Is(err, ErrNoSession) {
-				w.logger().Warn("ending the session failed", "err", err)
-			}
-		}()
 	}
 
 	for retry := 0; ; retry++ {

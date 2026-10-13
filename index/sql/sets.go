@@ -2,16 +2,20 @@ package sql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/index/sql/ent"
 	"github.com/gobackio/goback/index/sql/ent/commitrow"
 	"github.com/gobackio/goback/index/sql/ent/pin"
 	"github.com/gobackio/goback/index/sql/ent/predicate"
 	"github.com/gobackio/goback/index/sql/ent/set"
+	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage/pack"
 
 	entsql "entgo.io/ent/dialect/sql"
@@ -91,6 +95,51 @@ func ensureSet(ctx context.Context, c *ent.Client, name string, wantID int64) (i
 	return c.Set.Query().Where(set.Name(name)).OnlyID(ctx)
 }
 
+// openSet returns the id of the named set, creating it if needed. A set
+// created under a session for it that carries an initial retention
+// policy starts with that policy as its own.
+func (x *Index) openSet(ctx context.Context, name string) (int64, error) {
+	s, ok := backup.SessionFromContext(ctx)
+	if !ok || s.InitialRetention == nil || s.Set != name {
+		return ensureSet(ctx, x.client, name, 0)
+	}
+
+	id, err := findSet(ctx, x.client, name)
+	if !errors.Is(err, backup.ErrNotFound) {
+		return id, err
+	}
+
+	return x.createSet(ctx, name, s.InitialRetention)
+}
+
+// createSet creates the named set with its own retention policy, which
+// is recorded like any change to it. A set another caller created first
+// under the name is returned as it is.
+func (x *Index) createSet(ctx context.Context, name string, policy *retention.Policy) (int64, error) {
+	raw, err := x.encodePolicy(policy)
+	if err != nil {
+		return 0, err
+	}
+
+	var id int64
+
+	err = x.policyTx(ctx, func(tx *ent.Tx) (*proto.Policy, error) {
+		s, err := tx.Set.Create().SetName(name).SetRetentionPolicy(*raw).Save(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		id = s.ID
+
+		return setScope(s, time.Time{}), nil
+	})
+	if ent.IsConstraintError(err) {
+		return findSet(ctx, x.client, name)
+	}
+
+	return id, err
+}
+
 // lockSet takes the set's row lock for the transaction.
 func (x *Index) lockSet(ctx context.Context, tx *ent.Tx, setID int64) (*ent.Set, error) {
 	s, err := forUpdate(x, tx.Set.Query().Where(set.ID(setID))).Only(ctx)
@@ -102,13 +151,14 @@ func (x *Index) lockSet(ctx context.Context, tx *ent.Tx, setID int64) (*ent.Set,
 }
 
 // BeginCommit implements backup.CommitGate: the set is created if needed,
-// it must be active, and the grant carries the store policy.
+// with the initial retention of the context's session, it must be active,
+// and the grant carries the store policy.
 func (x *Index) BeginCommit(ctx context.Context, name string) (*backup.CommitGrant, error) {
 	if _, ok := backup.SetID(name); ok {
 		return nil, fmt.Errorf("%w: %q", backup.ErrSetName, name)
 	}
 
-	setID, err := ensureSet(ctx, x.client, name, 0)
+	setID, err := x.openSet(ctx, name)
 	if err != nil {
 		return nil, err
 	}

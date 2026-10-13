@@ -149,16 +149,17 @@ func (x *Index) ensureSet(ctx context.Context, c *ent.Client, commit *proto.Comm
 		return 0, fmt.Errorf("%w: commit %x names no set", backup.ErrDanglingRef, ref.GetHash())
 	}
 
-	var wantID int64
 	if !strict {
-		wantID = int64(commit.GetSetId())
-	} else if _, ok := backup.SetID(commit.GetBackupSet()); ok {
+		return ensureSet(ctx, c, commit.GetBackupSet(), int64(commit.GetSetId()))
+	}
+
+	if _, ok := backup.SetID(commit.GetBackupSet()); ok {
 		return 0, fmt.Errorf("%w: %q", backup.ErrSetName, commit.GetBackupSet())
 	}
 
-	setID, err := ensureSet(ctx, c, commit.GetBackupSet(), wantID)
-	if err != nil || !strict {
-		return setID, err
+	setID, err := x.openSet(ctx, commit.GetBackupSet())
+	if err != nil {
+		return 0, err
 	}
 
 	s, err := c.Set.Get(ctx, setID)

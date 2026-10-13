@@ -161,12 +161,13 @@ func (m MapperImpl) Session(in *ent.Session) *backup.Session {
 	}
 
 	return &backup.Session{
-		ID:       in.ID,
-		AgentID:  in.AgentID,
-		Set:      in.BackupSet,
-		Restore:  mapping.Ref(in.RestoreRef),
-		Started:  in.StartedAt,
-		LastSeen: in.LastSeen,
+		ID:               in.ID,
+		AgentID:          in.AgentID,
+		Set:              in.BackupSet,
+		Restore:          mapping.Ref(in.RestoreRef),
+		InitialRetention: in.InitialRetention,
+		Started:          in.StartedAt,
+		LastSeen:         in.LastSeen,
 	}
 }
 

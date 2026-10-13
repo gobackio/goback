@@ -22,6 +22,8 @@ const (
 	FieldLastSeen = "last_seen"
 	// FieldRestoreRef holds the string denoting the restore_ref field in the database.
 	FieldRestoreRef = "restore_ref"
+	// FieldInitialRetention holds the string denoting the initial_retention field in the database.
+	FieldInitialRetention = "initial_retention"
 	// EdgeArchives holds the string denoting the archives edge name in mutations.
 	EdgeArchives = "archives"
 	// Table holds the table name of the session in the database.
@@ -43,6 +45,7 @@ var Columns = []string{
 	FieldStartedAt,
 	FieldLastSeen,
 	FieldRestoreRef,
+	FieldInitialRetention,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).

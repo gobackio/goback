@@ -7,6 +7,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/mysql"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/storage/cache"
 )
 
@@ -39,6 +40,9 @@ type MySQLDumpSettings struct {
 	// NoBinlogPosition records no binary log position even with log_bin
 	// on, which spares the dump the global read lock.
 	NoBinlogPosition bool
+	// InitialRetention, when set, is the retention policy the set starts
+	// with if this run creates it; a set that exists keeps its own.
+	InitialRetention *retention.Policy
 }
 
 // MySQLDump dumps the server with mysqldump and commits the dump to the set.
@@ -48,14 +52,15 @@ func MySQLDump(ctx context.Context, env *Env, s MySQLDumpSettings) (*backup.Walk
 
 	run := &mysql.Dump{
 		Walker: &backup.Walker{
-			Index:    env.Index,
-			Objects:  env.Index,
-			Sessions: env.sessions(),
-			Set:      s.Set,
-			AgentID:  env.AgentID,
-			Key:      env.Key,
-			Logger:   env.Logger,
-			Workers:  4,
+			Index:            env.Index,
+			Objects:          env.Index,
+			Sessions:         env.sessions(),
+			InitialRetention: s.InitialRetention,
+			Set:              s.Set,
+			AgentID:          env.AgentID,
+			Key:              env.Key,
+			Logger:           env.Logger,
+			Workers:          4,
 		},
 		Client:     s.Client.exec(stderr),
 		BinlogSet:  s.BinlogSet,
@@ -83,6 +88,9 @@ type MySQLReceiveSettings struct {
 	CommitBytes int64
 	// Window is how far back point-in-time recovery reaches.
 	Window time.Duration
+	// InitialRetention, when set, is the retention policy the set starts
+	// with if this run creates it; a set that exists keeps its own.
+	InitialRetention *retention.Policy
 }
 
 // MySQLReceive receives the server's binlogs as a replica into the spool
@@ -105,16 +113,17 @@ func MySQLReceive(ctx context.Context, env *Env, s MySQLReceiveSettings, stop <-
 		Spool:             spool,
 		Walker: func() *backup.Walker {
 			return &backup.Walker{
-				Index:       env.Index,
-				Objects:     objects,
-				Sessions:    env.sessions(),
-				Set:         s.Set,
-				AgentID:     env.AgentID,
-				Key:         env.Key,
-				Logger:      env.Logger,
-				Root:        spool.Dir,
-				Workers:     4,
-				ReadRetries: 3,
+				Index:            env.Index,
+				Objects:          objects,
+				Sessions:         env.sessions(),
+				InitialRetention: s.InitialRetention,
+				Set:              s.Set,
+				AgentID:          env.AgentID,
+				Key:              env.Key,
+				Logger:           env.Logger,
+				Root:             spool.Dir,
+				Workers:          4,
+				ReadRetries:      3,
 			}
 		},
 		DumpSet:     s.DumpSet,

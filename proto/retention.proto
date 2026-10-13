@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package proto;
+
+option go_package = "github.com/gobackio/goback/proto";
+
+// RetentionPolicy keeps a commit while a bracket holds it, it is one of
+// the last keep_last, or it is younger than keep_within.
+message RetentionPolicy {
+    int32 keep_last = 1;
+    // seconds
+    int64 keep_within = 2;
+    repeated RetentionBracket brackets = 3;
+}
+
+// RetentionBracket keeps the last commit of each of count UTC calendar
+// periods. Brackets run consecutively back from now, each starting with
+// the period the one before it ended in.
+message RetentionBracket {
+    // hourly, daily, weekly or monthly
+    string period = 1;
+    // zero is the tail, which keeps every older period and so must be last
+    int32 count = 2;
+}

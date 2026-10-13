@@ -9,6 +9,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/hooks"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/storage/cache"
 
 	"github.com/bmatcuk/doublestar"
@@ -45,6 +46,9 @@ type PathSettings struct {
 	HookTimeout      time.Duration
 	// HookOptional backs up anyway when the pre hook fails.
 	HookOptional bool
+	// InitialRetention, when set, is the retention policy the set starts
+	// with if this run creates it; a set that exists keeps its own.
+	InitialRetention *retention.Policy
 }
 
 // Path commits the directory to the set as a diff against its latest
@@ -67,6 +71,7 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 		Index:              env.Index,
 		Objects:            objects,
 		Sessions:           env.sessions(),
+		InitialRetention:   s.InitialRetention,
 		Set:                s.Set,
 		AgentID:            env.AgentID,
 		Metadata:           s.Meta,

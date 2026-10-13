@@ -92,7 +92,7 @@ func TestStoreIsALibrary(t *testing.T) {
 	_, err = withSessions.Put(first, Upload{Object: blob, Ref: blob.Ref()})
 	require.ErrorIs(t, err, backup.ErrNoSession)
 
-	session, err := withSessions.BeginSession(first, "world", nil)
+	session, err := withSessions.BeginSession(first, "world", nil, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, session.ID)
 

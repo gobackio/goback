@@ -9,6 +9,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/postgres"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/storage/cache"
 )
 
@@ -23,6 +24,9 @@ type PostgresBaseSettings struct {
 	// is taken over a replication connection of its own from Postgres 15
 	// on, and by the pg_basebackup on the PATH before.
 	PGBasebackup string
+	// InitialRetention, when set, is the retention policy the set starts
+	// with if this run creates it; a set that exists keeps its own.
+	InitialRetention *retention.Policy
 }
 
 // PostgresBase takes a base backup and commits it to the set. When ctx ends
@@ -30,14 +34,15 @@ type PostgresBaseSettings struct {
 func PostgresBase(ctx context.Context, env *Env, s PostgresBaseSettings) (*backup.WalkResult, error) {
 	run := &postgres.BaseBackup{
 		Walker: &backup.Walker{
-			Index:    env.Index,
-			Objects:  env.Index,
-			Sessions: env.sessions(),
-			Set:      s.Set,
-			AgentID:  env.AgentID,
-			Key:      env.Key,
-			Logger:   env.Logger,
-			Workers:  4,
+			Index:            env.Index,
+			Objects:          env.Index,
+			Sessions:         env.sessions(),
+			InitialRetention: s.InitialRetention,
+			Set:              s.Set,
+			AgentID:          env.AgentID,
+			Key:              env.Key,
+			Logger:           env.Logger,
+			Workers:          4,
 		},
 	}
 
@@ -114,6 +119,9 @@ type PostgresReceiveSettings struct {
 	CommitBytes       int64
 	// Window is how far back point-in-time recovery reaches.
 	Window time.Duration
+	// InitialRetention, when set, is the retention policy the set starts
+	// with if this run creates it; a set that exists keeps its own.
+	InitialRetention *retention.Policy
 }
 
 // PostgresReceive streams the cluster's WAL through a replication slot
@@ -137,16 +145,17 @@ func PostgresReceive(ctx context.Context, env *Env, s PostgresReceiveSettings, s
 		Spool:             spool,
 		Walker: func() *backup.Walker {
 			return &backup.Walker{
-				Index:       env.Index,
-				Objects:     objects,
-				Sessions:    env.sessions(),
-				Set:         s.Set,
-				AgentID:     env.AgentID,
-				Key:         env.Key,
-				Logger:      env.Logger,
-				Root:        spool.Dir,
-				Workers:     4,
-				ReadRetries: 3,
+				Index:            env.Index,
+				Objects:          objects,
+				Sessions:         env.sessions(),
+				InitialRetention: s.InitialRetention,
+				Set:              s.Set,
+				AgentID:          env.AgentID,
+				Key:              env.Key,
+				Logger:           env.Logger,
+				Root:             spool.Dir,
+				Workers:          4,
+				ReadRetries:      3,
 			}
 		},
 		BaseSet:     s.BaseSet,

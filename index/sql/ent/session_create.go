@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/index/sql/ent/archive"
 	"github.com/gobackio/goback/index/sql/ent/session"
 )
@@ -51,6 +52,12 @@ func (_c *SessionCreate) SetLastSeen(v time.Time) *SessionCreate {
 // SetRestoreRef sets the "restore_ref" field.
 func (_c *SessionCreate) SetRestoreRef(v []byte) *SessionCreate {
 	_c.mutation.SetRestoreRef(v)
+	return _c
+}
+
+// SetInitialRetention sets the "initial_retention" field.
+func (_c *SessionCreate) SetInitialRetention(v *retention.Policy) *SessionCreate {
+	_c.mutation.SetInitialRetention(v)
 	return _c
 }
 
@@ -121,6 +128,11 @@ func (_c *SessionCreate) check() error {
 	if _, ok := _c.mutation.LastSeen(); !ok {
 		return &ValidationError{Name: "last_seen", err: errors.New(`ent: missing required field "Session.last_seen"`)}
 	}
+	if v, ok := _c.mutation.InitialRetention(); ok {
+		if err := v.Validate(); err != nil {
+			return &ValidationError{Name: "initial_retention", err: fmt.Errorf(`ent: validator failed for field "Session.initial_retention": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -176,6 +188,10 @@ func (_c *SessionCreate) createSpec() (*Session, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RestoreRef(); ok {
 		_spec.SetField(session.FieldRestoreRef, field.TypeBytes, value)
 		_node.RestoreRef = value
+	}
+	if value, ok := _c.mutation.InitialRetention(); ok {
+		_spec.SetField(session.FieldInitialRetention, field.TypeJSON, value)
+		_node.InitialRetention = value
 	}
 	if nodes := _c.mutation.ArchivesIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -311,6 +327,24 @@ func (u *SessionUpsert) ClearRestoreRef() *SessionUpsert {
 	return u
 }
 
+// SetInitialRetention sets the "initial_retention" field.
+func (u *SessionUpsert) SetInitialRetention(v *retention.Policy) *SessionUpsert {
+	u.Set(session.FieldInitialRetention, v)
+	return u
+}
+
+// UpdateInitialRetention sets the "initial_retention" field to the value that was provided on create.
+func (u *SessionUpsert) UpdateInitialRetention() *SessionUpsert {
+	u.SetExcluded(session.FieldInitialRetention)
+	return u
+}
+
+// ClearInitialRetention clears the value of the "initial_retention" field.
+func (u *SessionUpsert) ClearInitialRetention() *SessionUpsert {
+	u.SetNull(session.FieldInitialRetention)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
 // Using this option is equivalent to using:
 //
@@ -433,6 +467,27 @@ func (u *SessionUpsertOne) UpdateRestoreRef() *SessionUpsertOne {
 func (u *SessionUpsertOne) ClearRestoreRef() *SessionUpsertOne {
 	return u.Update(func(s *SessionUpsert) {
 		s.ClearRestoreRef()
+	})
+}
+
+// SetInitialRetention sets the "initial_retention" field.
+func (u *SessionUpsertOne) SetInitialRetention(v *retention.Policy) *SessionUpsertOne {
+	return u.Update(func(s *SessionUpsert) {
+		s.SetInitialRetention(v)
+	})
+}
+
+// UpdateInitialRetention sets the "initial_retention" field to the value that was provided on create.
+func (u *SessionUpsertOne) UpdateInitialRetention() *SessionUpsertOne {
+	return u.Update(func(s *SessionUpsert) {
+		s.UpdateInitialRetention()
+	})
+}
+
+// ClearInitialRetention clears the value of the "initial_retention" field.
+func (u *SessionUpsertOne) ClearInitialRetention() *SessionUpsertOne {
+	return u.Update(func(s *SessionUpsert) {
+		s.ClearInitialRetention()
 	})
 }
 
@@ -724,6 +779,27 @@ func (u *SessionUpsertBulk) UpdateRestoreRef() *SessionUpsertBulk {
 func (u *SessionUpsertBulk) ClearRestoreRef() *SessionUpsertBulk {
 	return u.Update(func(s *SessionUpsert) {
 		s.ClearRestoreRef()
+	})
+}
+
+// SetInitialRetention sets the "initial_retention" field.
+func (u *SessionUpsertBulk) SetInitialRetention(v *retention.Policy) *SessionUpsertBulk {
+	return u.Update(func(s *SessionUpsert) {
+		s.SetInitialRetention(v)
+	})
+}
+
+// UpdateInitialRetention sets the "initial_retention" field to the value that was provided on create.
+func (u *SessionUpsertBulk) UpdateInitialRetention() *SessionUpsertBulk {
+	return u.Update(func(s *SessionUpsert) {
+		s.UpdateInitialRetention()
+	})
+}
+
+// ClearInitialRetention clears the value of the "initial_retention" field.
+func (u *SessionUpsertBulk) ClearInitialRetention() *SessionUpsertBulk {
+	return u.Update(func(s *SessionUpsert) {
+		s.ClearInitialRetention()
 	})
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
 
@@ -720,8 +721,10 @@ type SessionLookup interface {
 }
 
 // BeginSession opens a session on set for the caller; restore names the
-// commit a restore session reads, nil for a backup.
-func (s *Store) BeginSession(ctx context.Context, set string, restore *proto.Ref) (*backup.Session, error) {
+// commit a restore session reads, nil for a backup. initial, when set, is
+// the retention policy set starts with if the session creates it; an
+// invalid one is ErrInvalidRequest.
+func (s *Store) BeginSession(ctx context.Context, set string, restore *proto.Ref, initial *retention.Policy) (*backup.Session, error) {
 	if s.Sessions == nil {
 		return nil, fmt.Errorf("%w: this store has no sessions", backup.ErrNotImplemented)
 	}
@@ -737,10 +740,17 @@ func (s *Store) BeginSession(ctx context.Context, set string, restore *proto.Ref
 		}
 	}
 
+	if initial != nil {
+		if err := initial.Validate(); err != nil {
+			return nil, fmt.Errorf("%w: initial retention: %v", ErrInvalidRequest, err)
+		}
+	}
+
 	session := &backup.Session{
-		AgentID: p.AgentID,
-		Set:     set,
-		Restore: restore,
+		AgentID:          p.AgentID,
+		Set:              set,
+		Restore:          restore,
+		InitialRetention: initial,
 	}
 
 	_, err = s.Sessions.BeginSession(ctx, session)

@@ -9,6 +9,7 @@ import (
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/proto"
 )
 
@@ -104,6 +105,8 @@ func (Session) Fields() []ent.Field {
 		field.Time("started_at"),
 		field.Time("last_seen"),
 		field.Bytes("restore_ref").Optional(),
+		// the policy the session's set starts with if the session creates it
+		field.JSON("initial_retention", &retention.Policy{}).Optional(),
 	}
 }
 

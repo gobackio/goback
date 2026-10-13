@@ -9,6 +9,7 @@ import "ref.proto";
 import "tree.proto";
 import "commit.proto";
 import "presence.proto";
+import "retention.proto";
 import "google/protobuf/timestamp.proto";
 
 //Put(*proto.Object) error
@@ -207,6 +208,9 @@ message BeginSessionRequest {
     // the object a restore session reads; retirement and garbage collection
     // keep it and everything it names while the session lives
     Ref restore = 2;
+    // the retention policy backup_set starts with as its own if it is
+    // created under this session; a set that exists keeps its own
+    RetentionPolicy initial_retention = 3;
 }
 
 message BeginSessionResponse {

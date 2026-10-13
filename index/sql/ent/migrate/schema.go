@@ -316,6 +316,7 @@ var (
 		{Name: "started_at", Type: field.TypeTime},
 		{Name: "last_seen", Type: field.TypeTime},
 		{Name: "restore_ref", Type: field.TypeBytes, Nullable: true},
+		{Name: "initial_retention", Type: field.TypeJSON, Nullable: true},
 	}
 	// SessionsTable holds the schema information for the "sessions" table.
 	SessionsTable = &schema.Table{

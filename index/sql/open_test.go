@@ -166,6 +166,35 @@ func TestPostgres(t *testing.T) {
 		}
 	})
 
+	t.Run("ConcurrentSetCreationWithInitialRetention", func(t *testing.T) {
+		x := openIndex(t, newMemStore())
+
+		var (
+			wg      sync.WaitGroup
+			results = make([]error, 8)
+			ids     = make([]int64, 8)
+		)
+
+		for i := range results {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+
+				if i%2 == 0 {
+					ids[i], results[i] = x.createSet(ctx, "world", &retention.DatabaseBase)
+				} else {
+					ids[i], results[i] = ensureSet(ctx, x.client, "world", 0)
+				}
+			}(i)
+		}
+		wg.Wait()
+
+		for i, err := range results {
+			require.NoError(t, err, "a racer finds the set another created, not a constraint error")
+			require.Equal(t, ids[0], ids[i])
+		}
+	})
+
 	t.Run("ConcurrentOpen", func(t *testing.T) {
 		url := testpg.Start(t)
 		concurrentOpen(t, func() *Index { return New(url, newMemStore()) })
@@ -221,6 +250,9 @@ func TestPostgres(t *testing.T) {
 		"IndexingRecordsEveryChange":       TestIndexingRecordsTheVersionsOfEveryKindOfChange,
 		"MarkingManyLost":                  TestMarkingManyVersionsLostReachesEachSetAndPath,
 		"BeginCommitGates":                 TestBeginCommitGates,
+		"InitialRetentionOnCreation":       TestASetCreatedUnderASessionStartsWithItsInitialRetention,
+		"InitialRetentionLeavesExisting":   TestAnExistingSetKeepsItsPolicyWhateverASessionCarries,
+		"SessionKeepsInitialRetention":     TestASessionKeepsItsInitialRetention,
 		"SetRefsFollowCommits":             TestSetRefsFollowCommits,
 		"SameSecondCommitsAreKept":         TestSameSecondCommitsAreKept,
 		"LatestCommitFollowsReceiptOrder":  TestLatestCommitFollowsReceiptOrder,

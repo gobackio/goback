@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/index/sql/ent/archive"
 	"github.com/gobackio/goback/index/sql/ent/predicate"
 	"github.com/gobackio/goback/index/sql/ent/session"
@@ -94,6 +95,18 @@ func (_u *SessionUpdate) SetRestoreRef(v []byte) *SessionUpdate {
 // ClearRestoreRef clears the value of the "restore_ref" field.
 func (_u *SessionUpdate) ClearRestoreRef() *SessionUpdate {
 	_u.mutation.ClearRestoreRef()
+	return _u
+}
+
+// SetInitialRetention sets the "initial_retention" field.
+func (_u *SessionUpdate) SetInitialRetention(v *retention.Policy) *SessionUpdate {
+	_u.mutation.SetInitialRetention(v)
+	return _u
+}
+
+// ClearInitialRetention clears the value of the "initial_retention" field.
+func (_u *SessionUpdate) ClearInitialRetention() *SessionUpdate {
+	_u.mutation.ClearInitialRetention()
 	return _u
 }
 
@@ -191,6 +204,12 @@ func (_u *SessionUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.RestoreRefCleared() {
 		_spec.ClearField(session.FieldRestoreRef, field.TypeBytes)
+	}
+	if value, ok := _u.mutation.InitialRetention(); ok {
+		_spec.SetField(session.FieldInitialRetention, field.TypeJSON, value)
+	}
+	if _u.mutation.InitialRetentionCleared() {
+		_spec.ClearField(session.FieldInitialRetention, field.TypeJSON)
 	}
 	if _u.mutation.ArchivesCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -325,6 +344,18 @@ func (_u *SessionUpdateOne) ClearRestoreRef() *SessionUpdateOne {
 	return _u
 }
 
+// SetInitialRetention sets the "initial_retention" field.
+func (_u *SessionUpdateOne) SetInitialRetention(v *retention.Policy) *SessionUpdateOne {
+	_u.mutation.SetInitialRetention(v)
+	return _u
+}
+
+// ClearInitialRetention clears the value of the "initial_retention" field.
+func (_u *SessionUpdateOne) ClearInitialRetention() *SessionUpdateOne {
+	_u.mutation.ClearInitialRetention()
+	return _u
+}
+
 // AddArchiveIDs adds the "archives" edge to the Archive entity by IDs.
 func (_u *SessionUpdateOne) AddArchiveIDs(ids ...string) *SessionUpdateOne {
 	_u.mutation.AddArchiveIDs(ids...)
@@ -449,6 +480,12 @@ func (_u *SessionUpdateOne) sqlSave(ctx context.Context) (_node *Session, err er
 	}
 	if _u.mutation.RestoreRefCleared() {
 		_spec.ClearField(session.FieldRestoreRef, field.TypeBytes)
+	}
+	if value, ok := _u.mutation.InitialRetention(); ok {
+		_spec.SetField(session.FieldInitialRetention, field.TypeJSON, value)
+	}
+	if _u.mutation.InitialRetentionCleared() {
+		_spec.ClearField(session.FieldInitialRetention, field.TypeJSON)
 	}
 	if _u.mutation.ArchivesCleared() {
 		edge := &sqlgraph.EdgeSpec{

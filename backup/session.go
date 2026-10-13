@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/proto"
 )
 
@@ -17,9 +18,13 @@ type Session struct {
 	// Restore names the object a restore session reads; retirement and
 	// garbage collection keep it and everything it names while the session
 	// lives.
-	Restore  *proto.Ref
-	Started  time.Time
-	LastSeen time.Time
+	Restore *proto.Ref
+	// InitialRetention, when set, becomes Set's own retention policy if
+	// the set is created under the session; a set that exists keeps its
+	// own.
+	InitialRetention *retention.Policy
+	Started          time.Time
+	LastSeen         time.Time
 }
 
 // RestoreLeaser reports the refs that live restore sessions are reading.

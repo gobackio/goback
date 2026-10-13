@@ -3,10 +3,38 @@
 package gen
 
 import (
+	retention "github.com/gobackio/goback/backup/retention"
 	storekey "github.com/gobackio/goback/backup/storekey"
 	proto "github.com/gobackio/goback/proto"
 	mapping "github.com/gobackio/goback/storage/mapping"
 )
+
+func (m MapperImpl) FromRetentionBracket(in *proto.RetentionBracket) retention.Bracket {
+	if in == nil {
+		return retention.Bracket{}
+	}
+
+	return retention.Bracket{
+		Period: retention.Period(in.Period),
+		Count:  int(in.Count),
+	}
+}
+
+func (m MapperImpl) FromRetentionPolicy(in *proto.RetentionPolicy) *retention.Policy {
+	if in == nil {
+		return nil
+	}
+	tmp0 := make([]retention.Bracket, len(in.Brackets))
+	for i := range in.Brackets {
+		tmp0[i] = m.FromRetentionBracket(in.Brackets[i])
+	}
+
+	return &retention.Policy{
+		Brackets:   tmp0,
+		KeepLast:   int(in.KeepLast),
+		KeepWithin: mapping.Duration(in.KeepWithin),
+	}
+}
 
 func (m MapperImpl) FromStorePolicy(in *proto.StorePolicy) *storekey.Policy {
 	if in == nil {
@@ -17,6 +45,30 @@ func (m MapperImpl) FromStorePolicy(in *proto.StorePolicy) *storekey.Policy {
 		Version:       in.Version,
 		Mode:          storekey.Mode(in.Mode),
 		PresenceScope: in.PresenceScope,
+	}
+}
+
+func (m MapperImpl) RetentionBracket(in retention.Bracket) *proto.RetentionBracket {
+
+	return &proto.RetentionBracket{
+		Period: string(in.Period),
+		Count:  int32(in.Count),
+	}
+}
+
+func (m MapperImpl) RetentionPolicy(in *retention.Policy) *proto.RetentionPolicy {
+	if in == nil {
+		return nil
+	}
+	tmp0 := make([]*proto.RetentionBracket, len(in.Brackets))
+	for i := range in.Brackets {
+		tmp0[i] = m.RetentionBracket(in.Brackets[i])
+	}
+
+	return &proto.RetentionPolicy{
+		KeepLast:   int32(in.KeepLast),
+		KeepWithin: mapping.Seconds(in.KeepWithin),
+		Brackets:   tmp0,
 	}
 }
 

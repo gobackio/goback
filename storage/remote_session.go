@@ -33,7 +33,11 @@ func (r *Client) outgoing(ctx context.Context) context.Context {
 // BeginSession opens a session on the server and returns a context whose
 // calls belong to it.
 func (r *Client) BeginSession(ctx context.Context, s *backup.Session) (context.Context, error) {
-	resp, err := r.store.BeginSession(ctx, &proto.BeginSessionRequest{BackupSet: s.Set, Restore: s.Restore})
+	resp, err := r.store.BeginSession(ctx, &proto.BeginSessionRequest{
+		BackupSet:        s.Set,
+		Restore:          s.Restore,
+		InitialRetention: m.RetentionPolicy(s.InitialRetention),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +67,7 @@ func (r *Client) EndSession(ctx context.Context) error {
 
 // BeginSession implements proto.StoreServer.
 func (r *Server) BeginSession(ctx context.Context, request *proto.BeginSessionRequest) (*proto.BeginSessionResponse, error) {
-	session, err := r.store.BeginSession(ctx, request.BackupSet, request.Restore)
+	session, err := r.store.BeginSession(ctx, request.BackupSet, request.Restore, m.FromRetentionPolicy(request.InitialRetention))
 	if err != nil {
 		return nil, ToStatus(err)
 	}

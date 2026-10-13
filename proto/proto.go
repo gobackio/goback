@@ -1,6 +1,6 @@
 package proto
 
-//go:generate protoc --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. api.proto blob.proto commit.proto encryption.proto file.proto object.proto pin.proto policy.proto presence.proto ref.proto tree.proto
+//go:generate protoc --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. api.proto blob.proto commit.proto encryption.proto file.proto object.proto pin.proto policy.proto presence.proto ref.proto retention.proto tree.proto
 //go:generate protoc -I . --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. admin/admin.proto
 
 import (

@@ -350,6 +350,16 @@ func RestoreRefNotNil() predicate.Session {
 	return predicate.Session(sql.FieldNotNull(FieldRestoreRef))
 }
 
+// InitialRetentionIsNil applies the IsNil predicate on the "initial_retention" field.
+func InitialRetentionIsNil() predicate.Session {
+	return predicate.Session(sql.FieldIsNull(FieldInitialRetention))
+}
+
+// InitialRetentionNotNil applies the NotNil predicate on the "initial_retention" field.
+func InitialRetentionNotNil() predicate.Session {
+	return predicate.Session(sql.FieldNotNull(FieldInitialRetention))
+}
+
 // HasArchives applies the HasEdge predicate on the "archives" edge.
 func HasArchives() predicate.Session {
 	return predicate.Session(func(s *sql.Selector) {

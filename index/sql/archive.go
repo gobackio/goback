@@ -206,8 +206,13 @@ func (x *Index) DeleteArchives(names []string) error {
 
 // BeginSession implements pack.SessionIndex.
 func (x *Index) BeginSession(s *backup.Session) error {
-	return x.client.Session.Create().SetID(s.ID).SetAgentID(s.AgentID).SetBackupSet(s.Set).
-		SetStartedAt(s.Started.UTC()).SetLastSeen(s.LastSeen.UTC()).SetRestoreRef(s.Restore.GetHash()).Exec(context.Background())
+	create := x.client.Session.Create().SetID(s.ID).SetAgentID(s.AgentID).SetBackupSet(s.Set).
+		SetStartedAt(s.Started.UTC()).SetLastSeen(s.LastSeen.UTC()).SetRestoreRef(s.Restore.GetHash())
+	if s.InitialRetention != nil {
+		create.SetInitialRetention(s.InitialRetention)
+	}
+
+	return create.Exec(context.Background())
 }
 
 // TouchSession implements pack.SessionIndex.

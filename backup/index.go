@@ -109,6 +109,7 @@ type CommitGrant struct {
 }
 
 // CommitGate is asked before a run whether the caller may commit to a set.
+// A run asks inside its session, if it has one.
 type CommitGate interface {
 	// BeginCommit returns the grant for a run on set, or ErrCommitDenied.
 	BeginCommit(ctx context.Context, set string) (*CommitGrant, error)
