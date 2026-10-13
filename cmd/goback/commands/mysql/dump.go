@@ -14,17 +14,17 @@ import (
 
 var dumpCmd = cli.Command{
 	Name:  "dump",
-	Usage: "dump the server with mysqldump and commit it to the set named by --set",
-	Description: "The client programs connect as MySQL's option files say: ~/.my.cnf, or --defaults-extra-file.\n" +
+	Usage: "Dump the server with mysqldump and commit it to the set named by --set",
+	Description: "The MySQL client programs read their connection settings from ~/.my.cnf or --defaults-extra-file.\n" +
 		"With log_bin on, the dump records the binary log position it is consistent with.",
 	Flags: withClient(
 		cli.StringFlag{
 			Name:  "binlog-set",
-			Usage: "set the server's binlogs go to, whose chain the dump joins",
+			Usage: "set that holds the server's binlogs; the dump joins its chain",
 		},
 		cli.BoolFlag{
 			Name:  "no-binlog-position",
-			Usage: "record no binary log position even with log_bin on: no global read lock, no RELOAD or REPLICATION CLIENT",
+			Usage: "skip recording the binary log position, even with log_bin on; the dump then needs no global read lock and no RELOAD or REPLICATION CLIENT privilege",
 		},
 	),
 	Action: dumpAction,

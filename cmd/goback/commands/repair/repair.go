@@ -17,7 +17,7 @@ import (
 // Command is the repair command.
 var Command = cli.Command{
 	Name:   "repair",
-	Usage:  "Rewrite every archive holding corrupt objects, leaving the corruption behind",
+	Usage:  "Rewrite each archive that holds corrupt objects, without the corrupt objects",
 	Action: repairAction,
 }
 

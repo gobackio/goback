@@ -21,12 +21,12 @@ import (
 // Command is the maintain command.
 var Command = cli.Command{
 	Name:        "maintain",
-	Usage:       "Run the housekeeping that is due, as a store server does on its schedule; run it from cron",
-	Description: "Without a subcommand: sweep, retire, compact and build presence filters, garbage collect once the last collection is older than --gc-interval, and rebuild the index's indexes of tables that churned. A subcommand runs one operation",
+	Usage:       "Run the housekeeping that is due, for example from cron",
+	Description: "Without a subcommand, maintain sweeps, retires, compacts and builds presence filters. It collects garbage once the last collection is older than --gc-interval. It also rebuilds the database indexes of heavily changed tables in the index. A subcommand runs one of these operations. A store server runs this housekeeping on its own schedule.",
 	Flags: []cli.Flag{
 		cli.DurationFlag{
 			Name:  "gc-interval",
-			Usage: "garbage collect when the last collection is at least this old; 0 never collects",
+			Usage: "collect garbage when the last collection is at least this old; 0 turns collection off",
 			Value: maintenance.DefaultSchedule.Collect,
 		},
 	},
@@ -34,7 +34,7 @@ var Command = cli.Command{
 	Subcommands: []cli.Command{
 		{
 			Name:  "sweep",
-			Usage: "Finalize idle archives and end sessions whose lease ran out",
+			Usage: "Finalize idle archives and end sessions whose lease has expired",
 			Action: action(func(m *members) {
 				m.store().Sweep(time.Now())
 				common.Result(common.Done{Action: "swept"}, func() {})
@@ -58,7 +58,7 @@ var Command = cli.Command{
 		},
 		{
 			Name:  "retire",
-			Usage: "Tombstone every retired commit past its window",
+			Usage: "Tombstone the retired commits whose trash window has ended",
 			Action: action(func(m *members) {
 				runner := m.runner(maintenance.DefaultSchedule)
 				if runner.Retirer == nil {
@@ -74,7 +74,7 @@ var Command = cli.Command{
 		},
 		{
 			Name:  "presence",
-			Usage: "Build the presence filter of every set whose newest commit has none",
+			Usage: "Build a presence filter for each set whose newest commit lacks one",
 			Action: action(func(m *members) {
 				presence, ok := m.index.(maintenance.Presence)
 				if !ok {
@@ -91,7 +91,7 @@ var Command = cli.Command{
 		},
 		{
 			Name:  "check",
-			Usage: "Report the commits the store holds that the index has no row for and no tombstone retires",
+			Usage: "Report the commits in the store that are missing from the index and not tombstoned",
 			Action: action(func(m *members) {
 				checker, ok := m.index.(index.OrphanFinder)
 				if !ok {
@@ -121,7 +121,7 @@ var Command = cli.Command{
 		},
 		{
 			Name:  "sizes",
-			Usage: "Record the logical size of every commit that carries none, and the sizes of every set whose commits changed",
+			Usage: "Record the logical size of commits that lack one; measure the sets whose commits changed",
 			Action: action(func(m *members) {
 				sizer, ok := m.index.(sizeFiller)
 				if !ok {

@@ -56,58 +56,58 @@ func main() {
 	app.Flags = []cli.Flag{
 		cli.BoolFlag{
 			Name:   "json",
-			Usage:  "print results and errors as JSON on stdout, and logs as JSON lines on stderr",
+			Usage:  "print results and errors as JSON on stdout; logs go to stderr as JSON lines",
 			EnvVar: "GOBACK_JSON",
 		},
 		cli.StringFlag{
 			Name:   "storage",
-			Usage:  "where the objects live: a directory, gcs://bucket, s3://bucket?endpoint=…, goback://key@host:port for a store server, or goback+insecure://key@host:port for one on this machine with no TLS in front of it; required",
+			Usage:  "the store: a directory, gcs://bucket, s3://bucket?endpoint=…, goback://key@host:port for a store server, or goback+insecure://key@host:port for a store server without TLS, such as one on this machine; required",
 			EnvVar: "GOBACK_STORAGE",
 		},
 		cli.StringFlag{
 			Name:   "index",
-			Usage:  "where a directory or bucket store keeps its index: a directory for SQLite, or a postgres:// url; required unless --storage is a store server",
+			Usage:  "index of a directory or bucket store: a directory for SQLite, or a postgres:// URL; required unless --storage is a store server",
 			EnvVar: "GOBACK_INDEX",
 		},
 		cli.StringFlag{
 			Name:  "set, s",
-			Usage: "name of the backup set a command works on",
+			Usage: "backup set to work on",
 		},
 		cli.StringFlag{
 			Name:  "agent-id",
-			Usage: "identifier recorded in commits and presented to a goback:// store server; defaults to the hostname",
+			Usage: "this machine's id; goback records it in commits and sends it to a goback:// store server; the hostname by default",
 		},
 		cli.StringFlag{
 			Name:  "store-key",
-			Usage: "store key file; names and contents are encrypted with it before upload",
+			Usage: "store key file; goback encrypts names and contents with it before upload",
 		},
 		cli.StringFlag{
 			Name:   "passphrase",
-			Usage:  "without --store-key, open the store key the store keeps escrowed under this passphrase",
+			Usage:  "passphrase of the escrowed store key kept in the store; used when --store-key is not set",
 			EnvVar: "GOBACK_PASSPHRASE",
 		},
 		cli.StringFlag{
 			Name:  "at-rest-key",
-			Usage: "key file a local, gcs:// or s3:// store seals its archives with, from goback key at-rest; empty stores objects as received",
+			Usage: "key file that seals the archives of a local, gcs:// or s3:// store, made with goback key at-rest; without it, objects are stored as received",
 		},
 		cli.StringFlag{
 			Name:   "cache-dir",
-			Usage:  "per-machine directory for the caches of every store: blobs a restore need not download, the stat and tree caches a backup skips unchanged files with, and a bucket's archive metadata; empty caches nothing",
+			Usage:  "directory for this machine's caches of all stores; it holds blobs a restore can use instead of downloading, the stat and tree caches that let a backup skip unchanged files, and a bucket's archive metadata; empty turns caching off",
 			EnvVar: "GOBACK_CACHE_DIR",
 		},
 		cli.StringFlag{
 			Name:  "metadata-cache-size",
-			Usage: "size of a bucket's metadata cache under --cache-dir, past which the commits, trees and files least recently used are let go; 0 keeps them all",
+			Usage: "size limit of a bucket's metadata cache under --cache-dir; above it, the least recently used commits, trees and files are evicted; 0 keeps them all",
 			Value: "1GiB",
 		},
 		cli.StringFlag{
 			Name:  "blob-cache-size",
-			Usage: "size the blob cache under --cache-dir is trimmed to after a backup or restore",
+			Usage: "size to trim the blob cache under --cache-dir to after a backup or restore",
 			Value: "4GB",
 		},
 		cli.BoolTFlag{
 			Name:  "blob-cache-on-backup",
-			Usage: "also put every uploaded blob into the blob cache, so a rollback to the last backup downloads nothing",
+			Usage: "also add uploaded blobs to the blob cache, so a rollback to the last backup can restore from the cache",
 		},
 	}
 

@@ -27,8 +27,8 @@ type commit struct {
 
 // Command is the commit command.
 var Command = cli.Command{
-	Name:        "commit",
-	Description: "Back up, list, restore, delete and undelete commits",
+	Name:  "commit",
+	Usage: "Back up, list, restore, delete and undelete commits",
 	Subcommands: []cli.Command{
 		newCmd,
 		listCmd,

@@ -16,12 +16,12 @@ import (
 // Command is the gc command.
 var Command = cli.Command{
 	Name:   "gc",
-	Usage:  "Mark every object reachable from a live commit or pin and rewrite archives whose dead share justifies it",
+	Usage:  "Collect garbage: mark the objects that live commits and pins reach, then rewrite the archives that hold enough dead objects",
 	Action: gcAction,
 	Flags: []cli.Flag{
 		cli.IntFlag{
 			Name:  "readers",
-			Usage: "parallel object reads during the mark",
+			Usage: "how many objects to read at once during the mark",
 			Value: 32,
 		},
 		cli.Float64Flag{
@@ -31,21 +31,21 @@ var Command = cli.Command{
 		},
 		cli.DurationFlag{
 			Name:  "erasure-bound",
-			Usage: "rewrite an archive that has held dead objects this long regardless of ratio",
+			Usage: "rewrite an archive that has held dead objects this long, even below --dead-ratio",
 			Value: 14 * 24 * time.Hour,
 		},
 		cli.DurationFlag{
 			Name:  "min-age",
-			Usage: "never drop an object younger than this",
+			Usage: "keep every object younger than this",
 			Value: 24 * time.Hour,
 		},
 		cli.BoolFlag{
 			Name:  "no-sweep",
-			Usage: "mark only",
+			Usage: "mark the live objects without rewriting any archives",
 		},
 		cli.StringFlag{
 			Name:  "temp-dir",
-			Usage: "directory for the live-set runs; defaults to the system temp dir",
+			Usage: "directory for the mark's temporary files; the system temp directory by default",
 		},
 	},
 }

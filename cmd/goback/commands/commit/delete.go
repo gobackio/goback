@@ -48,14 +48,14 @@ func undeleteAction(c *cli.Context) {
 
 var deleteCmd = cli.Command{
 	Name:      "delete",
-	Usage:     "Retire a commit into the trash window",
+	Usage:     "Retire a commit; it can be undeleted until its trash window ends",
 	ArgsUsage: "<ref>",
 	Action:    deleteAction,
 }
 
 var undeleteCmd = cli.Command{
 	Name:      "undelete",
-	Usage:     "Bring a retired commit back before its window ends",
+	Usage:     "Bring back a retired commit before its trash window ends",
 	ArgsUsage: "<ref>",
 	Action:    undeleteAction,
 }

@@ -93,7 +93,7 @@ func lsAction(c *cli.Context) error {
 
 var lsCmd = cli.Command{
 	Name:      "ls",
-	Usage:     "List a directory as the set held it, now or <age> ago",
+	Usage:     "List a directory as it is in the set now, or as it was <age> ago",
 	ArgsUsage: "<directory> [age]",
 	Action:    lsAction,
 }

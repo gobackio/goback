@@ -30,30 +30,32 @@ var configFlag = cli.StringFlag{
 // Command is the agent command.
 var Command = cli.Command{
 	Name:  "agent",
-	Usage: "run a machine's backups on their schedules from one config file",
-	Description: "The config lists the store once and each backup with its kind and schedule. Store settings come from\n" +
-		"the file; a global flag or its variable overrides one.",
+	Usage: "Run a machine's scheduled backups from one config file",
+	Description: "The config file names the store once. It lists each backup with its kind and schedule. A global\n" +
+		"flag or its environment variable overrides the matching store setting in the file.",
 	Subcommands: []cli.Command{
 		{
 			Name:   "run",
-			Usage:  "run the backups until SIGTERM; SIGHUP reloads the backups",
+			Usage:  "Run the backups until SIGTERM; SIGHUP reloads the backups from the config",
 			Flags:  []cli.Flag{configFlag},
 			Action: runAction,
 		},
 		{
-			Name:   "check",
-			Usage:  "validate the config, open the store, print each job's last run and next due time, and list what each database lacks",
+			Name:  "check",
+			Usage: "Check the config, the store and each backup's database",
+			Description: "check validates the config and opens the store. It prints each job's last run and next due\n" +
+				"time. It connects to each backup's database and lists what the database lacks for the backup.",
 			Flags:  []cli.Flag{configFlag},
 			Action: checkAction,
 		},
 		{
 			Name:  "status",
-			Usage: "print the status file a running agent writes, without touching the store",
+			Usage: "Print the status file of a running agent without opening the store",
 			Flags: []cli.Flag{
 				configFlag,
 				cli.BoolFlag{
 					Name:  "check",
-					Usage: "exit 1 when the agent is hung or a job is stale, 2 when there is no status to read",
+					Usage: "exit 1 if the agent is hung or a job is stale; exit 2 if there is no status to read",
 				},
 			},
 			Action: statusAction,

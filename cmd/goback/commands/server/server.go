@@ -24,20 +24,20 @@ var Command = cli.Command{
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:  "address",
-			Usage: "address the server listens on; :6060 serves agents on other hosts",
+			Usage: "address to listen on; use :6060 to serve agents on other hosts",
 			Value: "127.0.0.1:6060",
 		},
 		cli.StringFlag{
 			Name:  "secret",
-			Usage: "the secret every agent of this server presents",
+			Usage: "secret that agents present to this server",
 		},
 		cli.StringFlag{
 			Name:  "secret-file",
-			Usage: "file holding the secret, for when a flag would show it",
+			Usage: "file that holds the secret, to keep it off the command line",
 		},
 		cli.StringFlag{
 			Name:  "tls-cert",
-			Usage: "PEM certificate chain the server presents; with --tls-key, agents connect over TLS",
+			Usage: "PEM certificate chain to present; with --tls-key, agents connect over TLS",
 		},
 		cli.StringFlag{
 			Name:  "tls-key",
@@ -45,31 +45,31 @@ var Command = cli.Command{
 		},
 		cli.BoolFlag{
 			Name:  "plaintext-behind-proxy",
-			Usage: "serve plaintext because a proxy in front of the server terminates TLS; never expose this listener directly",
+			Usage: "serve plaintext behind a proxy that terminates TLS; do not expose this listener directly",
 		},
 		cli.DurationFlag{
 			Name:  "retire-interval",
-			Usage: "how often retired commits past their window are tombstoned; 0 disables the job",
+			Usage: "how often to tombstone retired commits whose trash window has ended; 0 disables",
 			Value: maintenance.DefaultSchedule.Retire,
 		},
 		cli.DurationFlag{
 			Name:  "gc-interval",
-			Usage: "how often the store is garbage collected; 0 disables the job",
+			Usage: "how often to collect garbage; 0 disables",
 			Value: maintenance.DefaultSchedule.Collect,
 		},
 		cli.DurationFlag{
 			Name:  "compact-interval",
-			Usage: "how often small archives are compacted; 0 disables the job",
+			Usage: "how often to compact small archives; 0 disables",
 			Value: maintenance.DefaultSchedule.Compact,
 		},
 		cli.DurationFlag{
 			Name:  "sweep-interval",
-			Usage: "how often idle archives are finalized and expired sessions ended",
+			Usage: "how often to finalize idle archives and end expired sessions",
 			Value: maintenance.DefaultSchedule.Sweep,
 		},
 		cli.DurationFlag{
 			Name:  "presence-interval",
-			Usage: "how often presence filters are built and set sizes measured for new commits; 0 disables the job",
+			Usage: "how often to build presence filters and measure set sizes for new commits; 0 disables",
 			Value: maintenance.DefaultSchedule.Presence,
 		},
 	},

@@ -17,43 +17,43 @@ import (
 
 var receiveCmd = cli.Command{
 	Name:  "receive",
-	Usage: "receive the server's binlogs as a replica and commit them to the set named by --set until SIGTERM",
-	Description: "receive connects as MySQL's option files say: the [client] group of --defaults-extra-file and\n" +
-		"~/.my.cnf, for host, port, socket, user, password and ssl-mode. The user needs REPLICATION SLAVE and\n" +
-		"REPLICATION CLIENT. It starts at the newest dump's binlog, so take a dump first. After RESET MASTER\n" +
-		"the binlogs go on in a new chain of the same set.",
+	Usage: "Receive the server's binlogs as a replica and commit them to the set named by --set until SIGTERM",
+	Description: "receive reads host, port, socket, user, password and ssl-mode from the [client] group of\n" +
+		"--defaults-extra-file and ~/.my.cnf. The user needs REPLICATION SLAVE and REPLICATION CLIENT. receive\n" +
+		"starts at the newest dump's binlog, so take a dump first. After RESET MASTER, the binlogs continue in\n" +
+		"a new chain in the same set.",
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:   "spool",
-			Usage:  "directory binlogs wait in for their commit",
+			Usage:  "directory that holds binlogs until they are committed",
 			EnvVar: "GOBACK_MYSQL_SPOOL",
 		},
 		cli.StringFlag{
 			Name:  "dump-set",
-			Usage: "set the server's dumps go to",
+			Usage: "set that holds the server's dumps",
 		},
 		cli.StringFlag{
 			Name:   "defaults-extra-file",
-			Usage:  "MySQL option file read before ~/.my.cnf, for the connection and its password",
+			Usage:  "MySQL option file with the connection settings and password; read before ~/.my.cnf",
 			EnvVar: "GOBACK_MYSQL_DEFAULTS_EXTRA_FILE",
 		},
 		cli.UintFlag{
 			Name:  "server-id",
-			Usage: "replica server id to connect with; one derived from the set's name by default",
+			Usage: "server id to connect with as a replica; derived from the set's name by default",
 		},
 		cli.DurationFlag{
 			Name:  "commit-every",
-			Usage: "how often new binlog is committed; at least 10s",
+			Usage: "how often to commit new binlog; at least 10s",
 			Value: mysql.DefaultCommitEvery,
 		},
 		cli.StringFlag{
 			Name:  "commit-bytes",
-			Usage: "how much new binlog makes the receiver commit early",
+			Usage: "commit early once this much new binlog has arrived",
 			Value: "256MiB",
 		},
 		cli.DurationFlag{
 			Name:  "window",
-			Usage: "how far back point-in-time recovery reaches; binlogs older than the oldest dump inside it are let go",
+			Usage: "how far back point-in-time recovery reaches; binlogs older than the oldest dump in this window are retired",
 			Value: 14 * 24 * time.Hour,
 		},
 		cli.DurationFlag{

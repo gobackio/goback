@@ -294,12 +294,12 @@ func restoreAction(c *cli.Context) {
 var restoreFlags = []cli.Flag{
 	cli.StringFlag{
 		Name:  "overwrite",
-		Usage: "always: hash every part of an existing file and rewrite what differs; if-changed: trust a size and mtime match",
+		Usage: "how to treat an existing file: always hashes every part and rewrites what differs; if-changed skips it when size and mtime match",
 		Value: "always",
 	},
 	cli.BoolFlag{
 		Name:  "verify",
-		Usage: "rehash every written file before it replaces the destination",
+		Usage: "hash each written file again before it replaces the existing one",
 	},
 	cli.BoolFlag{
 		Name:  "dry-run",
@@ -307,12 +307,12 @@ var restoreFlags = []cli.Flag{
 	},
 	cli.StringSliceFlag{
 		Name:  "seed",
-		Usage: "file or directory whose chunks may be used instead of downloading; repeatable",
+		Usage: "file or directory to copy matching chunks from instead of downloading them; repeatable",
 		Value: new(cli.StringSlice),
 	},
 	cli.IntFlag{
 		Name:  "workers",
-		Usage: "files and parts fetched at once",
+		Usage: "how many files and parts to fetch at once",
 		Value: backup.DefaultRestoreWorkers(),
 	},
 	common.SalvageFlag,
@@ -320,7 +320,7 @@ var restoreFlags = []cli.Flag{
 
 var restoreCmd = cli.Command{
 	Name:      "restore",
-	Usage:     "Restore a commit into a directory in place, downloading only the parts the directory does not already hold",
+	Usage:     "Restore a commit into a directory in place; parts the directory already has are not downloaded",
 	ArgsUsage: "<directory> [age]",
 	Action:    restoreAction,
 	Flags: append([]cli.Flag{
@@ -331,7 +331,7 @@ var restoreCmd = cli.Command{
 		},
 		cli.StringFlag{
 			Name:  "ref",
-			Usage: "restore exactly the commit with this hex ref",
+			Usage: "restore the commit with this hex ref",
 		},
 		cli.StringFlag{
 			Name:  "at",
@@ -339,11 +339,11 @@ var restoreCmd = cli.Command{
 		},
 		cli.BoolFlag{
 			Name:  "delete",
-			Usage: "remove files under the target that the commit does not contain",
+			Usage: "delete files in the target that are not in the commit",
 		},
 		cli.BoolFlag{
 			Name:  "force",
-			Usage: "restore even when a session.lock under the target is held by a running server",
+			Usage: "restore even if a running server holds a session.lock in the target",
 		},
 		cli.DurationFlag{
 			Name:  "progress-interval",

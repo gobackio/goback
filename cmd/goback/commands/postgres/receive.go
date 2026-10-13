@@ -18,49 +18,49 @@ import (
 
 var receiveCmd = cli.Command{
 	Name:  "receive",
-	Usage: "stream the cluster's WAL through a replication slot and commit it to the set named by --set until SIGTERM",
-	Description: "receive connects as a replica, as libpq does: through --dbname, or through PGHOST, PGUSER and the\n" +
-		"other PG* variables. The role needs the REPLICATION attribute, and pg_hba.conf a replication line for it\n" +
-		"and a line for a normal connection to the database --dbname names, postgres by default. The slot holds\n" +
-		"WAL the receiver hasn't committed; set max_slot_wal_keep_size to bound it. Run --drop-slot when retiring\n" +
-		"the receiver.",
+	Usage: "Stream the cluster's WAL through a replication slot and commit it to the set named by --set until SIGTERM",
+	Description: "receive connects with --dbname, or with PGHOST, PGUSER and the other PG* variables. The role\n" +
+		"needs the REPLICATION attribute. pg_hba.conf needs a replication line for the role. It also needs a\n" +
+		"line for a normal connection to the database in --dbname, which is postgres by default. The slot\n" +
+		"holds the WAL that the receiver has not committed yet. Set max_slot_wal_keep_size to limit it. Run\n" +
+		"receive --drop-slot when you retire the receiver.",
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:   "spool",
-			Usage:  "directory WAL waits in for its commit",
+			Usage:  "directory that holds WAL until it is committed",
 			EnvVar: "GOBACK_POSTGRES_SPOOL",
 		},
 		cli.StringFlag{
 			Name:  "base-set",
-			Usage: "set the cluster's base backups go to",
+			Usage: "set that holds the cluster's base backups",
 		},
 		cli.StringFlag{
 			Name:   "dbname",
-			Usage:  "connection string the receiver connects with",
+			Usage:  "connection string for the receiver",
 			EnvVar: "GOBACK_POSTGRES_DBNAME",
 		},
 		cli.StringFlag{
 			Name:  "slot",
-			Usage: "the physical replication slot; goback_ and the set's name by default",
+			Usage: "physical replication slot to use; goback_ followed by the set's name by default",
 		},
 		cli.DurationFlag{
 			Name:  "commit-every",
-			Usage: "how often new WAL is committed; at least 10s",
+			Usage: "how often to commit new WAL; at least 10s",
 			Value: postgres.DefaultCommitEvery,
 		},
 		cli.StringFlag{
 			Name:  "commit-bytes",
-			Usage: "how much new WAL makes the receiver commit early",
+			Usage: "commit early once this much new WAL has arrived",
 			Value: "256MiB",
 		},
 		cli.DurationFlag{
 			Name:  "window",
-			Usage: "how far back point-in-time recovery reaches; WAL older than the oldest base backup inside it is let go",
+			Usage: "how far back point-in-time recovery reaches; WAL older than the oldest base backup in this window is retired",
 			Value: 14 * 24 * time.Hour,
 		},
 		cli.BoolFlag{
 			Name:  "allow-uncapped-slot",
-			Usage: "stream even when max_slot_wal_keep_size lets the slot keep WAL until the database's disk is full",
+			Usage: "stream even when max_slot_wal_keep_size does not limit the slot, so the slot can keep WAL until the database's disk is full",
 		},
 		cli.DurationFlag{
 			Name:  "shutdown-grace",

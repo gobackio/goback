@@ -15,24 +15,24 @@ import (
 
 // Command is the pin command.
 var Command = cli.Command{
-	Name:        "pin",
-	Description: "Keep commits, trees or files regardless of retention",
+	Name:  "pin",
+	Usage: "Keep commits, trees or files regardless of retention",
 	Subcommands: []cli.Command{
 		{
 			Name:      "add",
-			Usage:     "Pin a ref",
+			Usage:     "Pin a commit, tree or file by its ref",
 			ArgsUsage: "<ref>",
 			Action:    addAction,
 			Flags:     []cli.Flag{common.MetaFlag},
 		},
 		{
 			Name:   "list",
-			Usage:  "List the live pins",
+			Usage:  "List the pins",
 			Action: listAction,
 		},
 		{
 			Name:      "remove",
-			Usage:     "Tombstone a pin",
+			Usage:     "Remove a pin",
 			ArgsUsage: "<pin-ref>",
 			Action:    removeAction,
 		},

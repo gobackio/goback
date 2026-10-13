@@ -83,18 +83,18 @@ func restoreAction(c *cli.Context) {
 
 var restoreCmd = cli.Command{
 	Name:      "restore",
-	Usage:     "Restore a file in place, downloading only the parts the destination does not already hold",
+	Usage:     "Restore a file in place; parts the destination already has are not downloaded",
 	ArgsUsage: "<path> <destination> [age]",
 	Action:    restoreAction,
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:  "overwrite",
-			Usage: "always: hash every part of an existing file and rewrite what differs; if-changed: trust a size and mtime match",
+			Usage: "how to treat an existing file: always hashes every part and rewrites what differs; if-changed skips it when size and mtime match",
 			Value: "always",
 		},
 		cli.BoolFlag{
 			Name:  "verify",
-			Usage: "rehash the written file before it replaces the destination",
+			Usage: "hash the written file again before it replaces the destination",
 		},
 		cli.BoolFlag{
 			Name:  "dry-run",
@@ -102,12 +102,12 @@ var restoreCmd = cli.Command{
 		},
 		cli.StringSliceFlag{
 			Name:  "seed",
-			Usage: "file or directory whose chunks may be used instead of downloading; repeatable",
+			Usage: "file or directory to copy matching chunks from instead of downloading them; repeatable",
 			Value: new(cli.StringSlice),
 		},
 		cli.IntFlag{
 			Name:  "workers",
-			Usage: "files and parts fetched at once",
+			Usage: "how many files and parts to fetch at once",
 			Value: backup.DefaultRestoreWorkers(),
 		},
 		common.SalvageFlag,

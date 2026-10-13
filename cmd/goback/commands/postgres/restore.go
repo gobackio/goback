@@ -20,29 +20,29 @@ import (
 
 var restoreCmd = cli.Command{
 	Name:      "restore",
-	Usage:     "write a base backup into an empty data directory, set up to recover from the WAL set, if given, when Postgres starts on it",
+	Usage:     "Write a base backup into an empty data directory; with --wal-set, Postgres recovers from that WAL when it starts on the directory",
 	ArgsUsage: "<data directory>",
-	Description: "restore_command runs goback again for every WAL file Postgres asks for: this binary with the\n" +
-		"global flags given here, unless --goback names another command. Flags end up in\n" +
-		"postgresql.auto.conf, or recovery.conf before Postgres 12; settings from the environment have to\n" +
-		"be in Postgres's environment. --copy-wal writes the WAL into pg_wal instead, so Postgres needs\n" +
-		"neither goback nor the store.",
+	Description: "With --wal-set, restore sets a restore_command that runs goback for each WAL file Postgres asks\n" +
+		"for. It runs this binary with the global flags given here, or the command in --goback. The command\n" +
+		"and its flags go into postgresql.auto.conf, or into recovery.conf before Postgres 12. Settings\n" +
+		"given as environment variables must also be set in Postgres's environment. With --copy-wal, restore\n" +
+		"copies the WAL into pg_wal instead. Postgres then needs neither goback nor the store.",
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:  "base-set",
-			Usage: "set the cluster's base backups go to; digits name it by id, from the set's head rather than the index",
+			Usage: "set that holds the cluster's base backups; a number names the set by id and reads it from the store instead of the index",
 		},
 		cli.StringFlag{
 			Name:  "wal-set",
-			Usage: "set the cluster's WAL goes to, for recovering past the end of the base; digits name it by id, as --base-set",
+			Usage: "set that holds the cluster's WAL, for recovering past the end of the base backup; a number names the set by id",
 		},
 		cli.StringFlag{
 			Name:  "at",
-			Usage: "moment to recover to, as RFC 3339 (2026-10-02T14:30:00Z); the end of the WAL set when empty",
+			Usage: "moment to recover to, in RFC 3339 (2026-10-02T14:30:00Z); the end of the WAL set by default",
 		},
 		cli.StringFlag{
 			Name:  "goback",
-			Usage: "command restore_command runs goback as, global flags included",
+			Usage: "command that restore_command uses to run goback, including the global flags",
 		},
 		cli.BoolFlag{
 			Name:  "copy-wal",
@@ -172,16 +172,16 @@ func shellQuote(s string) string {
 
 var walGetCmd = cli.Command{
 	Name:      "wal-get",
-	Usage:     "write a WAL file of a WAL commit to a path, as restore_command",
+	Usage:     "Write one WAL file from a WAL commit to a path; restore_command runs this",
 	ArgsUsage: "<%f> <%p>",
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:  "wal-set",
-			Usage: "set the WAL commit belongs to",
+			Usage: "set that holds the WAL commit",
 		},
 		cli.StringFlag{
 			Name:  "commit",
-			Usage: "the WAL commit, in hex",
+			Usage: "ref of the WAL commit, in hex",
 		},
 	},
 	Action: walGetAction,

@@ -8,8 +8,10 @@ import (
 
 // Command is the postgres command.
 var Command = cli.Command{
-	Name:        "postgres",
-	Description: "Back up and restore Postgres clusters: base backups from 9.6 on, and from 14 on the WAL streamed through a replication slot, each in a set of its own",
+	Name:  "postgres",
+	Usage: "Back up and restore Postgres clusters",
+	Description: "Base backups work with Postgres 9.6 and later. Streaming WAL through a replication slot works with\n" +
+		"Postgres 14 and later. Base backups and WAL go into separate sets.",
 	Subcommands: []cli.Command{
 		baseCmd,
 		receiveCmd,

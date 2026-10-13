@@ -18,7 +18,7 @@ import (
 // Command is the scrub command.
 var Command = cli.Command{
 	Name:   "scrub",
-	Usage:  "Rehash every stored object and report corruption; exits non-zero if any object fails",
+	Usage:  "Hash every stored object again and report corruption; exit non-zero if any object fails",
 	Action: scrubAction,
 }
 

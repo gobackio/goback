@@ -25,8 +25,8 @@ type file struct {
 
 // Command is the file command.
 var Command = cli.Command{
-	Name:        "file",
-	Description: "List, show and restore single files and their versions",
+	Name:  "file",
+	Usage: "List, show and restore single files and their versions",
 	Subcommands: []cli.Command{
 		restoreCmd,
 		showCmd,

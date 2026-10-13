@@ -17,14 +17,14 @@ import (
 
 // Command is the set command.
 var Command = cli.Command{
-	Name:        "set",
-	Description: "Delete and undelete sets, and show or change their retention",
+	Name:  "set",
+	Usage: "Delete or undelete a set, or show and change its retention",
 	Subcommands: []cli.Command{
 		{
 			Name:      "delete",
 			Usage:     "Close a set and retire its commits; --erase skips the trash window",
 			ArgsUsage: "<name>",
-			Flags:     []cli.Flag{cli.BoolFlag{Name: "erase", Usage: "tombstone the commits at once instead of after the trash window"}},
+			Flags:     []cli.Flag{cli.BoolFlag{Name: "erase", Usage: "tombstone the commits now instead of after the trash window"}},
 			Action:    deleteAction,
 		},
 		{
@@ -35,14 +35,14 @@ var Command = cli.Command{
 		},
 		{
 			Name:      "retention",
-			Usage:     "Show or change the retention of a set, or the store's defaults without a name; a keep flag replaces the policy, --inherit drops it",
+			Usage:     "Show or change a set's retention policy, or the store's default when no name is given; a keep flag replaces the policy, --inherit removes it",
 			ArgsUsage: "[<name>]",
 			Flags: []cli.Flag{
-				cli.IntFlag{Name: "keep-last", Usage: "keep the newest this many commits"},
-				cli.StringSliceFlag{Name: "keep", Usage: "a bracket as <period>=<count> calendar periods, newest first, repeated; the last may drop its count to keep forever (--keep hourly=336 --keep daily=60 --keep weekly=12 --keep monthly)"},
+				cli.IntFlag{Name: "keep-last", Usage: "keep this many of the newest commits"},
+				cli.StringSliceFlag{Name: "keep", Usage: "keep the last commit of each of the latest <count> calendar periods, given as <period>=<count>; repeat it for each bracket, newest first; the last bracket may omit its count to keep forever (--keep hourly=336 --keep daily=60 --keep weekly=12 --keep monthly)"},
 				cli.DurationFlag{Name: "keep-within", Usage: "keep every commit younger than this"},
-				cli.BoolFlag{Name: "inherit", Usage: "drop the policy: a set inherits the store's, the store uses the built-in"},
-				cli.IntFlag{Name: "trash-days", Value: -1, Usage: "store only: days a deleted commit waits for its tombstone"},
+				cli.BoolFlag{Name: "inherit", Usage: "remove the policy, so a set follows the store's policy and the store follows the built-in one"},
+				cli.IntFlag{Name: "trash-days", Value: -1, Usage: "store only: how many days a deleted commit waits before it is tombstoned"},
 			},
 			Action: retentionAction,
 		},

@@ -11,7 +11,7 @@ import (
 var clientFlags = []cli.Flag{
 	cli.StringFlag{
 		Name:   "defaults-extra-file",
-		Usage:  "MySQL option file the client programs read before their own, for the connection and its password; ~/.my.cnf alone when empty",
+		Usage:  "MySQL option file with the connection settings and password; the client programs read it before their own option files; without it, they read only ~/.my.cnf",
 		EnvVar: "GOBACK_MYSQL_DEFAULTS_EXTRA_FILE",
 	},
 	cli.StringFlag{
@@ -22,13 +22,13 @@ var clientFlags = []cli.Flag{
 	},
 	cli.StringFlag{
 		Name:   "mysqldump",
-		Usage:  "the mysqldump to run",
+		Usage:  "the mysqldump program to run",
 		EnvVar: "GOBACK_MYSQLDUMP",
 		Value:  "mysqldump",
 	},
 	cli.StringFlag{
 		Name:   "mysqlbinlog",
-		Usage:  "the mysqlbinlog a restore replays with; at least the source server's version",
+		Usage:  "the mysqlbinlog program that restore replays binlogs with; its version must be at least the source server's",
 		EnvVar: "GOBACK_MYSQLBINLOG",
 		Value:  "mysqlbinlog",
 	},
@@ -58,7 +58,8 @@ func withClient(flags ...cli.Flag) []cli.Flag {
 // Command is the mysql command.
 var Command = cli.Command{
 	Name:        "mysql",
-	Description: "Back up and restore MySQL 5.5 through 8.4 servers: dumps and the binary log, each in a set of its own",
+	Usage:       "Back up and restore MySQL servers",
+	Description: "goback works with MySQL 5.5 through 8.4. Dumps and the binary log go into separate sets.",
 	Subcommands: []cli.Command{
 		receiveCmd,
 		dumpCmd,

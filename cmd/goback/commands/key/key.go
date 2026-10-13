@@ -17,8 +17,8 @@ import (
 
 // Command is the key command.
 var Command = cli.Command{
-	Name:        "key",
-	Description: "Manage the store key that encrypts names and contents before upload",
+	Name:  "key",
+	Usage: "Manage the store key that encrypts names and contents before upload, and the at-rest key",
 	Subcommands: []cli.Command{
 		{
 			Name:      "new",
@@ -29,17 +29,17 @@ var Command = cli.Command{
 		},
 		{
 			Name:   "escrow",
-			Usage:  "Wrap a store key under a passphrase as an armored age file, which `age -d` also opens, and print it or keep it with the store",
+			Usage:  "Encrypt a store key with a passphrase into an armored age file, which `age -d` can also open; print it, or keep it with the store using --upload",
 			Action: escrowAction,
 			Flags: []cli.Flag{
 				cli.StringFlag{Name: "key", Usage: "key file to escrow", Value: "store.key"},
 				passphraseFlag,
-				cli.BoolFlag{Name: "upload", Usage: "keep the escrowed key with the store --storage names, instead of printing it"},
+				cli.BoolFlag{Name: "upload", Usage: "keep the escrowed key with the --storage store instead of printing it"},
 			},
 		},
 		{
 			Name:   "id",
-			Usage:  "Print the id of a store key, which names it in the store and in its escrowed copies",
+			Usage:  "Print a store key's id; the store and the key's escrowed copies refer to the key by this id",
 			Action: idAction,
 			Flags:  []cli.Flag{cli.StringFlag{Name: "key", Usage: "key file", Value: "store.key"}},
 		},
@@ -48,18 +48,18 @@ var Command = cli.Command{
 			Usage:  "Rebuild a key file from an escrowed key and its passphrase",
 			Action: recoverAction,
 			Flags: []cli.Flag{
-				cli.StringFlag{Name: "escrow", Usage: "escrowed key file, as printed by escrow; - reads standard input", Value: "-"},
+				cli.StringFlag{Name: "escrow", Usage: "escrowed key file, as printed by key escrow; - reads standard input", Value: "-"},
 				outFlag("store.key"),
 				passphraseFlag,
 			},
 		},
 		{
 			Name:   "at-rest",
-			Usage:  "Generate the key a local, gcs:// or s3:// store seals its archives with, or rotate it",
+			Usage:  "Generate or rotate the key that seals the archives of a local, gcs:// or s3:// store",
 			Action: atRestAction,
 			Flags: []cli.Flag{
 				outFlag("at-rest.key"),
-				cli.BoolFlag{Name: "rotate", Usage: "add a fresh primary key to the file; the keys it held still open what they sealed"},
+				cli.BoolFlag{Name: "rotate", Usage: "add a new primary key to the file; the older keys still open the archives they sealed"},
 			},
 		},
 	},

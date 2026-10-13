@@ -10,7 +10,7 @@ import (
 // write a commit or a pin.
 var MetaFlag = cli.StringSliceFlag{
 	Name:  "meta",
-	Usage: "key=value label recorded in the object; repeatable",
+	Usage: "key=value label to store with the commit or pin; repeatable",
 }
 
 // Metadata parses the --meta values; a bare key gets an empty value.

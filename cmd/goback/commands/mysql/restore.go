@@ -15,22 +15,22 @@ import (
 
 var restoreCmd = cli.Command{
 	Name:  "restore",
-	Usage: "load a dump into an empty running server and replay the binlog set, if given, after it",
-	Description: "The client programs connect to the target as MySQL's option files say: ~/.my.cnf, or\n" +
-		"--defaults-extra-file. --to only writes the dump and the binlogs into a directory and prints\n" +
-		"the commands that apply them.",
+	Usage: "Load a dump into an empty running server, then replay the binlog set if one is given",
+	Description: "The MySQL client programs read the target's connection settings from ~/.my.cnf or\n" +
+		"--defaults-extra-file. With --to, restore writes the dump and the binlogs into a directory instead\n" +
+		"of applying them. It then prints the commands that apply them.",
 	Flags: withClient(
 		cli.StringFlag{
 			Name:  "dump-set",
-			Usage: "set the server's dumps go to",
+			Usage: "set that holds the server's dumps",
 		},
 		cli.StringFlag{
 			Name:  "binlog-set",
-			Usage: "set the server's binlogs go to, for restoring past the dump",
+			Usage: "set that holds the server's binlogs, for restoring past the dump",
 		},
 		cli.StringFlag{
 			Name:  "at",
-			Usage: "moment to restore to, as RFC 3339 (2026-10-02T14:30:00Z), to the second; the end of the binlog set when empty",
+			Usage: "moment to restore to, in RFC 3339 (2026-10-02T14:30:00Z) to the second; the end of the binlog set by default",
 		},
 		cli.StringFlag{
 			Name:  "to",
@@ -38,11 +38,11 @@ var restoreCmd = cli.Command{
 		},
 		cli.StringFlag{
 			Name:  "work-dir",
-			Usage: "directory the binlogs are fetched into before the replay; the system's temporary directory when empty",
+			Usage: "directory to download the binlogs into before the replay; the system's temporary directory by default",
 		},
 		cli.BoolFlag{
 			Name:  "force",
-			Usage: "load into a server that holds databases already",
+			Usage: "load into a server that already holds databases",
 		},
 	),
 	Action: restoreAction,

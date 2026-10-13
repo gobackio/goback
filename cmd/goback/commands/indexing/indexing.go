@@ -15,15 +15,15 @@ import (
 // Command is the index command.
 var Command = cli.Command{
 	Name:  "index",
-	Usage: "Index objects the store already holds, without a rebuild",
+	Usage: "Add objects the store already holds to the index without a full rebuild",
 	Subcommands: []cli.Command{
 		{
 			Name:        "commits",
-			Usage:       "Index the commits a file lists, one hex ref per line",
-			Description: "Indexes them by set in receipt order as a rebuild does, those that name no set under a placeholder set; refuses the lot if one is not a commit, is tombstoned or already indexed",
+			Usage:       "Index the commits listed in a file, one hex ref per line",
+			Description: "Commits are indexed by set, in the order the store received them. Commits that name no set go under a placeholder set. Nothing is indexed if any ref is not a commit, is tombstoned or is already indexed.",
 			Flags: []cli.Flag{
 				cli.StringFlag{Name: "refs-file", Usage: "file of commit refs, one hex ref per line"},
-				cli.BoolFlag{Name: "dry-run", Usage: "write nothing, report what would be done"},
+				cli.BoolFlag{Name: "dry-run", Usage: "report what would be indexed without writing anything"},
 			},
 			Action: commitsAction,
 		},

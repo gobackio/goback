@@ -92,18 +92,18 @@ func runNew(c *cli.Context) error {
 
 var newCmd = cli.Command{
 	Name:      "new",
-	Usage:     "Create a new commit by diffing the directory against the set's latest commit",
+	Usage:     "Back up a directory as a new commit; unchanged files are taken from the set's latest commit",
 	ArgsUsage: "[directory]",
 	Action:    newAction,
 	Flags: []cli.Flag{
 		cli.StringSliceFlag{
 			Name:  "include, i",
-			Usage: "back up paths matching this glob even when an --exclude matches them; paths start with / at the directory; repeatable",
+			Usage: "back up paths that match this glob, even if an --exclude matches them; patterns start with / at the directory; repeatable",
 			Value: new(cli.StringSlice),
 		},
 		cli.StringSliceFlag{
 			Name:  "exclude, e",
-			Usage: "skip paths matching this glob; paths start with / at the directory; repeatable",
+			Usage: "skip paths that match this glob; patterns start with / at the directory; repeatable",
 			Value: new(cli.StringSlice),
 		},
 		cli.IntFlag{
@@ -113,54 +113,54 @@ var newCmd = cli.Command{
 		},
 		cli.IntFlag{
 			Name:  "force-hash",
-			Usage: "percent of unchanged files to re-hash locally as a check on the change test",
+			Usage: "percentage of seemingly unchanged files to hash anyway, to check the change detection",
 		},
 		cli.DurationFlag{
 			Name:  "checkpoint-interval",
-			Usage: "write a partial commit this often so an interrupted run keeps its progress; 0 disables",
+			Usage: "save a partial commit this often so an interrupted run keeps its progress; 0 disables",
 			Value: 30 * time.Minute,
 		},
 		cli.IntFlag{
 			Name:  "scan-workers",
-			Usage: "how many directories to list ahead of the walk; negative lists every directory on the walk itself",
+			Usage: "how many directories to list ahead of the walk; a negative value lists each directory when the walk reaches it",
 			Value: backup.DefaultScanWorkers,
 		},
 		cli.IntFlag{
 			Name:  "read-retries",
-			Usage: "how often to re-read a file that changes while it is being read",
+			Usage: "how many times to re-read a file that changes while it is being read",
 			Value: 3,
 		},
 		cli.IntFlag{
 			Name:  "lost-retries",
-			Usage: "how often to walk again when the store lost objects of the run before its commit; 0 fails the run instead",
+			Usage: "how many times to walk again when the store loses objects of the run before it commits; 0 fails the run instead",
 			Value: 1,
 		},
 		cli.DurationFlag{
 			Name:  "progress-interval",
-			Usage: "how often to report what the walk has covered so far; negative disables",
+			Usage: "how often to report the walk's progress; negative disables",
 			Value: backup.DefaultProgressInterval,
 		},
 		common.MetaFlag,
 		cli.StringFlag{
 			Name:  "pre-hook",
-			Usage: "shell command run before the walk, for example one that pauses the application's writes; see contrib/hooks",
+			Usage: "shell command to run before the walk, for example to pause the application's writes; see contrib/hooks",
 		},
 		cli.StringFlag{
 			Name:  "post-hook",
-			Usage: "shell command run after the walk on every exit the agent controls: success, failure, Ctrl-C and deadlines",
+			Usage: "shell command to run after the walk, whether the walk succeeds, fails, is stopped with Ctrl-C or hits a deadline",
 		},
 		cli.DurationFlag{
 			Name:  "hook-timeout",
-			Usage: "deadline for each hook",
+			Usage: "time limit for each hook",
 			Value: 5 * time.Minute,
 		},
 		cli.BoolFlag{
 			Name:  "hook-optional",
-			Usage: "back up anyway when the pre hook fails",
+			Usage: "back up even if the pre-hook fails",
 		},
 		cli.DurationFlag{
 			Name:  "max-duration",
-			Usage: "cancel the walk after this long, still running the post hook; 0 disables",
+			Usage: "cancel the walk after this long; the post-hook still runs; 0 disables",
 		},
 	},
 }
