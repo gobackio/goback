@@ -452,3 +452,20 @@ func TestABracketReadsBackAsItIsWritten(t *testing.T) {
 	require.Equal(t, "keep-last=1 keep=hourly=336 keep=daily=60 keep=weekly=12 keep=monthly", Default.String())
 	require.Equal(t, "keep-last=1 keep-within=forever", KeepAll.String())
 }
+
+func TestAPolicyReadsBackAsItIsWritten(t *testing.T) {
+	for _, p := range []Policy{Default, KeepAll, DatabaseBase, DatabaseLog, {KeepLast: 3, KeepWithin: 90 * time.Minute}} {
+		read, err := ParsePolicy(p.String())
+		require.NoError(t, err)
+		require.Equal(t, p, read, p.String())
+	}
+
+	read, err := ParsePolicy("keep=daily=7")
+	require.NoError(t, err)
+	require.Equal(t, Policy{KeepLast: 1, Brackets: []Bracket{{Period: Daily, Count: 7}}}, read)
+
+	for _, bad := range []string{"", "keep nothing", "keep-last=0", "keep-last=x", "keep=fortnightly=2", "keep=monthly keep=daily=3", "keep-within=soon", "hold=3"} {
+		_, err := ParsePolicy(bad)
+		require.ErrorIs(t, err, ErrInvalidPolicy, bad)
+	}
+}

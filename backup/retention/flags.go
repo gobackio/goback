@@ -64,3 +64,54 @@ func (p Policy) String() string {
 
 	return strings.Join(parts, " ")
 }
+
+// ParsePolicy reads and validates a policy as Policy.String writes it;
+// keep-last is 1 when it is left out.
+func ParsePolicy(s string) (Policy, error) {
+	p := Policy{KeepLast: 1}
+
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return Policy{}, fmt.Errorf("%w: empty", ErrInvalidPolicy)
+	}
+
+	for _, field := range fields {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok {
+			return Policy{}, fmt.Errorf("%w: %q is not keep-last=, keep= or keep-within=", ErrInvalidPolicy, field)
+		}
+
+		switch key {
+		case "keep-last":
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return Policy{}, fmt.Errorf("%w: keep-last %q is not a number", ErrInvalidPolicy, value)
+			}
+
+			p.KeepLast = n
+		case "keep":
+			b, err := ParseBracket(value)
+			if err != nil {
+				return Policy{}, err
+			}
+
+			p.Brackets = append(p.Brackets, b)
+		case "keep-within":
+			if value == "forever" {
+				p.KeepWithin = time.Duration(math.MaxInt64)
+				continue
+			}
+
+			d, err := time.ParseDuration(value)
+			if err != nil {
+				return Policy{}, fmt.Errorf("%w: keep-within: %v", ErrInvalidPolicy, err)
+			}
+
+			p.KeepWithin = d
+		default:
+			return Policy{}, fmt.Errorf("%w: %q is not keep-last=, keep= or keep-within=", ErrInvalidPolicy, field)
+		}
+	}
+
+	return p, p.Validate()
+}
