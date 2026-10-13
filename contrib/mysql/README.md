@@ -63,7 +63,7 @@ What to configure. Versions differ where noted; MySQL 5.5 to 8.4 are supported.
 | privileges | `SELECT`, `SHOW VIEW`, `TRIGGER`, `EVENT`, `LOCK TABLES`; `PROCESS` on MySQL 8.0.21+ | the dump's plus `REPLICATION SLAVE` (the binlog dump) and `REPLICATION CLIENT`. `RELOAD` for the dump's position |
 | network | the MySQL port from wherever the agent runs | the same |
 
-With `log_bin` on, as by default on 8.0, a dump records its position and needs `RELOAD` and `REPLICATION CLIENT` even without binlogs received. `goback mysql dump --no-binlog-position` leaves it out; the agent has no such setting.
+With `log_bin` on, as by default on 8.0, a dump records its position and needs `RELOAD` and `REPLICATION CLIENT` even without binlogs received. With `pitr: false`, `no-binlog-position: true` under `mysql:` leaves it out.
 
 ## Restore
 

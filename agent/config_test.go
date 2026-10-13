@@ -125,6 +125,8 @@ backups: [{name: w, cron: "0 3 30 2 *", path: {dir: /w}}]`,
 backups: [{name: db, postgres: {commit-every: 5s}}]`,
 		"postgres commit bytes that aren't a size": `
 backups: [{name: db, postgres: {commit-bytes: lots}}]`,
+		"mysql without binlog positions but with pitr": `
+backups: [{name: shop, mysql: {no-binlog-position: true}}]`,
 		"no backups": `
 store: {storage: /backups}`,
 		"zero concurrency": `

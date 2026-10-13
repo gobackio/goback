@@ -8,7 +8,7 @@
 
 ## Setup
 
-1. Replace `BUCKET` in `goback.yaml` and `compose.yaml` with your bucket.
+1. Replace `BUCKET` in `goback.yaml` with your bucket.
 2. Put a service account key with access to the bucket in `gcp-credentials.json`.
 3. Create the store key with `goback key new <store name>` (it writes `store.key`) and move it to `goback.key`. Keep a copy elsewhere: without it, nothing can be restored.
 4. Put the Postgres password in `postgres-password`.

@@ -294,8 +294,12 @@ func (p *PostgresBackup) tasks(b *Backup) []*Task {
 // CheckDatabase connects to the backup's database and lists what it lacks
 // for the backup as configured; nil for a backup of no database.
 func (b *Backup) CheckDatabase(ctx context.Context) []string {
-	if b.MySQL != nil && b.MySQL.PITR {
-		return mysql.Check(ctx, b.MySQL.DefaultsExtraFile, b.MySQL.serverID(b))
+	if m := b.MySQL; m != nil {
+		if !m.PITR {
+			return mysql.CheckDump(ctx, m.DefaultsExtraFile, !m.NoBinlogPosition)
+		}
+
+		return mysql.Check(ctx, m.DefaultsExtraFile, m.serverID(b))
 	}
 
 	if b.Postgres == nil {
@@ -339,6 +343,9 @@ type MySQLBackup struct {
 	CommitBytes string        `yaml:"commit-bytes"`
 	Window      time.Duration `yaml:"window"`
 	PITR        bool          `yaml:"pitr"`
+	// NoBinlogPosition, with pitr off, has dumps record no binlog position,
+	// which spares them the global read lock.
+	NoBinlogPosition bool `yaml:"no-binlog-position"`
 }
 
 // UnmarshalYAML fills in the mysql commands' defaults before decoding.
@@ -355,6 +362,10 @@ func (m *MySQLBackup) validate(*Backup) []error {
 
 	if m.Window <= 0 {
 		errs = append(errs, errors.New("mysql.window must be positive"))
+	}
+
+	if m.PITR && m.NoBinlogPosition {
+		errs = append(errs, errors.New("mysql.no-binlog-position needs pitr: false; binlogs are replayed from a dump's position"))
 	}
 
 	if m.CommitEvery < mysql.MinCommitEvery {
@@ -386,7 +397,7 @@ func (m *MySQLBackup) tasks(b *Backup) []*Task {
 
 	client := job.MySQLClient{DefaultsExtraFile: m.DefaultsExtraFile, Mysql: m.Mysql, Mysqldump: m.Mysqldump}
 
-	dumpSettings := job.MySQLDumpSettings{Set: dump, Client: client}
+	dumpSettings := job.MySQLDumpSettings{Set: dump, Client: client, NoBinlogPosition: m.NoBinlogPosition}
 	if m.PITR {
 		dumpSettings.BinlogSet = binlog
 	}

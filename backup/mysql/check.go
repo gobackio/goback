@@ -47,3 +47,31 @@ func Check(ctx context.Context, defaultsExtraFile string, serverID uint32) []str
 
 	return problems
 }
+
+// CheckDump connects as the option files say, defaultsExtraFile first, and
+// lists what the server lacks for dumps, which record their binlog position
+// when position is set and log_bin is on; nil when it lacks nothing.
+func CheckDump(ctx context.Context, defaultsExtraFile string, position bool) []string {
+	opts, err := ReadOptions(defaultsExtraFile)
+	if err != nil {
+		return []string{"reading the option files: " + err.Error()}
+	}
+
+	conn := newServerConn(opts)
+	defer conn.Close()
+
+	srv, err := ReadServer(ctx, conn)
+	if err != nil {
+		return []string{err.Error()}
+	}
+
+	if !position || !srv.LogBin {
+		return nil
+	}
+
+	if _, err := BinaryLogs(ctx, conn); err != nil {
+		return []string{fmt.Sprintf("SHOW BINARY LOGS: %v; GRANT REPLICATION CLIENT ON *.* to the user, or set no-binlog-position", err)}
+	}
+
+	return nil
+}
