@@ -182,3 +182,30 @@ func TestRootTreeOrderIsDeterministic(t *testing.T) {
 
 	require.Len(t, refs, 1)
 }
+
+func TestWriteToStartsAtTheReadOffsetAndFetchesAhead(t *testing.T) {
+	ctx := context.Background()
+	store := &gatedStore{memStore: newMemStore()}
+
+	data, ref := distinctParts(t, store.memStore, 3*readWindow)
+	obj, err := store.memStore.Get(ctx, ref)
+	require.NoError(t, err)
+	// the first part and every part after the slow second one that fits
+	// in a window sliding past the first
+	store.gate, store.want = obj.GetFile().GetParts()[1].Ref, readWindow
+
+	var out bytes.Buffer
+	n, err := newFileReader(ctx, store, obj.GetFile(), nil).WriteTo(&out)
+	require.NoError(t, err)
+	require.EqualValues(t, len(data), n)
+	require.Equal(t, data, out.Bytes())
+
+	reader := newFileReader(ctx, store.memStore, obj.GetFile(), nil)
+	_, err = reader.Seek(100, io.SeekStart)
+	require.NoError(t, err)
+
+	out.Reset()
+	_, err = reader.WriteTo(&out)
+	require.NoError(t, err)
+	require.Equal(t, data[100:], out.Bytes())
+}

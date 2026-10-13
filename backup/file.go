@@ -954,53 +954,51 @@ func (bfr *fileReader) loadParts(ctx context.Context) ([]*proto.FilePart, error)
 	}
 }
 
-// WriteTo streams the file, fetching a window of parts ahead of the
-// writer so memory stays bounded whatever the part latency.
+// WriteTo streams the file from the read offset on, fetching up to
+// readWindow parts ahead of the writer, so memory stays bounded whatever
+// the part latency.
 func (bfr *fileReader) WriteTo(writer io.Writer) (int64, error) {
 	fileParts, err := bfr.getFileParts(bfr.ctx)
 	if err != nil {
 		return 0, err
 	}
 
+	bfr.blob = nil
+	first := sort.Search(len(fileParts), func(i int) bool {
+		return bfr.offset < int64(fileParts[i].Offset+fileParts[i].Length)
+	})
+
+	type fetched struct {
+		blob *proto.Blob
+		err  error
+	}
+
+	ahead := newPrefetch(bfr.ctx, first, len(fileParts), func(ctx context.Context, i int) fetched {
+		blob, err := bfr.getPart(ctx, i, fileParts[i])
+		return fetched{blob, err}
+	})
+	defer ahead.stop()
+
 	var written int64
 
-	for start := 0; start < len(fileParts); start += readWindow {
-		if err := bfr.ctx.Err(); err != nil {
+	for i := first; i < len(fileParts); i++ {
+		got, err := ahead.take()
+		if err == nil {
+			err = got.err
+		}
+
+		if err != nil {
 			return written, err
 		}
 
-		end := start + readWindow
-		if end > len(fileParts) {
-			end = len(fileParts)
-		}
+		data := got.blob.Data[bfr.offset-int64(fileParts[i].Offset):]
 
-		blobs := make([]*proto.Blob, end-start)
-		grp, ctx := errgroup.WithContext(bfr.ctx)
+		n, err := writer.Write(data)
+		written += int64(n)
+		bfr.offset += int64(n)
 
-		for i := start; i < end; i++ {
-			grp.Go(func() error {
-				blob, err := bfr.getPart(ctx, i, fileParts[i])
-				if err != nil {
-					return err
-				}
-
-				blobs[i-start] = blob
-
-				return nil
-			})
-		}
-
-		if err := grp.Wait(); err != nil {
+		if err != nil {
 			return written, err
-		}
-
-		for _, blob := range blobs {
-			n, err := writer.Write(blob.Data)
-			written += int64(n)
-
-			if err != nil {
-				return written, err
-			}
 		}
 	}
 

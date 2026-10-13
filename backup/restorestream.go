@@ -57,16 +57,10 @@ func (r *Restorer) streamFile(ctx context.Context, fsys WriteFS, path string, st
 // readWindow of the next ones, each from the seeds or the cache before the
 // store. Read and WriteTo both read ahead.
 type partStream struct {
-	r      *Restorer
-	reader *fileReader
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	// fetched hands over each part's result in file order
-	fetched chan chan streamed
-	window  chan struct{}
-
-	next    int
+	r       *Restorer
+	reader  *fileReader
+	ctx     context.Context
+	ahead   *prefetch[streamed]
 	pending []byte
 
 	mtx     sync.Mutex
@@ -81,37 +75,13 @@ type streamed struct {
 }
 
 func (r *Restorer) newPartStream(ctx context.Context, reader *fileReader) *partStream {
-	ctx, cancel := context.WithCancel(ctx)
-
-	s := &partStream{
-		r: r, reader: reader, ctx: ctx, cancel: cancel,
-		fetched: make(chan chan streamed, readWindow),
-		window:  make(chan struct{}, readWindow),
-	}
-
-	go s.fetchAll()
+	s := &partStream{r: r, reader: reader, ctx: ctx}
+	s.ahead = newPrefetch(ctx, 0, len(reader.parts), s.fetch)
 
 	return s
 }
 
-func (s *partStream) fetchAll() {
-	defer close(s.fetched)
-
-	for i := range s.reader.parts {
-		select {
-		case s.window <- struct{}{}:
-		case <-s.ctx.Done():
-			return
-		}
-
-		result := make(chan streamed, 1)
-		s.fetched <- result
-
-		go func() { result <- s.fetch(i) }()
-	}
-}
-
-func (s *partStream) fetch(i int) streamed {
+func (s *partStream) fetch(ctx context.Context, i int) streamed {
 	r, reader := s.r, s.reader
 	part := reader.parts[i]
 
@@ -123,7 +93,7 @@ func (s *partStream) fetch(i int) streamed {
 		return streamed{data: data, counter: counter, source: source}
 	}
 
-	obj, err := r.Store.Get(s.ctx, part.Ref)
+	obj, err := r.Store.Get(ctx, part.Ref)
 	if err != nil {
 		if r.Salvage && errors.Is(err, ErrNotFound) {
 			s.mtx.Lock()
@@ -148,31 +118,12 @@ func (s *partStream) fetch(i int) streamed {
 	return streamed{data: data, counter: &r.stats.BytesFromStore, source: "store"}
 }
 
-// take waits for the next part, counts it as landed and frees its place
-// in the window.
+// take waits for the next part and counts it as landed.
 func (s *partStream) take() ([]byte, error) {
-	if s.next == len(s.reader.parts) {
-		return nil, io.EOF
+	got, err := s.ahead.take()
+	if err != nil {
+		return nil, err
 	}
-
-	var result chan streamed
-
-	select {
-	case result = <-s.fetched:
-	case <-s.ctx.Done():
-		return nil, s.ctx.Err()
-	}
-
-	var got streamed
-
-	select {
-	case got = <-result:
-	case <-s.ctx.Done():
-		return nil, s.ctx.Err()
-	}
-
-	<-s.window
-	s.next++
 
 	if got.err != nil {
 		return nil, got.err
@@ -244,5 +195,5 @@ func (s *partStream) holes() []int {
 
 // close stops fetching what was not read.
 func (s *partStream) close() {
-	s.cancel()
+	s.ahead.stop()
 }

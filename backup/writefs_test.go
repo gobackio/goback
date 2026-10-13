@@ -99,11 +99,12 @@ func distinctParts(t *testing.T, store ObjectStore, count int) ([]byte, *proto.R
 	return data, file.Ref()
 }
 
-// gatedStore holds back the first part until the parts after it are
-// being fetched.
+// gatedStore holds back the gate's part until want other objects were
+// asked for.
 type gatedStore struct {
 	*memStore
 	gate   *proto.Ref
+	want   int64
 	others atomic.Int64
 }
 
@@ -114,9 +115,9 @@ func (g *gatedStore) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, er
 	}
 
 	deadline := time.Now().Add(10 * time.Second)
-	for g.others.Load() < readWindow {
+	for g.others.Load() < g.want {
 		if time.Now().After(deadline) {
-			return nil, errors.New("nothing was fetched ahead of the first part")
+			return nil, errors.New("nothing was fetched ahead of a slow part")
 		}
 
 		time.Sleep(time.Millisecond)
@@ -132,7 +133,9 @@ func TestAFileIsStreamedOntoATreeWrittenFrontToBack(t *testing.T) {
 	data, ref := distinctParts(t, store.memStore, 3*readWindow)
 	obj, err := store.memStore.Get(ctx, ref)
 	require.NoError(t, err)
-	store.gate = obj.GetFile().GetParts()[0].Ref
+	// the file, the first part and every part after the slow second one
+	// that fits in a window sliding past the first
+	store.gate, store.want = obj.GetFile().GetParts()[1].Ref, readWindow+1
 
 	stat := statFor(data)
 	path := filepath.Join(t.TempDir(), "world.dat")
