@@ -1,0 +1,198 @@
+package postgres
+
+import (
+	"bytes"
+	"cmp"
+	"context"
+	"fmt"
+	"io"
+	"math"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/proto"
+)
+
+// copyWAL copies the WAL recovery reads from the WAL commit into dir's
+// pg_wal, pg_xlog before Postgres 10, and returns the names it wrote there.
+func (r *Restore) copyWAL(ctx context.Context, dir string, base *proto.Commit, walRef *proto.Ref, wal *walCommit, major int) ([]string, error) {
+	ctx, end, err := backup.HoldRestore(ctx, r.Objects, wal.commit.GetBackupSet(), walRef)
+	if err != nil {
+		return nil, err
+	}
+	defer end()
+
+	// before 13, recovery that runs out of WAL short of its target promotes
+	// there without a word, so nothing tells a copy cut too short
+	var until time.Time
+	if major >= 13 {
+		until = r.At
+	}
+
+	fsys := r.fs()
+
+	pgWAL := fsys.Join(dir, "pg_wal")
+	if major < 10 {
+		pgWAL = fsys.Join(dir, "pg_xlog")
+	}
+
+	if err := fsys.MkdirAll(ctx, pgWAL); err != nil {
+		return nil, err
+	}
+
+	var copied []string
+
+	for _, i := range wal.files.copies(wal.path, base.GetMetadata()[MetaStartWALFile], until) {
+		name := wal.files.names[i]
+
+		segment, partial := isPartial(name)
+		if partial {
+			name = segment
+		}
+
+		if err := wal.files.restoreWAL(ctx, fsys, fsys.Join(pgWAL, name), i, partial); err != nil {
+			return nil, fmt.Errorf("copying %s: %w", name, err)
+		}
+
+		copied = append(copied, name)
+	}
+
+	return copied, nil
+}
+
+// copies are the files of the tree a restore copies into pg_wal, in the
+// order recovery reads them: every timeline history, then every segment
+// from the segment start on that lies on h, the history of the tree's
+// newest timeline, and the partial segment the tree serves. With until
+// set, the segments end one after the first that closed at or after it.
+func (t *commitFiles) copies(h history, start string, until time.Time) []int {
+	var histories, segments []int
+
+	from := Carry(start)
+	newest := newestTimeline(t.names)
+
+	for i, name := range t.names {
+		switch {
+		case isHistory(name):
+			histories = append(histories, i)
+		case !from(name):
+		case isSegment(name):
+			if segmentTimeline(name) == newest || t.onHistory(h, i) {
+				segments = append(segments, i)
+			}
+		default:
+			if segment, ok := isPartial(name); ok && servesPartial(t.names, segment) {
+				segments = append(segments, i)
+			}
+		}
+	}
+
+	slices.SortStableFunc(segments, func(a, b int) int {
+		x, y := t.names[a], t.names[b]
+		return cmp.Or(strings.Compare(x[8:walNameLen], y[8:walNameLen]), strings.Compare(x[:8], y[:8]))
+	})
+
+	if !until.IsZero() {
+		closed := slices.IndexFunc(segments, func(i int) bool { return t.nodes[i].Stat.GetMtimeNs() >= until.UnixNano() })
+		if closed >= 0 {
+			segments = segments[:min(closed+2, len(segments))]
+		}
+	}
+
+	return append(histories, segments...)
+}
+
+// onHistory reports whether the whole segment i of the tree lies on h; a
+// nil h holds every segment.
+func (t *commitFiles) onHistory(h history, i int) bool {
+	// a whole segment's size is the cluster's segment size
+	size := uint64(t.nodes[i].Stat.GetSize())
+
+	return h == nil || size == 0 || h.holds(t.names[i], size)
+}
+
+// restoreWAL writes file i of the tree to path on fsys; pad extends a
+// partial segment with zeros to the size its header records, as outside
+// standby mode Postgres refuses a restored segment of any other size.
+func (t *commitFiles) restoreWAL(ctx context.Context, fsys backup.WriteFS, path string, i int, pad bool) error {
+	node := t.nodes[i]
+	restorer := &backup.Restorer{Store: t.objects, Key: t.key, FS: fsys}
+
+	random, ok := fsys.(backup.RandomWriteFS)
+	if pad && !ok {
+		restorer.FS = padFS{WriteFS: fsys, size: node.Stat.GetSize()}
+	}
+
+	if _, err := restorer.RestoreFile(ctx, path, node.Stat, node.Ref); err != nil {
+		return err
+	}
+
+	if pad && ok {
+		return padSegment(ctx, random, path)
+	}
+
+	return nil
+}
+
+// padSegment extends the partial segment at path with zeros to the size
+// its header records.
+func padSegment(ctx context.Context, fsys backup.RandomWriteFS, path string) error {
+	f, err := fsys.OpenFile(ctx, path)
+	if err != nil {
+		return err
+	}
+
+	hdr, err := readSegmentHeader(io.NewSectionReader(f, 0, math.MaxInt64))
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+
+	if info.Size() < int64(hdr.segSize) {
+		if err := f.Truncate(int64(hdr.segSize)); err != nil {
+			_ = f.Close()
+			return err
+		}
+	}
+
+	return f.Close()
+}
+
+// padFS writes a partial segment of size bytes onto a tree written front
+// to back, followed by the zeros padSegment would add.
+type padFS struct {
+	backup.WriteFS
+	size int64
+}
+
+// WriteFile implements backup.WriteFS. It counts only the segment's own
+// bytes as written.
+func (p padFS) WriteFile(ctx context.Context, path string, r io.Reader) (int64, error) {
+	var head bytes.Buffer
+
+	hdr, err := readSegmentHeader(io.TeeReader(r, &head))
+	if err != nil {
+		return 0, err
+	}
+
+	pad := max(int64(hdr.segSize)-p.size, 0)
+
+	n, err := p.WriteFS.WriteFile(ctx, path, io.MultiReader(&head, r, io.LimitReader(zeros{}, pad)))
+
+	return min(n, p.size), err
+}
+
+type zeros struct{}
+
+func (zeros) Read(b []byte) (int, error) {
+	clear(b)
+	return len(b), nil
+}

@@ -79,6 +79,14 @@ func isSegment(name string) bool {
 	return ok && len(name) == walNameLen
 }
 
+// isHistory reports whether name is a timeline's history file.
+func isHistory(name string) bool {
+	timeline, ok := strings.CutSuffix(name, ".history")
+	_, err := strconv.ParseUint(timeline, 16, 32)
+
+	return ok && len(timeline) == 8 && err == nil
+}
+
 // isPartial reports whether name is a segment's partial file, and names
 // the segment.
 func isPartial(name string) (string, bool) {
