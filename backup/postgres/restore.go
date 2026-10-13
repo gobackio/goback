@@ -123,7 +123,7 @@ func (r *Restore) wal(ctx context.Context) (*proto.Ref, *walCommit, error) {
 		}
 	}
 
-	tree, err := openWALTree(ctx, r.Objects, r.Objects, commit, r.Key)
+	tree, err := openCommitFiles(ctx, r.Objects, r.Objects, commit, r.Key)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -376,7 +376,7 @@ func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key
 	}
 	defer end()
 
-	tree, err := openWALTree(ctx, objects, objects, commit, key)
+	tree, err := openCommitFiles(ctx, objects, objects, commit, key)
 	if err != nil {
 		return err
 	}

@@ -310,7 +310,7 @@ func (b *WALBackup) end(names []string, segSize uint64, readHistory func() (hist
 // heldSet is what the WAL set's latest commit holds; a set without commits
 // holds nothing.
 type heldSet struct {
-	*walTree
+	*commitFiles
 	commit *proto.Commit
 	// systemID is the cluster the set belongs to; zero when it doesn't
 	// say.
@@ -327,7 +327,7 @@ func (b *WALBackup) previous(ctx context.Context) (*heldSet, error) {
 	}
 
 	if commit == nil {
-		return &heldSet{walTree: &walTree{}}, nil
+		return &heldSet{commitFiles: &commitFiles{}}, nil
 	}
 
 	systemID, err := commitSystemID(commit)
@@ -340,12 +340,12 @@ func (b *WALBackup) previous(ctx context.Context) (*heldSet, error) {
 		return nil, err
 	}
 
-	tree, err := openWALTree(ctx, trees, w.Objects, commit, w.Key)
+	tree, err := openCommitFiles(ctx, trees, w.Objects, commit, w.Key)
 	if err != nil {
 		return nil, err
 	}
 
-	return &heldSet{walTree: tree, commit: commit, systemID: systemID}, nil
+	return &heldSet{commitFiles: tree, commit: commit, systemID: systemID}, nil
 }
 
 // latestCommit is the set's latest commit, or nil for a set without one.

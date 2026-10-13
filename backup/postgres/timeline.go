@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -185,8 +183,8 @@ func walHistory(names []string, read func(name string) ([]byte, error)) (history
 	return parseHistory(newest, content)
 }
 
-// walTree is the files of a WAL commit.
-type walTree struct {
+// commitFiles is the files at the top of a commit's tree.
+type commitFiles struct {
 	names   []string
 	nodes   []*proto.TreeNode
 	objects backup.ObjectStore
@@ -194,9 +192,9 @@ type walTree struct {
 	key *storekey.Key
 }
 
-// openWALTree opens commit's tree, reading trees from trees and files from
-// objects.
-func openWALTree(ctx context.Context, trees backup.Getter, objects backup.ObjectStore, commit *proto.Commit, key *storekey.Key) (*walTree, error) {
+// openCommitFiles opens commit's tree, reading trees from trees and files
+// from objects.
+func openCommitFiles(ctx context.Context, trees backup.Getter, objects backup.ObjectStore, commit *proto.Commit, key *storekey.Key) (*commitFiles, error) {
 	key, err := backup.CommitKey(ctx, trees, commit, key)
 	if err != nil {
 		return nil, err
@@ -212,35 +210,21 @@ func openWALTree(ctx context.Context, trees backup.Getter, objects backup.Object
 		names[i] = string(node.Stat.Name)
 	}
 
-	return &walTree{names: names, nodes: tree.Nodes, objects: objects, key: key}, nil
+	return &commitFiles{names: names, nodes: tree.Nodes, objects: objects, key: key}, nil
 }
 
-// read reads the file name of the tree whole, through a temporary file, as
-// a store that serves parts only to a restore needs.
-func (t *walTree) read(ctx context.Context, name string) ([]byte, error) {
+// read reads the file name of the tree whole into memory.
+func (t *commitFiles) read(ctx context.Context, name string) ([]byte, error) {
 	i := slices.Index(t.names, name)
 	if i < 0 {
 		return nil, fmt.Errorf("%w: %s", backup.ErrNotFound, name)
 	}
 
-	dir, err := os.MkdirTemp("", "goback-wal-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-
-	path := filepath.Join(dir, "file")
-
-	restorer := &backup.Restorer{Store: t.objects, Key: t.key}
-	if _, err := restorer.RestoreFile(ctx, path, t.nodes[i].Stat, t.nodes[i].Ref); err != nil {
-		return nil, err
-	}
-
-	return os.ReadFile(path)
+	return (&backup.Restorer{Store: t.objects, Key: t.key}).ReadFile(ctx, t.nodes[i].Stat, t.nodes[i].Ref)
 }
 
 // history is the history of the tree's newest timeline; nil when the tree
 // lacks its history file.
-func (t *walTree) history(ctx context.Context) (history, error) {
+func (t *commitFiles) history(ctx context.Context) (history, error) {
 	return walHistory(t.names, func(name string) ([]byte, error) { return t.read(ctx, name) })
 }
