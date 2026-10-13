@@ -187,17 +187,40 @@ func (s *source) caughtUp() *proto.Commit {
 
 	require.Eventually(s.t, func() bool {
 		last = s.committed()
-		if last == nil {
-			return false
-		}
-
-		meta := last.GetMetadata()
-		c := compareBinlogs(meta[MetaEndBinlog], file)
-
-		return c > 0 || c == 0 && parseInt(meta[MetaEndPos]) >= pos
+		return reaches(last, file, pos)
 	}, time.Minute, 200*time.Millisecond, "the binlog set reaches %s:%d", file, pos)
 
 	return last
+}
+
+// reaches reports whether commit holds the binlogs up to file at pos.
+func reaches(commit *proto.Commit, file string, pos int64) bool {
+	if commit == nil {
+		return false
+	}
+
+	meta := commit.GetMetadata()
+	c := compareBinlogs(meta[MetaEndBinlog], file)
+
+	return c > 0 || c == 0 && parseInt(meta[MetaEndPos]) >= pos
+}
+
+// catchUp runs a receiver until it is caught up, and checks the set holds
+// the server's binlog up to where it ended before the run.
+func (s *source) catchUp() {
+	s.t.Helper()
+
+	file, pos := s.position()
+
+	r := s.receiver()
+	r.UntilCaughtUp = true
+	r.CommitEvery = time.Hour
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	require.NoError(s.t, r.Run(ctx, make(chan struct{})))
+	require.True(s.t, reaches(s.committed(), file, pos), "the binlog set reaches %s:%d", file, pos)
 }
 
 func (s *source) target(replayImage string) *mysqlContainer {
@@ -387,6 +410,33 @@ func TestAReceiverCrashLosesNothing(t *testing.T) {
 	target := s.target("percona/percona-server:8.0")
 	s.restore(target, time.Time{})
 	require.Equal(t, "before|100\ncrash0|100\ncrash1|100\ncrash2|100\ncrash3|100", target.rows())
+}
+
+func TestAReceiverUntilCaughtUpEndsAndTheNextGoesOn(t *testing.T) {
+	s := startSource(t, "8.4")
+
+	s.db.insert("before")
+	s.dump()
+
+	s.db.insert("first")
+	s.catchUp()
+
+	s.db.sql("FLUSH BINARY LOGS")
+	s.db.insert("second")
+	s.catchUp()
+
+	ref, err := s.f.index.LatestCommit(context.Background(), "db-binlog")
+	require.NoError(t, err)
+
+	s.catchUp()
+
+	again, err := s.f.index.LatestCommit(context.Background(), "db-binlog")
+	require.NoError(t, err)
+	require.Equal(t, ref.GetHash(), again.GetHash(), "nothing new, no commit")
+
+	target := s.target("percona/percona-server:8.4")
+	s.restore(target, time.Time{})
+	require.Equal(t, "before|100\nfirst|100\nsecond|100", target.rows())
 }
 
 func TestEncryptedBinlogsAreReceived(t *testing.T) {

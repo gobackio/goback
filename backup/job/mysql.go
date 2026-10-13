@@ -91,12 +91,16 @@ type MySQLReceiveSettings struct {
 	// InitialRetention, when set, is the retention policy the set starts
 	// with if this run creates it; a set that exists keeps its own.
 	InitialRetention *retention.Policy
+	// UntilCaughtUp stops MySQLReceive once it has committed the binlog the
+	// server had written when it started.
+	UntilCaughtUp bool
 }
 
 // MySQLReceive receives the server's binlogs as a replica into the spool
-// and commits them to the set, until stop is closed; then it makes its
-// last commit and returns nil. committed and report, when set, hear of
-// each commit and of how the receiver stands.
+// and commits them to the set, until stop is closed or, with
+// UntilCaughtUp, until it is caught up; then it makes its last commit and
+// returns nil. committed and report, when set, hear of each commit and of
+// how the receiver stands.
 func MySQLReceive(ctx context.Context, env *Env, s MySQLReceiveSettings, stop <-chan struct{},
 	committed func(*backup.WalkResult), report func(mysql.ReceiverStatus),
 ) error {
@@ -126,13 +130,14 @@ func MySQLReceive(ctx context.Context, env *Env, s MySQLReceiveSettings, stop <-
 				ReadRetries:      3,
 			}
 		},
-		DumpSet:     s.DumpSet,
-		Window:      s.Window,
-		CommitEvery: s.CommitEvery,
-		CommitBytes: s.CommitBytes,
-		Logger:      env.logger(),
-		Committed:   committed,
-		Report:      report,
+		DumpSet:       s.DumpSet,
+		Window:        s.Window,
+		CommitEvery:   s.CommitEvery,
+		CommitBytes:   s.CommitBytes,
+		Logger:        env.logger(),
+		Committed:     committed,
+		Report:        report,
+		UntilCaughtUp: s.UntilCaughtUp,
 	}
 
 	return r.Run(ctx, stop)

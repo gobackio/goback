@@ -122,12 +122,16 @@ type PostgresReceiveSettings struct {
 	// InitialRetention, when set, is the retention policy the set starts
 	// with if this run creates it; a set that exists keeps its own.
 	InitialRetention *retention.Policy
+	// UntilCaughtUp stops PostgresReceive once it has committed the WAL the
+	// server had flushed when it started.
+	UntilCaughtUp bool
 }
 
 // PostgresReceive streams the cluster's WAL through a replication slot
-// into the spool and commits it to the set, until stop is closed; then it
-// makes its last commit and returns nil. committed and report, when set,
-// hear of each commit and of how the receiver stands.
+// into the spool and commits it to the set, until stop is closed or, with
+// UntilCaughtUp, until it is caught up; then it makes its last commit and
+// returns nil. committed and report, when set, hear of each commit and of
+// how the receiver stands.
 func PostgresReceive(ctx context.Context, env *Env, s PostgresReceiveSettings, stop <-chan struct{},
 	committed func(*backup.WalkResult), report func(postgres.ReceiverStatus),
 ) error {
@@ -158,13 +162,14 @@ func PostgresReceive(ctx context.Context, env *Env, s PostgresReceiveSettings, s
 				ReadRetries:      3,
 			}
 		},
-		BaseSet:     s.BaseSet,
-		Window:      s.Window,
-		CommitEvery: s.CommitEvery,
-		CommitBytes: s.CommitBytes,
-		Logger:      env.logger(),
-		Committed:   committed,
-		Report:      report,
+		BaseSet:       s.BaseSet,
+		Window:        s.Window,
+		CommitEvery:   s.CommitEvery,
+		CommitBytes:   s.CommitBytes,
+		Logger:        env.logger(),
+		Committed:     committed,
+		Report:        report,
+		UntilCaughtUp: s.UntilCaughtUp,
 	}
 
 	return r.Run(ctx, stop)

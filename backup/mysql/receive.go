@@ -78,6 +78,10 @@ type Receiver struct {
 	Committed func(*backup.WalkResult)
 	// Report, when set, hears how the receiver stands every ten seconds.
 	Report func(ReceiverStatus)
+	// UntilCaughtUp makes Run stop on its own once it has received the
+	// binlog the server had written when it started: it commits that and
+	// returns nil.
+	UntilCaughtUp bool
 
 	floor time.Duration
 	now   func() time.Time
@@ -151,11 +155,12 @@ func (r *Receiver) at(point string) error {
 	return r.hook(point)
 }
 
-// Run receives and commits until stop is closed, then commits what it
-// received and returns nil. It reconnects after the connection fails. It
-// returns early with an error that needs a person (ErrGap, ErrNoBinlog,
-// ErrForeignBinlog, ErrBinlogChanged, ErrServerIDInUse), or with one a
-// restart may clear. When ctx ends, it stops without the last commit.
+// Run receives and commits until stop is closed, or with UntilCaughtUp
+// until it is caught up, then commits what it received and returns nil.
+// It reconnects after the connection fails. It returns early with an error
+// that needs a person (ErrGap, ErrNoBinlog, ErrForeignBinlog,
+// ErrBinlogChanged, ErrServerIDInUse), or with one a restart may clear.
+// When ctx ends, it stops without the last commit.
 func (r *Receiver) Run(ctx context.Context, stop <-chan struct{}) error {
 	if err := r.setDefaults(); err != nil {
 		return err
@@ -214,6 +219,12 @@ func (r *Receiver) Run(ctx context.Context, stop <-chan struct{}) error {
 		return err
 	}
 
+	if r.UntilCaughtUp {
+		if err := run.target(ctx); err != nil {
+			return err
+		}
+	}
+
 	return run.loop(ctx, stop)
 }
 
@@ -262,6 +273,8 @@ type receiveRun struct {
 	committed string
 	commitPos int64
 	lagBytes  int64
+	// until, when set, is the binlog and size the run stops after
+	until *Binlog
 }
 
 type commitDone struct {
@@ -350,6 +363,11 @@ func (run *receiveRun) start(ctx context.Context) error {
 
 	run.from, run.fromPos = from, pos
 	run.retry = len(spooled) > 0 || open != ""
+
+	// a run that only catches up commits nothing the newest commit holds
+	if r.UntilCaughtUp && len(spooled) == 0 && held != nil && held.chain == run.chain && open == run.committed && end == run.commitPos {
+		run.retry = false
+	}
 
 	if open == "" && held != nil {
 		for _, node := range held.chains[run.chain] {
@@ -443,6 +461,16 @@ func (run *receiveRun) loop(ctx context.Context, stop <-chan struct{}) error {
 		default:
 		}
 
+		if run.caughtUp() {
+			if err := run.final(ctx); err != nil {
+				return err
+			}
+
+			r.logger().Info("caught up with the server", "at", fmt.Sprintf("%s:%d", run.until.Name, run.until.Size))
+
+			return nil
+		}
+
 		now = r.now()
 
 		if err := run.tick(ctx, now); err != nil {
@@ -475,6 +503,39 @@ func (run *receiveRun) loop(ctx context.Context, stop <-chan struct{}) error {
 			}
 		}
 	}
+}
+
+// target makes where the server's binlogs end now the point the run stops
+// after.
+func (run *receiveRun) target(ctx context.Context) error {
+	logs, err := BinaryLogs(ctx, run.server)
+	if err != nil {
+		return fmt.Errorf("listing the server's binlogs: %w", err)
+	}
+
+	if len(logs) == 0 {
+		return errors.New("the server lists no binary logs")
+	}
+
+	run.until = &logs[len(logs)-1]
+
+	return nil
+}
+
+// caughtUp reports whether the run has received all of until.
+func (run *receiveRun) caughtUp() bool {
+	if run.until == nil {
+		return false
+	}
+
+	name, pos, ok := run.w.resume()
+	if !ok {
+		name, pos = run.from, run.fromPos
+	}
+
+	c := compareBinlogs(name, run.until.Name)
+
+	return c > 0 || c == 0 && pos >= run.until.Size
 }
 
 // sleep waits for d, or until stop or ctx ends.
@@ -681,6 +742,10 @@ func (run *receiveRun) switchChain(ctx context.Context, n int, first string) err
 	run.w, run.chain = w, n
 	run.from, run.fromPos, run.partialAt = first, binlogHeaderBytes, time.Time{}
 	run.committed, run.commitPos = "", 0
+
+	if run.until != nil {
+		return run.target(ctx)
+	}
 
 	return nil
 }

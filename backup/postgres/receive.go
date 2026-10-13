@@ -78,6 +78,10 @@ type Receiver struct {
 	Committed func(*backup.WalkResult)
 	// Report, when set, hears how the receiver stands every ten seconds.
 	Report func(ReceiverStatus)
+	// UntilCaughtUp makes Run stop on its own once it has received the WAL
+	// the server had flushed when it started: it commits that, tells the
+	// server, and returns nil.
+	UntilCaughtUp bool
 
 	// floor is the least time between two commits; MinCommitEvery when
 	// zero.
@@ -143,11 +147,11 @@ func (r *Receiver) setDefaults() error {
 	return nil
 }
 
-// Run receives and commits until stop is closed, then commits what it
-// received and returns nil. When the server shuts down, it commits what
-// the server sent up to its shutdown at once, so the shutdown doesn't wait
-// for CommitEvery, and returns ErrServerShutDown. It returns early with an
-// error that needs a
+// Run receives and commits until stop is closed, or with UntilCaughtUp
+// until it is caught up, then commits what it received and returns nil.
+// When the server shuts down, it commits what the server sent up to its
+// shutdown at once, so the shutdown doesn't wait for CommitEvery, and
+// returns ErrServerShutDown. It returns early with an error that needs a
 // person (ErrGap, ErrForeignCluster, ErrUncappedSlot,
 // ErrSynchronousStandby, ErrSlotActive) or, on any other failure, one a
 // restart may clear. When ctx ends, it stops without the last commit.
@@ -215,6 +219,12 @@ func (r *Receiver) Run(ctx context.Context, stop <-chan struct{}) error {
 	}
 
 	run := &receiveRun{r: r, mon: mon, slot: slot, settings: settings, held: held, committed: committed}
+
+	if r.UntilCaughtUp {
+		if run.until, err = mon.flushLSN(ctx); err != nil {
+			return err
+		}
+	}
 
 	err = run.session(ctx, stop, nil)
 
@@ -330,6 +340,8 @@ type receiveRun struct {
 	settings  settings
 	held      *heldSet
 	committed uint64
+	// until, when set, is where the WAL ends that the run stops after.
+	until uint64
 }
 
 // session streams from the resume point, or from at, until stop.
@@ -422,6 +434,7 @@ func (run *receiveRun) session(ctx context.Context, stop <-chan struct{}, at *po
 		walStatus: slot.walStatus,
 		safe:      slot.safeWALSize,
 		restart:   slot.restartLSN,
+		until:     run.until,
 		commit:    r.commit,
 	}
 
@@ -585,6 +598,8 @@ type session struct {
 	down <-chan struct{}
 	// ended is set once the stream is gone and hears no more status.
 	ended bool
+	// until, when set, is where the WAL ends that the session stops after.
+	until uint64
 
 	keepSize int64
 	// floor is the slot's position when streaming started: a flush
@@ -657,6 +672,20 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 
 			return s.final(ctx, s.w.written > cutEnd || s.retry)
 		default:
+		}
+
+		if s.until != 0 && max(s.w.written, s.flushed) >= s.until {
+			if err := s.drain(ctx, &inflight, &failures); err != nil {
+				return err
+			}
+
+			if err := s.final(ctx, s.w.written > max(cutEnd, s.flushed) || s.retry); err != nil {
+				return err
+			}
+
+			r.logger().Info("caught up with the server", "at", FormatLSN(max(s.w.written, s.flushed)))
+
+			return nil
 		}
 
 		now = r.now()

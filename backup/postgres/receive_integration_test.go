@@ -484,6 +484,54 @@ func TestACrashBetweenReceivingAndCommittingLosesNothing(t *testing.T) {
 	require.Equal(t, "zero|1000\ncut 0|1000\ncut 1|1000\ncommitted 2|1000\ncommitted 3|1000", x.restore(time.Time{}))
 }
 
+// catchUp runs a receiver until it is caught up, and checks the newest
+// commit holds the WAL the server had flushed before it started and the
+// server has its end as the slot's.
+func (x *replica) catchUp() *proto.Commit {
+	x.t.Helper()
+
+	target, err := ParseLSN(x.pg.psql("SELECT pg_current_wal_flush_lsn()"))
+	require.NoError(x.t, err)
+
+	r := x.receiver()
+	r.UntilCaughtUp = true
+	r.CommitEvery = time.Hour
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	require.NoError(x.t, r.Run(ctx, make(chan struct{})))
+
+	commit := x.latest()
+	end := commit.GetMetadata()[MetaEndLSN]
+
+	lsn, err := ParseLSN(end)
+	require.NoError(x.t, err)
+	require.GreaterOrEqual(x.t, lsn, target, "the commit holds the WAL flushed before the run")
+
+	x.pg.waitFor(fmt.Sprintf(`[ "$(psql -tAc "SELECT restart_lsn = '%s' FROM pg_replication_slots WHERE slot_name = 'goback_db_wal'")" = t ]`, end))
+
+	return commit
+}
+
+func TestAReceiverUntilCaughtUpEndsAndTheNextGoesOnFromTheSlot(t *testing.T) {
+	x := startReplica(t, "17", "max_slot_wal_keep_size=1GB")
+
+	x.insert("before")
+	x.base()
+
+	x.insert("first")
+	x.catchUp()
+
+	x.pg.psql("SELECT pg_switch_wal()")
+	x.insert("second")
+	x.catchUp()
+
+	x.catchUp()
+
+	require.Equal(t, "before|1000\nfirst|1000\nsecond|1000", x.restore(time.Time{}))
+}
+
 func TestTheReceiverRefusesToBeASynchronousStandby(t *testing.T) {
 	x := startReplica(t, "17", "max_slot_wal_keep_size=1GB")
 

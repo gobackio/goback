@@ -68,6 +68,10 @@ var receiveCmd = cli.Command{
 			Value: 30 * time.Second,
 		},
 		cli.BoolFlag{
+			Name:  "until-caught-up",
+			Usage: "commit the WAL the server has flushed when receive starts, then exit",
+		},
+		cli.BoolFlag{
 			Name:  "drop-slot",
 			Usage: "drop the replication slot and exit",
 		},
@@ -130,6 +134,7 @@ func receiveAction(c *cli.Context) error {
 		CommitBytes:       int64(commitBytes),
 		Window:            c.Duration("window"),
 		InitialRetention:  initial,
+		UntilCaughtUp:     c.Bool("until-caught-up"),
 	}, stop, func(result *backup.WalkResult) {
 		if env.TreeCache != nil {
 			if _, err := env.TreeCache.Sweep(); err != nil {

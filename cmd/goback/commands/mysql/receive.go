@@ -56,6 +56,10 @@ var receiveCmd = cli.Command{
 			Usage: "how far back point-in-time recovery reaches; binlogs older than the oldest dump in this window are retired",
 			Value: 14 * 24 * time.Hour,
 		},
+		cli.BoolFlag{
+			Name:  "until-caught-up",
+			Usage: "commit the binlog the server has written when receive starts, then exit",
+		},
 		cli.DurationFlag{
 			Name:  "shutdown-grace",
 			Usage: "how long the last commit may take after SIGTERM",
@@ -104,6 +108,7 @@ func receiveAction(c *cli.Context) error {
 		CommitBytes:       int64(commitBytes),
 		Window:            c.Duration("window"),
 		InitialRetention:  initial,
+		UntilCaughtUp:     c.Bool("until-caught-up"),
 	}, stop, func(result *backup.WalkResult) {
 		if env.TreeCache != nil {
 			if _, err := env.TreeCache.Sweep(); err != nil {

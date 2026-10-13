@@ -305,6 +305,37 @@ func TestATornEventIsReceivedAgain(t *testing.T) {
 	require.Equal(t, []string{"binlog.000002"}, files, "a binlog before the open one is whole")
 }
 
+func TestARunIsCaughtUpOnceItReceivedWhereTheServerEnded(t *testing.T) {
+	w, err := openBinlogWriter(Spool{Dir: t.TempDir()})
+	require.NoError(t, err)
+	defer w.stop()
+
+	run := &receiveRun{w: w, from: "binlog.000002", fromPos: 300}
+	require.False(t, run.caughtUp(), "without UntilCaughtUp")
+
+	run.until = &Binlog{"binlog.000002", 300}
+	require.True(t, run.caughtUp(), "nothing to receive past where receiving resumes")
+
+	run.until = &Binlog{"binlog.000003", 194}
+	require.False(t, run.caughtUp())
+
+	require.NoError(t, w.begin("binlog.000003", 4))
+
+	for _, event := range [][]byte{eventBytes(formatDescriptionEvent, 1, 10, 104, 100, 0), eventBytes(2, 1, 11, 154, 50, 0)} {
+		h, _ := parseEventHeader(event)
+		require.NoError(t, w.write(h, event))
+	}
+
+	require.False(t, run.caughtUp())
+
+	rotate := eventBytes(rotateEvent, 1, 12, 194, 40, 0)
+	h, _ := parseEventHeader(rotate)
+	require.NoError(t, w.write(h, rotate))
+	require.NoError(t, w.close())
+
+	require.True(t, run.caughtUp(), "a binlog the server rotated away from is whole")
+}
+
 func TestAnEventThatDoesNotEndWhereTheBinlogDoesFails(t *testing.T) {
 	w, err := openBinlogWriter(Spool{Dir: t.TempDir()})
 	require.NoError(t, err)

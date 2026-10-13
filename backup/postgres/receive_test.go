@@ -266,6 +266,35 @@ func TestTheLastCommitHappensOnStop(t *testing.T) {
 	require.Equal(t, sentStatus{at: f.now, write: 100, flush: 100}, f.sent[len(f.sent)-1])
 }
 
+func TestASessionUntilCaughtUpCommitsWhatItReceivedAndEnds(t *testing.T) {
+	f := &fakeStream{script: []any{xlogData{start: 0, data: wal(0, 100)}, xlogData{start: 100, data: wal(100, 100)}}}
+
+	var ends []uint64
+
+	s := newSession(t, f, func(_ context.Context, c *cut) (*backup.WalkResult, error) {
+		ends = append(ends, c.end)
+		return &backup.WalkResult{Ref: &proto.Ref{Hash: []byte{1}}}, nil
+	})
+	s.until = 150
+
+	require.NoError(t, s.run(context.Background(), make(chan struct{})))
+	require.Equal(t, []uint64{200}, ends)
+	require.Equal(t, uint64(200), f.sent[len(f.sent)-1].flush)
+}
+
+func TestASessionUntilCaughtUpWithNothingNewCommitsNothing(t *testing.T) {
+	f := &fakeStream{script: []any{xlogData{start: 0, data: wal(0, 100)}}}
+
+	s := newSession(t, f, func(context.Context, *cut) (*backup.WalkResult, error) {
+		t.Fatal("a commit of WAL the set holds")
+		return nil, nil
+	})
+	s.flushed, s.until = 100, 100
+
+	require.NoError(t, s.run(context.Background(), make(chan struct{})))
+	require.Equal(t, uint64(100), f.sent[len(f.sent)-1].flush)
+}
+
 func TestAFlushBehindTheSlotIsNotReported(t *testing.T) {
 	s := &session{flushed: 100, floor: 200}
 	require.Zero(t, s.flush(), "it would move the slot back onto removed WAL")

@@ -134,6 +134,25 @@ func (m *monitor) currentLSN(ctx context.Context) (uint64, error) {
 	return ParseLSN(lsn)
 }
 
+// flushLSN is where the WAL the server can stream ends: its flushed WAL,
+// or on a standby the WAL it has received or replayed.
+func (m *monitor) flushLSN(ctx context.Context) (uint64, error) {
+	var lsn *string
+
+	err := m.conn.QueryRow(ctx, `SELECT CASE WHEN pg_is_in_recovery()
+		THEN greatest(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn())
+		ELSE pg_current_wal_flush_lsn() END::text`).Scan(&lsn)
+	if err != nil {
+		return 0, fmt.Errorf("reading the server's WAL position: %w", err)
+	}
+
+	if lsn == nil {
+		return 0, errors.New("the server has no WAL position to stream up to")
+	}
+
+	return ParseLSN(*lsn)
+}
+
 // syncState is pg_stat_replication's sync_state for the walsender with
 // pid, and the flush position the server has from it. listed is false
 // while it isn't listed yet; hidden is true when the role may not see it.
