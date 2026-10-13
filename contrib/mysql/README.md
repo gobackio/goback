@@ -37,6 +37,7 @@ Details:
 
 - **Dumps only.** Point-in-time recovery is optional: without the `goback-receive` service, the daily dumps restore on their own. With `log_bin` on, a dump still records its binlog position, so a receiver added later can start from it; `--no-binlog-position` leaves it out.
 - **Point-in-time recovery window.** The receiver keeps binlogs back to the oldest dump within `--window` (14 days by default). Dumps are kept by the `db-dump` set's retention.
+- **Retention of the two sets.** Each `db-binlog` commit holds the whole window, so the set needs only its newest few: `goback set retention db-binlog --keep-last 60`. Kept by age, it holds binlogs from long before the window. `db-dump` must keep every dump within the window, or recovery reaches back less far: `goback set retention db-dump --keep-within 360h`, the window and a day.
 - **Non-transactional tables.** A dump is consistent through one transaction, which covers InnoDB only. When user tables of another engine, such as MyISAM, exist, the dump locks all tables until it ends and logs which tables caused it. Writes wait for that long.
 - **The open binlog.** Each commit holds the binlog being written as `<binlog>.partial`, so a restore reaches the last commit, not the last rotation.
 - **Commits.** Every minute (`--commit-every`), sooner past 256 MiB (`--commit-bytes`), and none while the server writes nothing.
@@ -75,7 +76,7 @@ With `log_bin` on, as by default on 8.0, a dump records its position and needs `
 - **Without `--binlog-set`.** It loads the dump alone. `--at` needs `--binlog-set`.
 - **The target.** It refuses a server that holds databases of its own; `--force` loads anyway. Its `max_allowed_packet` must be at least the source's.
 - **`mysqlbinlog`.** It must be at least the source server's version. The `mysql:8.0` image has none: restore with `--to <dir>`, which writes the dump and the binlogs into a directory and prints the two commands that apply them, and run those where `mysqlbinlog` is installed.
-- **Finding the sets.** It finds them through the index.
+- **Finding the sets.** It finds them through the index, or through the set heads in the bucket when the index has none, as on a new host.
 
 ### Restoring next to a running server
 
