@@ -19,6 +19,11 @@ var checkCmd = cli.Command{
 			EnvVar: "GOBACK_POSTGRES_DBNAME",
 		},
 		cli.StringFlag{
+			Name:   "pg-basebackup",
+			Usage:  "pg_basebackup program base would take the backup with",
+			EnvVar: "GOBACK_POSTGRES_BASEBACKUP",
+		},
+		cli.StringFlag{
 			Name:  "slot",
 			Usage: "physical replication slot receive would use; goback_ followed by the set's name by default",
 		},
@@ -36,5 +41,5 @@ func checkAction(c *cli.Context) error {
 		slot = postgres.SlotName(set)
 	}
 
-	return common.Problems(postgres.Check(common.Context(c), c.String("dbname"), slot, c.Bool("allow-uncapped-slot")))
+	return common.Problems(postgres.Check(common.Context(c), c.String("dbname"), c.String("pg-basebackup"), slot, c.Bool("allow-uncapped-slot")))
 }

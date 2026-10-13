@@ -123,7 +123,9 @@ func receiveAction(c *cli.Context) error {
 		common.CloseRepo(repo)
 	}()
 
-	return job.PostgresReceive(ctx, env, job.PostgresReceiveSettings{
+	var status *postgres.ReceiverStatus
+
+	err = job.PostgresReceive(ctx, env, job.PostgresReceiveSettings{
 		Set:               set,
 		BaseSet:           c.String("base-set"),
 		Spool:             c.String("spool"),
@@ -143,5 +145,16 @@ func receiveAction(c *cli.Context) error {
 		}
 
 		log.Printf("Commit %s: %d files, %d bytes uploaded", hex.EncodeToString(result.Ref.GetHash()), result.Files, result.Uploaded)
-	}, nil)
+	}, func(s postgres.ReceiverStatus) {
+		status = &s
+	})
+	if err != nil || !c.Bool("until-caught-up") || status == nil {
+		return err
+	}
+
+	common.Result(status, func() {
+		log.Printf("Caught up at %s; the slot keeps %s of WAL", status.Received, humanize.IBytes(uint64(status.RetainedBytes)))
+	})
+
+	return nil
 }

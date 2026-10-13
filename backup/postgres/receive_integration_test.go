@@ -557,8 +557,8 @@ func TestTheReceiverRefusesAnUncappedSlot(t *testing.T) {
 	require.ErrorIs(t, err, ErrUncappedSlot)
 	require.Empty(t, x.pg.psql("SELECT slot_name FROM pg_replication_slots"), "no slot left behind")
 
-	require.Empty(t, strings.Join(Check(context.Background(), x.conn, "goback_db_wal", true), "\n"))
-	require.Contains(t, strings.Join(Check(context.Background(), x.conn, "goback_db_wal", false), "\n"), "max_slot_wal_keep_size")
+	require.Empty(t, strings.Join(Check(context.Background(), x.conn, "", "goback_db_wal", true), "\n"))
+	require.Contains(t, strings.Join(Check(context.Background(), x.conn, "", "goback_db_wal", false), "\n"), "max_slot_wal_keep_size")
 }
 
 func TestTheReceiverFollowsAPromotionToTimeline2(t *testing.T) {

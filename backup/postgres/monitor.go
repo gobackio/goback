@@ -1,10 +1,13 @@
 package postgres
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -227,10 +230,12 @@ func (m *monitor) checkAsync(ctx context.Context, pid uint32, flush uint64) erro
 // Check connects to the cluster at connString as the receiver and the
 // base backups do, and lists what it lacks for replication capture: a
 // supported version, the role's REPLICATION attribute, pg_hba.conf entries
-// for both connections and, unless slot is empty because nothing streams,
-// a capped slot unless allowUncapped and a free one. An empty list means
-// nothing is missing.
-func Check(ctx context.Context, connString, slot string, allowUncapped bool) []string {
+// for both connections, a pg_basebackup of the server's major version where
+// base backups need one (pgBasebackup, or pg_basebackup on the PATH when
+// empty) and, unless slot is empty because nothing streams, a capped slot
+// unless allowUncapped and a free one. An empty list means nothing is
+// missing.
+func Check(ctx context.Context, connString, pgBasebackup, slot string, allowUncapped bool) []string {
 	m, err := connectMonitor(ctx, connString, "goback")
 	if err != nil {
 		return []string{err.Error() + "; pg_hba.conf needs a line for a normal connection to that database"}
@@ -244,11 +249,14 @@ func Check(ctx context.Context, connString, slot string, allowUncapped bool) []s
 		return []string{err.Error()}
 	}
 
-	switch {
-	case s.version < minReceiveVersion:
+	if s.version < minReceiveVersion {
 		problems = append(problems, fmt.Sprintf("Postgres %s is older than 14, the oldest replication capture supports", versionString(s.version)))
-	case s.version < minInProcessBaseVersion:
-		problems = append(problems, fmt.Sprintf("Postgres %s takes base backups through pg_basebackup, which must be installed in the same major version", versionString(s.version)))
+	}
+
+	if s.version < minInProcessBaseVersion || pgBasebackup != "" {
+		if problem := checkBasebackup(ctx, cmp.Or(pgBasebackup, "pg_basebackup"), s.version); problem != "" {
+			problems = append(problems, problem)
+		}
 	}
 
 	var (
@@ -274,6 +282,48 @@ func Check(ctx context.Context, connString, slot string, allowUncapped bool) []s
 	}
 
 	return problems
+}
+
+// checkBasebackup says what keeps program from taking base backups of a
+// server at version, or nothing.
+func checkBasebackup(ctx context.Context, program string, version int) string {
+	out, err := exec.CommandContext(ctx, program, "--version").Output()
+	if err != nil {
+		return fmt.Sprintf("Postgres %s takes base backups through pg_basebackup %s, and running %s failed: %v", versionString(version), majorString(version), program, err)
+	}
+
+	if got := basebackupMajor(string(out)); got != majorString(version) {
+		return fmt.Sprintf("Postgres %s takes base backups through pg_basebackup %s, and %s is %s", versionString(version), majorString(version), program, cmp.Or(got, "of an unknown version"))
+	}
+
+	return ""
+}
+
+// basebackupMajor is the major version pg_basebackup --version prints, as
+// majorString writes it.
+func basebackupMajor(out string) string {
+	fields := strings.Fields(out)
+	if len(fields) < 3 {
+		return ""
+	}
+
+	parts := strings.Split(fields[2], ".")
+	if n, err := strconv.Atoi(parts[0]); err != nil || n < 10 && len(parts) < 2 {
+		return ""
+	} else if n < 10 {
+		return parts[0] + "." + parts[1]
+	}
+
+	return parts[0]
+}
+
+// majorString is a server version number's major version: 9.6, or 14.
+func majorString(num int) string {
+	if num < 100000 {
+		return strconv.Itoa(num/10000) + "." + strconv.Itoa(num/100%100)
+	}
+
+	return strconv.Itoa(num / 10000)
 }
 
 func versionString(num int) string {
