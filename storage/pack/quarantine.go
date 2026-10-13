@@ -122,7 +122,10 @@ func (ps *PackStorage) PurgeQuarantine(period time.Duration, now time.Time) (int
 				return nil
 			}
 
-			ps.deleteArchiveFiles(name)
+			// the marker is what brings a failed delete back next run
+			if !ps.deleteArchiveFiles(name) {
+				return nil
+			}
 
 			if err := ps.storage.Delete(name + RetiredExt); err != nil && !notExist(err) {
 				return err

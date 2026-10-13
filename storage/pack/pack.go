@@ -1162,15 +1162,21 @@ func (ps *PackStorage) stored(name string) bool {
 	return true
 }
 
-func (ps *PackStorage) deleteArchiveFiles(name string) {
+// deleteArchiveFiles deletes an archive's files and reports whether its
+// index and data are gone.
+func (ps *PackStorage) deleteArchiveFiles(name string) bool {
+	gone := true
+
 	err := ps.storage.Delete(name + IndexExt)
 	if err != nil && !notExist(err) {
 		ps.logger.Warn("deleting index failed", "archive", name, "err", err)
+		gone = false
 	}
 
 	err = ps.storage.Delete(name + ArchiveSuffix)
 	if err != nil && !notExist(err) {
 		ps.logger.Warn("deleting archive failed", "archive", name, "err", err)
+		gone = false
 	}
 
 	if err == nil {
@@ -1186,6 +1192,8 @@ func (ps *PackStorage) deleteArchiveFiles(name string) {
 	if err != nil && !notExist(err) {
 		ps.logger.Warn("deleting committed marker failed", "archive", name, "err", err)
 	}
+
+	return gone
 }
 
 // openArchive loads a finalized archive. One the index does not know is

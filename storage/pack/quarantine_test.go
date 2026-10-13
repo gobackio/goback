@@ -2,7 +2,9 @@ package pack
 
 import (
 	"context"
+	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,4 +159,48 @@ func TestThePurgeGoesByTheDayAMarkerNamesAndNeverBeforeItWasStored(t *testing.T)
 			require.Equal(t, kept, archiveKept, "%s at %s", name, tc.now)
 		}
 	}
+}
+
+// failingArchiveDeletes refuses to delete archive data while set.
+type failingArchiveDeletes struct {
+	*memView
+
+	failing bool
+}
+
+func (f *failingArchiveDeletes) Delete(name string) error {
+	if f.failing && strings.HasSuffix(name, ArchiveSuffix) {
+		return errors.New("the bucket is unreachable")
+	}
+
+	return f.memView.Delete(name)
+}
+
+func TestAPurgeThatCannotDeleteTheArchiveTriesAgainNextRun(t *testing.T) {
+	day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	bucket := newMemBucket()
+	storage := &failingArchiveDeletes{memView: bucket.view(), failing: true}
+
+	store, err := NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	t.Cleanup(func() { _ = store.Close() })
+
+	bucket.files["old"+RetiredExt] = memObject{data: []byte(day.Format(quarantineDay)), created: day}
+	bucket.files["old"+ArchiveSuffix] = memObject{data: []byte("data"), created: day}
+
+	due := day.Add(DefaultQuarantine + 24*time.Hour)
+
+	purged, err := store.PurgeQuarantine(DefaultQuarantine, due)
+	require.NoError(t, err)
+	require.Zero(t, purged)
+	require.Contains(t, bucket.files, "old"+RetiredExt, "the marker stays for the next run")
+
+	storage.failing = false
+
+	purged, err = store.PurgeQuarantine(DefaultQuarantine, due)
+	require.NoError(t, err)
+	require.Equal(t, 1, purged)
+	require.NotContains(t, bucket.files, "old"+ArchiveSuffix)
+	require.NotContains(t, bucket.files, "old"+RetiredExt)
 }
