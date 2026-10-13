@@ -50,7 +50,7 @@ var Default = Policy{KeepLast: 1, Brackets: []Bracket{
 	{Period: Monthly},
 }}
 
-// KeepAll retires nothing; a local index without an operator uses it.
+// KeepAll is a policy that retires nothing.
 var KeepAll = Policy{KeepLast: 1, KeepWithin: time.Duration(math.MaxInt64)}
 
 // ErrInvalidPolicy wraps every validation failure.

@@ -1,3 +1,7 @@
+// Package storage serves a store to agents over gRPC and reaches one: Store
+// holds a store's operations over its index, Server serves them, and
+// Client is the backup.Index an agent uses to talk to a store server.
+// BucketStore keeps a store's archives in a gocloud bucket.
 package storage
 
 import (

@@ -1,3 +1,6 @@
+// Package wrapped finds the store beneath stores layered over it, such as
+// a cache: Innermost(store) is the store that keeps the objects, to test
+// for what it implements.
 package wrapped
 
 import (

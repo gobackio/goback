@@ -1,3 +1,8 @@
+// Package backup writes and reads commits: a Walker backs a directory up
+// into a set as a commit of trees, files and chunks, and a Restorer writes
+// a commit, a subtree or one file back, downloading only what the
+// destination lacks. Both work against an ObjectStore and an Index, which
+// package goback opens from a storage location.
 package backup
 
 import (

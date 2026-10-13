@@ -1,3 +1,7 @@
+// Package pack stores objects in archives, each with an index of what it
+// holds, in an ArchiveStorage such as a directory or a bucket. PackStorage
+// is the store, built with NewPackStorage; it also compacts, garbage
+// collects, scrubs and repairs its archives, and keeps each set's head.
 package pack
 
 // TODO: simplify the locking
