@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gobackio/goback/backup"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,6 +61,7 @@ func TestABaseBackupDescribesItself(t *testing.T) {
 		MetaStartLSN:     "0/7000028",
 		MetaStopLSN:      "0/7000120",
 		MetaStartWALFile: "000000010000000000000007",
+		backup.MetaKind:  backup.KindPostgresBase,
 	}, info.Metadata())
 }
 

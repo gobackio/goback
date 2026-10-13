@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"time"
 
@@ -74,7 +75,7 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 		InitialRetention:   s.InitialRetention,
 		Set:                s.Set,
 		AgentID:            env.AgentID,
-		Metadata:           s.Meta,
+		Metadata:           pathMeta(s.Meta),
 		Key:                env.Key,
 		Logger:             logger,
 		Root:               root,
@@ -200,4 +201,18 @@ func logProgress(logger *slog.Logger, started time.Time) func(backup.WalkResult)
 			time.Since(started).Round(time.Second), r.Files, humanize.Bytes(uint64(r.Bytes)),
 			r.Read, r.Reused, humanize.Bytes(uint64(r.Uploaded))))
 	}
+}
+
+// pathMeta is meta with the path kind, unless it names a kind of its own.
+func pathMeta(meta map[string]string) map[string]string {
+	meta = maps.Clone(meta)
+	if meta == nil {
+		meta = map[string]string{}
+	}
+
+	if meta[backup.MetaKind] == "" {
+		meta[backup.MetaKind] = backup.KindPath
+	}
+
+	return meta
 }

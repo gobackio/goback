@@ -174,6 +174,7 @@ func (c *spoolCommit) Run(ctx context.Context) (*backup.WalkResult, error) {
 		MetaLastBinlog:   lastWhole(names),
 		MetaDumpSet:      c.DumpSet,
 		MetaWindow:       c.Window.String(),
+		backup.MetaKind:  backup.KindMySQLBinlog,
 	}
 	c.ID.metadata(w.Metadata)
 

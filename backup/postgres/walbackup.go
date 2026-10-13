@@ -150,6 +150,7 @@ func (b *WALBackup) Run(ctx context.Context) (*backup.WalkResult, error) {
 		MetaCapture:      CaptureReplication,
 		MetaBaseSet:      b.BaseSet,
 		MetaWindow:       b.Window.String(),
+		backup.MetaKind:  backup.KindPostgresWAL,
 	}
 
 	if systemID != 0 {

@@ -91,6 +91,7 @@ func TestADumpRecordsWhereItStartsAndLocksForNonTransactionalTables(t *testing.T
 	meta := result.Commit.Metadata
 	require.Equal(t, "binlog.000001", meta[MetaBinlogFile])
 	require.Equal(t, "all-tables", meta[MetaLock])
+	require.Equal(t, backup.KindMySQLDump, meta[backup.MetaKind])
 	require.Equal(t, "1", meta[MetaChain])
 	require.Equal(t, f.srv.uuid, meta[MetaServerUUID])
 	require.Contains(t, f.srv.dumpArgs, "--lock-all-tables")

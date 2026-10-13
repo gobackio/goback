@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/gobackio/goback/backup"
 )
 
 // BaseInfo is what a base backup records about itself.
@@ -29,6 +31,7 @@ func (i BaseInfo) Metadata() map[string]string {
 		MetaStartLSN:     FormatLSN(i.StartLSN),
 		MetaStopLSN:      FormatLSN(i.StopLSN),
 		MetaStartWALFile: i.StartWALFile,
+		backup.MetaKind:  backup.KindPostgresBase,
 	}
 }
 

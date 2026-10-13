@@ -234,6 +234,7 @@ func TestTheReceiverCommitsTheOpenBinlogAsPartialAndThenWhole(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "db-dump", commits[0].GetMetadata()[MetaDumpSet])
 	require.Equal(t, "336h0m0s", commits[0].GetMetadata()[MetaWindow])
+	require.Equal(t, backup.KindMySQLBinlog, commits[0].GetMetadata()[backup.MetaKind])
 
 	partial := rf.node(1, "binlog.000001.partial")
 	require.EqualValues(t, 4+100+50+50, partial.GetSize())

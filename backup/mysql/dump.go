@@ -402,9 +402,10 @@ func (s *dumpScanner) metadata(srv *Server, position bool) (map[string]string, e
 	}
 
 	meta := map[string]string{
-		MetaFlavor:  "mysql",
-		MetaVersion: srv.Version,
-		MetaLock:    "snapshot",
+		MetaFlavor:      "mysql",
+		MetaVersion:     srv.Version,
+		MetaLock:        "snapshot",
+		backup.MetaKind: backup.KindMySQLDump,
 	}
 
 	Identity{ServerID: srv.ServerID, ServerUUID: srv.ServerUUID}.metadata(meta)

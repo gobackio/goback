@@ -395,6 +395,7 @@ func TestTheSegmentBeingReceivedIsCommittedAsPartialUntilItIsWhole(t *testing.T)
 		MetaCapture:      CaptureReplication,
 		MetaBaseSet:      "db-base",
 		MetaWindow:       "336h0m0s",
+		backup.MetaKind:  backup.KindPostgresWAL,
 	}, result.Commit.Metadata)
 
 	result, err = f.receive(f.receiving(1, 2, 300<<10))
