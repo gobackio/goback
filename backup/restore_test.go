@@ -205,7 +205,7 @@ func TestRestoreFileOverwriteModes(t *testing.T) {
 	damaged := append([]byte(nil), data...)
 	damaged[10] ^= 0xff
 	require.NoError(t, os.WriteFile(path, damaged, 0o644))
-	require.NoError(t, applyStat(path, stat))
+	require.NoError(t, setMeta(ctx, LocalFS{}, path, fileMode(stat), mtimeOf(stat)))
 
 	trusting := &Restorer{Store: store, Overwrite: OverwriteIfChanged}
 	outcome, err := trusting.RestoreFile(ctx, path, stat, ref)

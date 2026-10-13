@@ -1,9 +1,10 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"io"
-	"os"
+	"io/fs"
 	"sync"
 
 	"github.com/gobackio/goback/proto"
@@ -35,6 +36,10 @@ type FileToRestore struct {
 // file with its outcome or error, possibly from several goroutines at
 // once; an error it returns stops the restore.
 func (r *Restorer) RestoreFiles(ctx context.Context, files []FileToRestore, done func(i int, outcome Outcome, err error) error) error {
+	if err := r.checkVerify(); err != nil {
+		return err
+	}
+
 	reader, grouped := r.Store.(FilesReader)
 	grouped = grouped && !r.DryRun
 
@@ -136,6 +141,9 @@ func (r *Restorer) restoreGroup(ctx context.Context, files FilesReader, all []Fi
 
 	var members, inspect, fresh []*member
 
+	fsys := r.fs()
+	_, readBack := fsys.(RandomWriteFS)
+
 	for _, i := range indexes {
 		m := &member{i: i, file: all[i], ctx: ctx}
 		if m.file.Written != nil {
@@ -144,19 +152,19 @@ func (r *Restorer) restoreGroup(ctx context.Context, files FilesReader, all []Fi
 
 		members = append(members, m)
 
-		existing, err := os.Lstat(m.file.Path)
+		existing, err := fsys.Lstat(ctx, m.file.Path)
 		hasFile := err == nil && existing.Mode().IsRegular()
 
 		if hasFile && r.Overwrite == OverwriteIfChanged && existing.Size() == m.file.Stat.GetSize() && existing.ModTime().UnixNano() == m.file.Stat.GetMtimeNs() {
-			if err := g.finish(m, OutcomeSkipped, r.dropPartial(m.file.Path)); err != nil {
+			if err := g.finish(m, OutcomeSkipped, r.dropPartial(ctx, m.file.Path)); err != nil {
 				return err
 			}
 
 			continue
 		}
 
-		_, err = os.Lstat(PartialPath(m.file.Path))
-		if hasFile || !os.IsNotExist(err) || r.Seeds != nil || r.Cache != nil {
+		_, err = fsys.Lstat(ctx, r.partial(m.file.Path))
+		if (readBack && (hasFile || !errors.Is(err, fs.ErrNotExist))) || r.Seeds != nil || r.Cache != nil {
 			inspect = append(inspect, m)
 		} else {
 			fresh = append(fresh, m)
@@ -247,21 +255,23 @@ func (g *group) plan(writes *errgroup.Group, m *member, obj *proto.Object) error
 	m.reader = reader
 	m.buf = make([]byte, reader.size())
 
-	existing, err := os.Lstat(path)
+	fsys := r.fs()
+
+	existing, err := fsys.Lstat(m.ctx, path)
 	hasFile := err == nil && existing.Mode().IsRegular()
 
 	var matched, held []bool
 
 	if hasFile {
-		matched = r.fill(path, reader, m.buf)
+		matched = r.fill(m.ctx, path, reader, m.buf)
 
 		if existing.Size() == reader.size() && allTrue(matched) {
 			m.landed = append(m.landed, landed{&r.stats.BytesFromDestination, "destination", reader.size()})
 
 			writes.Go(func() error {
-				err := r.dropPartial(path)
+				err := r.dropPartial(m.ctx, path)
 				if err == nil {
-					err = applyStat(path, m.file.Stat)
+					err = setMeta(m.ctx, fsys, path, fileMode(m.file.Stat), mtimeOf(m.file.Stat))
 				}
 
 				return g.finish(m, OutcomeUnchanged, err)
@@ -271,8 +281,9 @@ func (g *group) plan(writes *errgroup.Group, m *member, obj *proto.Object) error
 		}
 	}
 
-	if info, err := os.Lstat(PartialPath(path)); err == nil && info.Mode().IsRegular() {
-		held = r.fill(PartialPath(path), reader, m.buf)
+	partial := r.partial(path)
+	if info, err := fsys.Lstat(m.ctx, partial); err == nil && info.Mode().IsRegular() {
+		held = r.fill(m.ctx, partial, reader, m.buf)
 	}
 
 	local := r.rechunked(path, hasFile, matched)
@@ -401,15 +412,7 @@ func (g *group) land(waiters []waiter, data []byte) ([]*member, error) {
 
 // write puts a whole member in place through its partial file.
 func (g *group) write(m *member) error {
-	tmp, err := openPartial(PartialPath(m.file.Path))
-	if err == nil {
-		if _, err = tmp.WriteAt(m.buf, 0); err == nil {
-			err = g.r.settle(tmp, nil, m.file.Path, m.file.Stat, m.reader, nil)
-		} else {
-			_ = tmp.Close()
-		}
-	}
-
+	err := g.r.writeWhole(m.ctx, m.file.Path, m.file.Stat, m.reader, m.buf)
 	if err != nil {
 		err = errors.Wrapf(err, "restoring %s", m.file.Path)
 	}
@@ -436,12 +439,52 @@ func (g *group) finish(m *member, outcome Outcome, err error) error {
 	return g.done(m.i, outcome, err)
 }
 
+// writeWhole puts a file whose content is all in buf at path through its
+// partial file.
+func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.FileInfo, reader *fileReader, buf []byte) error {
+	partial := r.partial(path)
+
+	random, ok := r.fs().(RandomWriteFS)
+	if !ok {
+		fsys := r.fs()
+
+		_, err := fsys.WriteFile(ctx, partial, bytes.NewReader(buf))
+		if err == nil {
+			err = setMeta(ctx, fsys, partial, fileMode(stat), mtimeOf(stat))
+		}
+
+		if err == nil {
+			err = fsys.Rename(ctx, partial, path)
+		}
+
+		return err
+	}
+
+	tmp, err := openPartial(ctx, random, partial)
+	if err != nil {
+		return err
+	}
+
+	if _, err := tmp.WriteAt(buf, 0); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+
+	return r.settle(ctx, random, tmp, nil, partial, path, stat, reader, nil)
+}
+
 // fill copies into buf every part the file at name holds at its offset,
-// as far as buf reaches, and reports which ones it held.
-func (r *Restorer) fill(name string, reader *fileReader, buf []byte) []bool {
+// as far as buf reaches, and reports which ones it held; on a tree that is
+// not read back it holds none.
+func (r *Restorer) fill(ctx context.Context, name string, reader *fileReader, buf []byte) []bool {
 	held := make([]bool, len(reader.parts))
 
-	f, err := os.Open(name)
+	random, ok := r.fs().(RandomWriteFS)
+	if !ok {
+		return held
+	}
+
+	f, err := random.Open(ctx, name)
 	if err != nil {
 		return held
 	}

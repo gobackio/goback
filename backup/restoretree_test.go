@@ -88,7 +88,7 @@ func TestRemoveUnrestoredKeepsWhatTheRestoreWroteUnderAnotherSpelling(t *testing
 	_, err := os.Lstat(filepath.Join(base, "WORLD"))
 	insensitive := err == nil
 
-	require.NoError(t, removeUnrestored(base, restored, false, nil))
+	require.NoError(t, (&Restorer{}).removeUnrestored(context.Background(), base, restored, nil))
 	require.NoDirExists(t, filepath.Join(base, "stale"))
 
 	if insensitive {
@@ -104,7 +104,7 @@ func TestRemoveUnrestoredKeepsThePartialsOfRestoredFiles(t *testing.T) {
 	writeFile(t, PartialPath(level))
 	writeFile(t, PartialPath(gone))
 
-	require.NoError(t, removeUnrestored(base, entriesOf(level), false, nil))
+	require.NoError(t, (&Restorer{}).removeUnrestored(context.Background(), base, entriesOf(level), nil))
 	require.FileExists(t, PartialPath(level))
 	require.NoFileExists(t, PartialPath(gone))
 }
@@ -119,7 +119,7 @@ func TestRestoreDirReplacesWhatIsNotADirectory(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	require.NoError(t, restoreDir(link, 0o755))
+	require.NoError(t, (&Restorer{}).restoreDir(context.Background(), link, 0o755))
 
 	info, err := os.Lstat(link)
 	require.NoError(t, err)
@@ -132,7 +132,7 @@ func TestRestoreDirReplacesWhatIsNotADirectory(t *testing.T) {
 
 	file := filepath.Join(base, "plain")
 	writeFile(t, file)
-	require.NoError(t, restoreDir(file, 0o755))
+	require.NoError(t, (&Restorer{}).restoreDir(context.Background(), file, 0o755))
 	info, err = os.Lstat(file)
 	require.NoError(t, err)
 	require.True(t, info.IsDir())
