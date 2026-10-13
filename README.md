@@ -54,6 +54,7 @@ skips unchanged files with it and a restore downloads less.
 
 | Command | Does |
 | --- | --- |
+| `agent` | run a machine's backups on their schedules from one config file |
 | `commit` | back a directory up, list commits, restore, delete and undelete |
 | `file` | list and restore single files and their versions |
 | `set` | delete and undelete a set, show or change its retention |
@@ -63,6 +64,8 @@ skips unchanged files with it and a restore downloads less.
 | `maintain` | run the housekeeping that is due: retire, compact, build presence filters, and collect garbage weekly |
 | `scrub`, `repair` | rehash every stored object, and rewrite the archives holding corrupt ones |
 | `fix` | rebuild the index from the store |
+| `index` | index commits the store holds without a full rebuild |
+| `object` | read stored objects by ref |
 | `postgres` | back up a Postgres cluster with point-in-time recovery |
 | `mysql` | back up a MySQL server with optional point-in-time recovery |
 | `server` | serve one store to many agents over gRPC, with TLS and an operator API |
@@ -90,24 +93,64 @@ compacts every time and collects garbage once the last collection is a week old.
 
 ```sh
 goback --storage gcs://my-bucket --index /var/lib/goback/index \
-  server --secret-file secret --tls-cert cert.pem --tls-key key.pem
+  server --address :6060 --secret-file secret --tls-cert cert.pem --tls-key key.pem
 ```
 
+The server listens on 127.0.0.1:6060 unless `--address` says otherwise.
 Every agent presents the shared secret and its own `--agent-id`. The server
 runs maintenance itself: it sweeps, compacts, retires and collects on its own
 intervals.
 
+## The agent
+
+`goback agent run --config goback.yaml` runs a machine's backups on their
+schedules: directories, Postgres clusters and MySQL servers, listed once with
+the store they go to. `goback agent check` validates the file, opens the store
+and lists what each database lacks; `goback agent status --check` is a health
+check. [contrib/systemd](contrib/systemd/goback-agent.service) runs it as a
+service.
+
 ## Postgres
 
-`goback postgres` takes base backups and ships WAL into two sets, and restores
-a cluster to any moment in between. [contrib/postgres](contrib/postgres/README.md)
+`goback postgres` takes base backups and streams the WAL through a replication
+slot into two sets, and restores a cluster to any moment in between. [contrib/postgres](contrib/postgres/README.md)
 runs it with Docker Compose.
 
 ## MySQL
 
-`goback mysql` streams `mysqldump` into one set and, optionally, the closed
-binary logs into another, and restores a server to a dump or to any second
-after it. [contrib/mysql](contrib/mysql/README.md) runs it with Docker Compose.
+`goback mysql` streams `mysqldump` into one set and, optionally, receives the
+binary log as a replica into another, and restores a server to a dump or to
+any second after it. [contrib/mysql](contrib/mysql/README.md) runs it with Docker Compose.
+
+## As a Go library
+
+Package `github.com/gobackio/goback` opens a store from the same settings the
+CLI takes; the CLI is built on it. The API is not stable yet and may change
+between minor versions.
+
+```go
+repo, err := goback.Open(ctx, goback.Settings{
+	Storage:  "/backups/store",
+	Index:    "/backups/index",
+	StoreKey: "store.key",
+})
+if err != nil {
+	return err
+}
+defer repo.Close()
+
+env, err := repo.Env(ctx, goback.Caches{})
+if err != nil {
+	return err
+}
+defer env.Close()
+
+result, err := job.Path(ctx, env, job.PathSettings{Set: "home", Dir: "/home/me"})
+```
+
+`backup/job` runs each kind of backup once, `agent` runs them on schedules,
+`backup.Restorer` restores, `storage/maintenance` runs the housekeeping, and
+`Repo.Serve` serves a store as `goback server` does.
 
 ## Development
 
