@@ -174,6 +174,10 @@ type walStream interface {
 	follow(ctx context.Context, timeline uint32, from uint64) error
 }
 
+// errStreamEnded is the end of streaming with no timeline to follow, as
+// when the server shuts down.
+var errStreamEnded = errors.New("the server ended streaming without naming a next timeline")
+
 // pgStream streams WAL through a slot of a live server.
 type pgStream struct {
 	conn  *pgconn.PgConn
@@ -246,7 +250,7 @@ func (s *pgStream) next(ctx context.Context, deadline time.Time) (any, error) {
 		}
 
 		if end == nil || end.Timeline == 0 {
-			return nil, errors.New("the server ended streaming without naming a next timeline")
+			return nil, errStreamEnded
 		}
 
 		return timelineEnd{next: uint32(end.Timeline), start: uint64(end.LSN)}, nil

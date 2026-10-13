@@ -144,7 +144,10 @@ func (r *Receiver) setDefaults() error {
 }
 
 // Run receives and commits until stop is closed, then commits what it
-// received and returns nil. It returns early with an error that needs a
+// received and returns nil. When the server shuts down, it commits what
+// the server sent up to its shutdown at once, so the shutdown doesn't wait
+// for CommitEvery, and returns ErrServerShutDown. It returns early with an
+// error that needs a
 // person (ErrGap, ErrForeignCluster, ErrUncappedSlot,
 // ErrSynchronousStandby, ErrSlotActive) or, on any other failure, one a
 // restart may clear. When ctx ends, it stops without the last commit.
@@ -437,6 +440,11 @@ func (run *receiveRun) session(ctx context.Context, stop <-chan struct{}, at *po
 
 	s.flushing = func(ctx context.Context, flush uint64) error { return run.mon.checkAsync(ctx, conn.PID(), flush) }
 
+	down, unwatch := watchShutdown(ctx, r.ConnString)
+	defer unwatch()
+
+	s.down = down
+
 	err = s.run(ctx, stop)
 	run.committed = max(run.committed, s.flushed)
 
@@ -572,6 +580,11 @@ type session struct {
 	// flushing, when set, runs once the server has heard the first flush
 	// position.
 	flushing func(ctx context.Context, flush uint64) error
+	// down is closed once the server starts shutting down; its walsender
+	// then waits for a flush position at the end of what it sent.
+	down <-chan struct{}
+	// ended is set once the stream is gone and hears no more status.
+	ended bool
 
 	keepSize int64
 	// floor is the slot's position when streaming started: a flush
@@ -638,17 +651,8 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 
 		select {
 		case <-stop:
-			if inflight != nil {
-				select {
-				case d := <-inflight:
-					inflight = nil
-
-					if err := s.done(ctx, d, &failures); err != nil {
-						return err
-					}
-				case <-ctx.Done():
-					return ctx.Err()
-				}
+			if err := s.drain(ctx, &inflight, &failures); err != nil {
+				return err
 			}
 
 			return s.final(ctx, s.w.written > cutEnd || s.retry)
@@ -698,7 +702,21 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 				return &gapError{what: fmt.Sprintf("the server no longer has the WAL from %s on, where the WAL set goes on", FormatLSN(s.start)), from: s.start}
 			}
 
-			return err
+			if !s.shuttingDown() && !errors.Is(err, errStreamEnded) {
+				return err
+			}
+
+			s.ended = true
+
+			if err := s.drain(ctx, &inflight, &failures); err != nil {
+				return err
+			}
+
+			if err := s.final(ctx, s.w.written > cutEnd || s.retry); err != nil {
+				return err
+			}
+
+			return ErrServerShutDown
 		}
 
 		switch m := msg.(type) {
@@ -737,10 +755,15 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 
 // due reports whether a commit starts now, since after the last one
 // started: every CommitEvery while new WAL waits, after the floor once
-// CommitBytes of it waits, and backing off after failed commits.
+// CommitBytes of it waits, at once while the server shuts down, and backing
+// off after failed commits.
 func (s *session) due(since time.Duration, waiting bool, failures int) bool {
 	if !waiting {
 		return false
+	}
+
+	if s.shuttingDown() && failures == 0 {
+		return true
 	}
 
 	r := s.r
@@ -799,6 +822,32 @@ func (s *session) done(ctx context.Context, d commitDone, failures *int) error {
 	return nil
 }
 
+// shuttingDown reports whether the server started shutting down.
+func (s *session) shuttingDown() bool {
+	select {
+	case <-s.down:
+		return true
+	default:
+		return false
+	}
+}
+
+// drain waits for the commit in flight, if any, and takes it in.
+func (s *session) drain(ctx context.Context, inflight *chan commitDone, failures *int) error {
+	if *inflight == nil {
+		return nil
+	}
+
+	select {
+	case d := <-*inflight:
+		*inflight = nil
+
+		return s.done(ctx, d, failures)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // final makes the last commit when anything waits for one, and tells the
 // server.
 func (s *session) final(ctx context.Context, waiting bool) error {
@@ -849,11 +898,13 @@ func (s *session) flush() uint64 {
 func (s *session) status(reply bool) error {
 	flush := s.flush()
 
-	if err := s.stream.status(s.w.written, flush, reply); err != nil {
-		return fmt.Errorf("sending the standby status: %w", err)
+	if !s.ended {
+		if err := s.stream.status(s.w.written, flush, reply); err != nil {
+			return fmt.Errorf("sending the standby status: %w", err)
+		}
 	}
 
-	if flush != 0 && s.flushing != nil {
+	if flush != 0 && s.flushing != nil && !s.ended {
 		if err := s.flushing(context.Background(), flush); err != nil {
 			return err
 		}

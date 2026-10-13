@@ -17,6 +17,7 @@ import (
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
+	"github.com/gobackio/goback/backup/postgres"
 )
 
 // Agent runs tasks on their plans against one store it opens once. It
@@ -756,6 +757,14 @@ func (l *loop) finishServe(f finished, now time.Time) {
 
 	if f.err == nil {
 		f.err = errors.New("returned before it was stopped")
+	}
+
+	if errors.Is(f.err, postgres.ErrServerShutDown) {
+		e.restartBackoff = serveRetryFirst
+		e.due = now.Add(e.restartBackoff)
+		f.logger.Info("the database shut down; streaming goes on once it is back", "retry", e.restartBackoff)
+
+		return
 	}
 
 	e.failures++

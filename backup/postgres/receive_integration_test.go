@@ -333,6 +333,50 @@ func TestAPointInTimeRestoreFromReplication(t *testing.T) {
 	}
 }
 
+func TestAFastShutdownIsCommittedAtOnce(t *testing.T) {
+	for name, commitFirst := range map[string]bool{"after a commit": true, "before any commit": false} {
+		t.Run(name, func(t *testing.T) {
+			x := startReplica(t, "17", "max_slot_wal_keep_size=1GB")
+
+			x.insert("before")
+			x.base()
+
+			r := x.receiver()
+			r.CommitEvery = 20 * time.Second
+
+			done := make(chan error, 1)
+			go func() { done <- r.Run(context.Background(), make(chan struct{})) }()
+
+			if commitFirst {
+				x.caughtUp()
+			}
+
+			x.insert("after")
+			written := x.pg.psql("SELECT pg_current_wal_lsn()")
+			x.pg.waitFor(fmt.Sprintf(`[ "$(psql -tAc "SELECT sent_lsn >= '%s' FROM pg_stat_replication")" = t ]`, written))
+
+			x.pg.run("kill", "-INT", "1")
+			shutdown := time.Now()
+
+			select {
+			case err := <-done:
+				require.ErrorIs(t, err, ErrServerShutDown)
+			case <-time.After(time.Minute):
+				t.Fatal("the receiver didn't end with the server")
+			}
+
+			require.Less(t, time.Since(shutdown), 10*time.Second, "the shutdown waited for CommitEvery")
+
+			lsn, err := ParseLSN(written)
+			require.NoError(t, err)
+
+			end, err := ParseLSN(x.latest().GetMetadata()[MetaEndLSN])
+			require.NoError(t, err)
+			require.Greater(t, end, lsn, "the newest commit ends with the shutdown checkpoint, after the last insert")
+		})
+	}
+}
+
 func TestAReceiverDownPastTheCapEndsInAGapThatABaseBackupClears(t *testing.T) {
 	x := startReplica(t, "17", "max_slot_wal_keep_size=64MB", "max_wal_size=96MB", "min_wal_size=32MB")
 

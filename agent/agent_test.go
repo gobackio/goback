@@ -12,6 +12,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
+	"github.com/gobackio/goback/backup/postgres"
 	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
@@ -464,6 +465,39 @@ func TestAServeTaskRestartsWithBackoffAndCommitsOnStop(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, ResultOK, status.Jobs[0].LastResult)
 		require.Equal(t, "02", status.Jobs[0].LastCommit)
+	})
+}
+
+func TestADatabaseShutdownRestartsTheReceiverWithoutAFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.a.StateDir = t.TempDir()
+
+		var starts []time.Duration
+
+		task := &Task{Name: "db/wal", Set: "db/wal", Kind: "postgres-receive", Log: true}
+		task.Serve = func(ctx context.Context, _ *job.Env, c *Control) error {
+			starts = append(starts, h.since())
+			if len(starts) < 4 {
+				return postgres.ErrServerShutDown
+			}
+
+			<-c.Stop()
+
+			return nil
+		}
+
+		h.run(task)
+
+		time.Sleep(time.Minute)
+
+		status, err := ReadStatus(h.a.StateDir)
+		require.NoError(t, err)
+		require.Zero(t, status.Jobs[0].Failures)
+
+		h.stop()
+
+		require.Equal(t, []time.Duration{0, time.Second, 2 * time.Second, 3 * time.Second}, starts)
 	})
 }
 
