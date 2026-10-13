@@ -178,12 +178,16 @@ func inBatches[T any](items []T, fn func([]T) error) error {
 
 // reevaluateSet re-applies a set's policy, as after a policy change.
 func (x *Index) reevaluateSet(ctx context.Context, setID int64) error {
+	return x.reevaluateSetAt(ctx, setID, x.now())
+}
+
+func (x *Index) reevaluateSetAt(ctx context.Context, setID int64, now time.Time) error {
 	return x.tx(ctx, func(tx *ent.Tx) error {
 		if _, err := x.lockSet(ctx, tx, setID); err != nil {
 			return err
 		}
 
-		return x.evaluateSet(ctx, tx, setID, x.now())
+		return x.evaluateSet(ctx, tx, setID, now)
 	})
 }
 
@@ -612,6 +616,21 @@ func (x *Index) RetireCommits(ctx context.Context, now time.Time) ([]index.Retir
 	}()
 
 	phase := progress.Start(ctx, progress.OpRetire, progress.PhaseDue, 0, 0)
+
+	// commits age out of a policy without anything happening to their set,
+	// so a set that stopped committing is evaluated here or never
+	active, err := x.client.Set.Query().Where(set.StateEQ(set.StateActive), set.RetentionPaused(false)).IDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, id := range active {
+		if err := x.reevaluateSetAt(ctx, id, now); err != nil {
+			return nil, err
+		}
+	}
+
+	phases.done("evaluate")
 
 	held, err := x.restoreLeases(ctx)
 	if err != nil {
