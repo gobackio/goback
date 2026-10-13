@@ -221,8 +221,15 @@ func (x *replica) slotKeepsWhatNoCommitHolds() {
 func (x *replica) now() time.Time {
 	x.t.Helper()
 
-	at, err := time.Parse("2006-01-02 15:04:05.999999-07", x.pg.psql("SELECT clock_timestamp()"))
-	require.NoError(x.t, err)
+	return x.pg.now()
+}
+
+// now is the cluster's clock.
+func (c *pgContainer) now() time.Time {
+	c.t.Helper()
+
+	at, err := time.Parse("2006-01-02 15:04:05.999999-07", c.psql("SELECT clock_timestamp()"))
+	require.NoError(c.t, err)
 
 	return at
 }
@@ -277,18 +284,35 @@ func (x *replica) recover(at time.Time, settings ...string) *pgContainer {
 		require.NoError(x.t, err)
 	}
 
-	bundle := tarDirs(x.t, map[string]string{"var/lib/postgresql/data": data, "wal": wal})
+	return startRecovered(x.t, x.version, data, wal, settings...)
+}
+
+// startRecovered starts a cluster of version on the data directory data,
+// with the directory wal at /wal when it is set, and waits until it is
+// promoted.
+func startRecovered(t *testing.T, version, data, wal string, settings ...string) *pgContainer {
+	t.Helper()
+
+	dirs := map[string]string{"var/lib/postgresql/data": data}
+	owned := "/var/lib/postgresql/data"
+
+	if wal != "" {
+		dirs["wal"] = wal
+		owned += " /wal"
+	}
+
+	bundle := tarDirs(t, dirs)
 
 	command := "postgres"
 	for _, s := range settings {
 		command += " -c " + s
 	}
 
-	recovered := startPostgres(x.t, testcontainers.ContainerRequest{
-		Image:        "postgres:" + x.version + "-alpine",
+	recovered := startPostgres(t, testcontainers.ContainerRequest{
+		Image:        "postgres:" + version + "-alpine",
 		Env:          map[string]string{"PGDATA": "/var/lib/postgresql/data"},
 		ExposedPorts: []string{"5432/tcp"},
-		Entrypoint: []string{"sh", "-c", "set -e; tar -xf /tmp/restore.tar -C /; chown -R postgres:postgres /var/lib/postgresql/data /wal; " +
+		Entrypoint: []string{"sh", "-c", "set -e; tar -xf /tmp/restore.tar -C /; chown -R postgres:postgres " + owned + "; " +
 			"chmod 700 /var/lib/postgresql/data; exec docker-entrypoint.sh " + command},
 		Files: []testcontainers.ContainerFile{{Reader: bytes.NewReader(bundle), ContainerFilePath: "/tmp/restore.tar", FileMode: 0o644}},
 	})
