@@ -26,6 +26,7 @@ var dumpCmd = cli.Command{
 			Name:  "no-binlog-position",
 			Usage: "skip recording the binary log position, even with log_bin on; the dump then needs no global read lock and no RELOAD or REPLICATION CLIENT privilege",
 		},
+		common.InitialRetentionFlag,
 	),
 	Action: dumpAction,
 }
@@ -35,6 +36,7 @@ func dumpAction(c *cli.Context) error {
 		return cli.NewExitError("--set is required", 2)
 	}
 
+	initial := common.InitialRetention(c)
 	repo := common.OpenRepo(c)
 	env := common.Env(c, repo, goback.Caches{})
 
@@ -48,6 +50,7 @@ func dumpAction(c *cli.Context) error {
 		Client:           jobClient(c),
 		BinlogSet:        c.String("binlog-set"),
 		NoBinlogPosition: c.Bool("no-binlog-position"),
+		InitialRetention: initial,
 	})
 	if err != nil {
 		return err

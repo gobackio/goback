@@ -6,6 +6,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
+	"github.com/gobackio/goback/backup/retention"
 )
 
 // RunFunc runs a task once. A nil result with a nil error means there was
@@ -39,6 +40,9 @@ type Task struct {
 	// After names a set that must hold a complete commit before the task
 	// starts.
 	After string
+	// InitialRetention is the retention policy Set starts with if the
+	// task's run creates it; nil for none.
+	InitialRetention *retention.Policy
 	// Spec is what the task was built from; a reload replaces a task whose
 	// Spec changed.
 	Spec  string

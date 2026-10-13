@@ -29,6 +29,7 @@ var baseCmd = cli.Command{
 			Usage:  "pg_basebackup program to take the backup with; its major version must match the server's",
 			EnvVar: "GOBACK_POSTGRES_BASEBACKUP",
 		},
+		common.InitialRetentionFlag,
 	},
 	Action: baseAction,
 }
@@ -41,6 +42,7 @@ func baseAction(c *cli.Context) error {
 	// everything that can exit the process comes before pg_basebackup starts:
 	// an orphaned pg_basebackup is reparented to PID 1, which in the Postgres
 	// container is the postmaster, and its death restarts the cluster
+	initial := common.InitialRetention(c)
 	repo := common.OpenRepo(c)
 	env := common.Env(c, repo, goback.Caches{})
 
@@ -50,9 +52,10 @@ func baseAction(c *cli.Context) error {
 	}()
 
 	result, err := job.PostgresBase(common.Context(c), env, job.PostgresBaseSettings{
-		Set:          c.GlobalString("set"),
-		DBName:       c.String("dbname"),
-		PGBasebackup: c.String("pg-basebackup"),
+		Set:              c.GlobalString("set"),
+		DBName:           c.String("dbname"),
+		PGBasebackup:     c.String("pg-basebackup"),
+		InitialRetention: initial,
 	})
 	if err != nil {
 		return err

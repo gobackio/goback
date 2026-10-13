@@ -18,6 +18,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 	"github.com/gobackio/goback"
+	"github.com/gobackio/goback/backup/retention"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -70,6 +71,14 @@ type Backup struct {
 	Jitter time.Duration `yaml:"jitter"`
 	// Timeout cancels a full backup run after this long; zero never does.
 	Timeout time.Duration `yaml:"timeout"`
+	// Retention is the retention policy a path backup's set, or a database
+	// backup's base or dump set, starts with when the backup's first run
+	// creates it, written as goback set retention shows one:
+	// "keep-last=1 keep=daily=30 keep=monthly". A set that exists keeps its
+	// own. Without it a path set starts with none and a base or dump set
+	// with retention.DatabaseBase; a WAL or binlog set always starts with
+	// retention.DatabaseLog.
+	Retention string `yaml:"retention"`
 
 	Path     *PathBackup     `yaml:"path"`
 	Postgres *PostgresBackup `yaml:"postgres"`
@@ -260,7 +269,28 @@ func (b *Backup) validate() []error {
 		errs = append(errs, errors.New("jitter and timeout must not be negative"))
 	}
 
+	if b.Retention != "" {
+		if _, err := retention.ParsePolicy(b.Retention); err != nil {
+			errs = append(errs, fmt.Errorf("retention: %w", err))
+		}
+	}
+
 	return errs
+}
+
+// initialRetention is the policy b's path, base or dump set starts with:
+// its Retention, else fallback.
+func (b *Backup) initialRetention(fallback *retention.Policy) *retention.Policy {
+	if b.Retention == "" {
+		return fallback
+	}
+
+	p, err := retention.ParsePolicy(b.Retention)
+	if err != nil {
+		return fallback
+	}
+
+	return &p
 }
 
 // kind is the one kind b names, or nil.

@@ -14,6 +14,7 @@ import (
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/mysql"
 	"github.com/gobackio/goback/backup/postgres"
+	"github.com/gobackio/goback/backup/retention"
 
 	"github.com/dustin/go-humanize"
 	"go.yaml.in/yaml/v3"
@@ -98,15 +99,16 @@ func (b *Backup) fullPlan(fallback string) *Plan {
 }
 
 // fullTask is the task that runs b's full backups to set.
-func (b *Backup) fullTask(kind, set, fallback string, run RunFunc) *Task {
+func (b *Backup) fullTask(kind, set, fallback string, initial *retention.Policy, run RunFunc) *Task {
 	return &Task{
-		Name:    set,
-		Set:     set,
-		Kind:    kind,
-		Plan:    b.fullPlan(fallback),
-		Jitter:  b.Jitter,
-		Timeout: b.Timeout,
-		Run:     run,
+		Name:             set,
+		Set:              set,
+		Kind:             kind,
+		Plan:             b.fullPlan(fallback),
+		Jitter:           b.Jitter,
+		Timeout:          b.Timeout,
+		InitialRetention: initial,
+		Run:              run,
 	}
 }
 
@@ -179,9 +181,10 @@ func (p *PathBackup) tasks(b *Backup) []*Task {
 		PostHook:           p.PostHook,
 		HookTimeout:        p.HookTimeout,
 		HookOptional:       p.HookOptional,
+		InitialRetention:   b.initialRetention(nil),
 	}
 
-	return []*Task{b.fullTask("path", b.Name, "", func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
+	return []*Task{b.fullTask("path", b.Name, "", settings.InitialRetention, func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
 		return job.Path(ctx, env, settings)
 	})}
 }
@@ -246,8 +249,13 @@ func (p *PostgresBackup) slot(b *Backup) string {
 func (p *PostgresBackup) tasks(b *Backup) []*Task {
 	base, wal := b.Name+"/base", b.Name+"/wal"
 
-	baseSettings := job.PostgresBaseSettings{Set: base, DBName: p.DBName, PGBasebackup: p.PGBasebackup}
-	tasks := []*Task{b.fullTask("postgres-base", base, defaultDatabasePlan, func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
+	baseRetention, logRetention := retention.DatabaseBase, retention.DatabaseLog
+
+	baseSettings := job.PostgresBaseSettings{
+		Set: base, DBName: p.DBName, PGBasebackup: p.PGBasebackup,
+		InitialRetention: b.initialRetention(&baseRetention),
+	}
+	tasks := []*Task{b.fullTask("postgres-base", base, defaultDatabasePlan, baseSettings.InitialRetention, func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
 		return job.PostgresBase(ctx, env, baseSettings)
 	})}
 
@@ -266,16 +274,18 @@ func (p *PostgresBackup) tasks(b *Backup) []*Task {
 		CommitEvery:       p.CommitEvery,
 		CommitBytes:       int64(commitBytes),
 		Window:            p.Window,
+		InitialRetention:  &logRetention,
 	}
 
 	// the receiver starts with the agent, not after the first base backup,
 	// so its slot keeps the WAL from that backup's start on
 	return append(tasks, &Task{
-		Name:       wal,
-		Set:        wal,
-		Kind:       "postgres-receive",
-		Log:        true,
-		StaleAfter: 3 * p.CommitEvery,
+		Name:             wal,
+		Set:              wal,
+		Kind:             "postgres-receive",
+		Log:              true,
+		StaleAfter:       3 * p.CommitEvery,
+		InitialRetention: settings.InitialRetention,
 		Serve: func(ctx context.Context, env *job.Env, c *Control) error {
 			s := settings
 			if s.Spool == "" {
@@ -397,12 +407,17 @@ func (m *MySQLBackup) tasks(b *Backup) []*Task {
 
 	client := job.MySQLClient{DefaultsExtraFile: m.DefaultsExtraFile, Mysql: m.Mysql, Mysqldump: m.Mysqldump}
 
-	dumpSettings := job.MySQLDumpSettings{Set: dump, Client: client, NoBinlogPosition: m.NoBinlogPosition}
+	baseRetention, logRetention := retention.DatabaseBase, retention.DatabaseLog
+
+	dumpSettings := job.MySQLDumpSettings{
+		Set: dump, Client: client, NoBinlogPosition: m.NoBinlogPosition,
+		InitialRetention: b.initialRetention(&baseRetention),
+	}
 	if m.PITR {
 		dumpSettings.BinlogSet = binlog
 	}
 
-	tasks := []*Task{b.fullTask("mysql-dump", dump, defaultDatabasePlan, func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
+	tasks := []*Task{b.fullTask("mysql-dump", dump, defaultDatabasePlan, dumpSettings.InitialRetention, func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
 		return job.MySQLDump(ctx, env, dumpSettings)
 	})}
 
@@ -420,16 +435,18 @@ func (m *MySQLBackup) tasks(b *Backup) []*Task {
 		CommitEvery:       m.CommitEvery,
 		CommitBytes:       int64(commitBytes),
 		Window:            m.Window,
+		InitialRetention:  &logRetention,
 	}
 
 	// the receiver starts at a dump's binlog position, so it waits for one
 	return append(tasks, &Task{
-		Name:       binlog,
-		Set:        binlog,
-		Kind:       "mysql-receive",
-		Log:        true,
-		After:      dump,
-		StaleAfter: 3 * m.CommitEvery,
+		Name:             binlog,
+		Set:              binlog,
+		Kind:             "mysql-receive",
+		Log:              true,
+		After:            dump,
+		StaleAfter:       3 * m.CommitEvery,
+		InitialRetention: settings.InitialRetention,
 		Serve: func(ctx context.Context, env *job.Env, c *Control) error {
 			s := settings
 			if s.Spool == "" {

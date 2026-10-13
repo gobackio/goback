@@ -71,6 +71,7 @@ var receiveCmd = cli.Command{
 			Name:  "drop-slot",
 			Usage: "drop the replication slot and exit",
 		},
+		common.InitialRetentionFlag,
 	},
 	Action: receiveAction,
 }
@@ -106,6 +107,8 @@ func receiveAction(c *cli.Context) error {
 		return cli.NewExitError("--commit-bytes: "+err.Error(), 2)
 	}
 
+	initial := common.InitialRetention(c)
+
 	ctx, stop := common.Graceful(c, c.Duration("shutdown-grace"))
 
 	repo := common.OpenRepo(c)
@@ -126,6 +129,7 @@ func receiveAction(c *cli.Context) error {
 		CommitEvery:       c.Duration("commit-every"),
 		CommitBytes:       int64(commitBytes),
 		Window:            c.Duration("window"),
+		InitialRetention:  initial,
 	}, stop, func(result *backup.WalkResult) {
 		if env.TreeCache != nil {
 			if _, err := env.TreeCache.Sweep(); err != nil {

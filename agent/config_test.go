@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/backup/retention"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -160,12 +162,63 @@ store: {storage: /backups}`,
 		"zero concurrency": `
 schedule: {concurrency: 0}
 backups: [{name: w, every: 1h, path: {dir: /w}}]`,
+		"a retention period that isn't one": `
+backups: [{name: db, retention: "keep=fortnightly=2", postgres: {}}]`,
+		"a retention keeping no last commit": `
+backups: [{name: w, every: 1h, retention: "keep-last=0", path: {dir: /w}}]`,
+		"a retention that isn't a policy": `
+backups: [{name: w, every: 1h, retention: "90 days", path: {dir: /w}}]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := decode(t, doc)
 			require.Error(t, err)
 		})
 	}
+}
+
+func initialRetentions(cfg *Config) map[string]*retention.Policy {
+	out := map[string]*retention.Policy{}
+	for _, task := range cfg.Tasks() {
+		out[task.Set] = task.InitialRetention
+	}
+
+	return out
+}
+
+func TestADatabaseBackupsSetsStartWithTheDatabasePolicies(t *testing.T) {
+	cfg, err := decode(t, `
+backups:
+  - {name: db, postgres: {}}
+  - {name: shop, mysql: {}}
+  - {name: world, every: 6h, path: {dir: /srv/world}}
+`)
+	require.NoError(t, err)
+
+	require.Equal(t, map[string]*retention.Policy{
+		"db/base":     &retention.DatabaseBase,
+		"db/wal":      &retention.DatabaseLog,
+		"shop/dump":   &retention.DatabaseBase,
+		"shop/binlog": &retention.DatabaseLog,
+		"world":       nil,
+	}, initialRetentions(cfg))
+}
+
+func TestARetentionKeyReplacesTheBaseSetsPolicyAndNotTheLogSets(t *testing.T) {
+	cfg, err := decode(t, `
+backups:
+  - {name: db, retention: "keep-last=2 keep=daily=7", postgres: {}}
+  - {name: shop, retention: "keep=weekly=8", mysql: {}}
+  - {name: world, every: 6h, retention: "keep-within=720h", path: {dir: /srv/world}}
+`)
+	require.NoError(t, err)
+
+	require.Equal(t, map[string]*retention.Policy{
+		"db/base":     {KeepLast: 2, Brackets: []retention.Bracket{{Period: retention.Daily, Count: 7}}},
+		"db/wal":      &retention.DatabaseLog,
+		"shop/dump":   {KeepLast: 1, Brackets: []retention.Bracket{{Period: retention.Weekly, Count: 8}}},
+		"shop/binlog": &retention.DatabaseLog,
+		"world":       {KeepLast: 1, KeepWithin: 720 * time.Hour},
+	}, initialRetentions(cfg))
 }
 
 func TestDecodeReportsEveryProblem(t *testing.T) {

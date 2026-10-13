@@ -82,6 +82,10 @@ goback set retention home \
   --keep hourly=336 --keep daily=60 --keep weekly=12 --keep monthly
 ```
 
+A run that creates its set can give it a first policy with
+`--initial-retention "keep-last=1 keep=daily=60 keep=weekly=4"`, written as
+`goback set retention` prints one; a set that exists keeps its own.
+
 Commits the policy lets go are tombstoned by the next retirement; a commit
 deleted by hand waits in the trash first, where it can be taken back.
 Once no live commit or pin reaches an object, garbage collection drops it.

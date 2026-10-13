@@ -61,6 +61,7 @@ var receiveCmd = cli.Command{
 			Usage: "how long the last commit may take after SIGTERM",
 			Value: 30 * time.Second,
 		},
+		common.InitialRetentionFlag,
 	},
 	Action: receiveAction,
 }
@@ -81,6 +82,8 @@ func receiveAction(c *cli.Context) error {
 		return cli.NewExitError("--server-id must fit in 32 bits", 2)
 	}
 
+	initial := common.InitialRetention(c)
+
 	ctx, stop := common.Graceful(c, c.Duration("shutdown-grace"))
 
 	repo := common.OpenRepo(c)
@@ -100,6 +103,7 @@ func receiveAction(c *cli.Context) error {
 		CommitEvery:       c.Duration("commit-every"),
 		CommitBytes:       int64(commitBytes),
 		Window:            c.Duration("window"),
+		InitialRetention:  initial,
 	}, stop, func(result *backup.WalkResult) {
 		if env.TreeCache != nil {
 			if _, err := env.TreeCache.Sweep(); err != nil {

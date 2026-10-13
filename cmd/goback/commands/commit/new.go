@@ -36,6 +36,7 @@ func runNew(c *cli.Context) error {
 		dir = c.Args().First()
 	}
 
+	initial := common.InitialRetention(c)
 	repo := common.OpenRepo(c)
 	env := common.Env(c, repo, goback.Caches{Stats: true, Objects: true, Blobs: c.GlobalBoolT("blob-cache-on-backup")})
 
@@ -68,6 +69,7 @@ func runNew(c *cli.Context) error {
 		PostHook:           c.String("post-hook"),
 		HookTimeout:        c.Duration("hook-timeout"),
 		HookOptional:       c.Bool("hook-optional"),
+		InitialRetention:   initial,
 	})
 	if err != nil {
 		return err
@@ -162,5 +164,6 @@ var newCmd = cli.Command{
 			Name:  "max-duration",
 			Usage: "cancel the walk after this long; the post-hook still runs; 0 disables",
 		},
+		common.InitialRetentionFlag,
 	},
 }
