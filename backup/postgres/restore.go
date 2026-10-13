@@ -1,9 +1,11 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,7 +23,8 @@ import (
 var ErrNoBase = errors.New("no base backup to restore from")
 
 // Restore writes a base backup into a data directory and, given a WAL set,
-// sets the cluster up to recover from it when Postgres starts on it.
+// sets the cluster up to recover from it when Postgres starts on it. The
+// owner of the data directory is left to the caller.
 type Restore struct {
 	Objects backup.ObjectStore
 	Key     *storekey.Key
@@ -35,23 +38,34 @@ type Restore struct {
 	// At, when set, is the moment recovery stops at; zero recovers to the
 	// end of the WAL set.
 	At time.Time
-	// RestoreCommand is the restore_command that fetches the WAL commit's
-	// files, with %f and %p for Postgres to fill in.
+	// FS is the tree the data directory is written onto; nil is the local
+	// disk.
+	FS backup.WriteFS
+	// RestoreCommand, when set, is the restore_command that fetches the WAL
+	// commit's files, with %f and %p for Postgres to fill in. When nil, the
+	// WAL recovery reads is copied into the data directory's pg_wal.
 	RestoreCommand func(walCommit *proto.Ref) string
 }
 
-// RestoreResult says what a restore chose.
+// RestoreResult says what a restore chose and did.
 type RestoreResult struct {
 	Base    *proto.Commit
 	BaseRef *proto.Ref
 	// WAL is the WAL commit recovery reads from; nil when the WAL set has
 	// none, and then the cluster recovers only to the end of its base.
 	WAL *proto.Ref
+	// Copied names the WAL files copied into pg_wal, as they are named
+	// there; empty with a RestoreCommand.
+	Copied []string
+	// ModeUnset is true when FS could not give the data directory mode
+	// 0700, which Postgres needs before it starts on it.
+	ModeUnset bool
 }
 
 // Run restores into dir, which must be empty or missing.
 func (r *Restore) Run(ctx context.Context, dir string) (*RestoreResult, error) {
-	if err := emptyDir(dir); err != nil {
+	modeSet, err := emptyDir(ctx, r.fs(), dir)
+	if err != nil {
 		return nil, err
 	}
 
@@ -69,18 +83,27 @@ func (r *Restore) Run(ctx context.Context, dir string) (*RestoreResult, error) {
 		return nil, err
 	}
 
-	result := &RestoreResult{Base: base, BaseRef: baseRef}
+	result := &RestoreResult{Base: base, BaseRef: baseRef, ModeUnset: !modeSet}
 	if wal == nil {
 		return result, nil
 	}
 
 	result.WAL = walRef
 
-	return result, r.configureRecovery(dir, walRef)
+	return result, r.configureRecovery(ctx, dir, base, walRef, wal, result)
+}
+
+func (r *Restore) fs() backup.WriteFS {
+	if r.FS == nil {
+		return backup.LocalFS{}
+	}
+
+	return r.FS
 }
 
 type walCommit struct {
 	commit   *proto.Commit
+	files    *commitFiles
 	systemID uint64
 	first    string
 	// end is where its WAL ends, its partial segment included; zero when
@@ -123,12 +146,11 @@ func (r *Restore) wal(ctx context.Context) (*proto.Ref, *walCommit, error) {
 		}
 	}
 
-	tree, err := openWALTree(ctx, r.Objects, r.Objects, commit, r.Key)
-	if err != nil {
+	if wal.files, err = openCommitFiles(ctx, r.Objects, r.Objects, commit, r.Key); err != nil {
 		return nil, nil, err
 	}
 
-	if wal.path, err = tree.history(ctx); err != nil {
+	if wal.path, err = wal.files.history(ctx); err != nil {
 		return nil, nil, err
 	}
 
@@ -260,39 +282,101 @@ func commitSystemID(commit *proto.Commit) (uint64, error) {
 	return systemID, nil
 }
 
-func emptyDir(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return os.MkdirAll(dir, 0o700)
+// emptyDir makes dir, or checks that it is empty, and gives it mode 0700;
+// modeSet is false when the tree holds no modes.
+func emptyDir(ctx context.Context, fsys backup.WriteFS, dir string) (modeSet bool, err error) {
+	entries, err := fsys.ReadDir(ctx, dir)
+
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		err = fsys.MkdirAll(ctx, dir)
+	case err == nil && len(entries) > 0:
+		err = fmt.Errorf("%s is not empty", dir)
 	}
 
+	if err != nil {
+		return false, err
+	}
+
+	err = fsys.Chmod(ctx, dir, 0o700)
+	if errors.Is(err, errors.ErrUnsupported) {
+		return false, nil
+	}
+
+	return err == nil, err
+}
+
+// writeTree writes the base's data directory into dir, refusing a tree
+// that cannot hold its links.
+func (r *Restore) writeTree(ctx context.Context, base *proto.Commit, dir string) error {
+	restorer := &backup.Restorer{Store: r.Objects, Key: r.Key, FS: r.FS}
+	if err := restorer.RestoreTree(ctx, base, dir, backup.TreeOptions{}); err != nil {
+		return err
+	}
+
+	if restorer.Stats().Unsupported == 0 {
+		return nil
+	}
+
+	links, err := r.links(ctx, base)
 	if err != nil {
 		return err
 	}
 
-	if len(entries) > 0 {
-		return fmt.Errorf("%s is not empty", dir)
-	}
-
-	return os.Chmod(dir, 0o700)
+	return fmt.Errorf("the data directory needs the links %s, which the tree it is written onto cannot hold", strings.Join(links, ", "))
 }
 
-// writeTree writes the base's data directory into dir.
-func (r *Restore) writeTree(ctx context.Context, base *proto.Commit, dir string) error {
-	return (&backup.Restorer{Store: r.Objects, Key: r.Key}).RestoreTree(ctx, base, dir, backup.TreeOptions{})
+// links lists the symlinks of base's tree.
+func (r *Restore) links(ctx context.Context, base *proto.Commit) ([]string, error) {
+	reader, err := backup.NewBackupReader(r.Objects).WithKey(r.Key).ForCommit(ctx, base)
+	if err != nil {
+		return nil, err
+	}
+
+	var links []string
+
+	err = reader.WalkTree(ctx, base.GetTree(), nil, func(path string, info os.FileInfo, _ *proto.Ref) error {
+		if stat, _ := info.Sys().(*proto.FileInfo); stat.GetType() == proto.NodeType_NODE_SYMLINK {
+			links = append(links, filepath.ToSlash(path))
+		}
+
+		return nil
+	})
+
+	return links, err
 }
 
 // configureRecovery makes Postgres recover from the WAL commit when it
 // starts on dir: through recovery.signal and postgresql.auto.conf from
-// Postgres 12, through recovery.conf before.
-func (r *Restore) configureRecovery(dir string, walRef *proto.Ref) error {
-	major, err := majorVersion(dir)
+// Postgres 12, through recovery.conf before. Without a RestoreCommand, it
+// copies the WAL into pg_wal first.
+func (r *Restore) configureRecovery(ctx context.Context, dir string, base *proto.Commit, walRef *proto.Ref, wal *walCommit, result *RestoreResult) error {
+	top, err := openCommitFiles(ctx, r.Objects, r.Objects, base, r.Key)
 	if err != nil {
 		return err
 	}
 
+	version, err := top.read(ctx, "PG_VERSION")
+	if err != nil {
+		return fmt.Errorf("the base backup's version: %w", err)
+	}
+
+	major, err := majorVersion(version)
+	if err != nil {
+		return err
+	}
+
+	// from 12 on, archive recovery needs a restore_command; one that always
+	// fails makes Postgres read each file from pg_wal
+	command := "exit 1"
+	if r.RestoreCommand != nil {
+		command = r.RestoreCommand(walRef)
+	} else if result.Copied, err = r.copyWAL(ctx, dir, base, walRef, wal, major); err != nil {
+		return err
+	}
+
 	settings := []string{
-		"restore_command = " + confString(r.RestoreCommand(walRef)),
+		"restore_command = " + confString(command),
 		"recovery_target_action = 'promote'",
 	}
 
@@ -307,17 +391,15 @@ func (r *Restore) configureRecovery(dir string, walRef *proto.Ref) error {
 		settings = append(settings, "recovery_target_timeline = 'latest'")
 	}
 
-	conf, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-	if err != nil {
+	conf, err := top.read(ctx, name)
+	if err != nil && !errors.Is(err, backup.ErrNotFound) {
 		return err
 	}
 
-	if _, err := fmt.Fprintf(conf, "\n# written by goback postgres restore\n%s\n", strings.Join(settings, "\n")); err != nil {
-		_ = conf.Close()
-		return err
-	}
+	conf = fmt.Appendf(conf, "\n# written by goback postgres restore\n%s\n", strings.Join(settings, "\n"))
 
-	if err := conf.Close(); err != nil {
+	fsys := r.fs()
+	if _, err := fsys.WriteFile(ctx, fsys.Join(dir, name), bytes.NewReader(conf)); err != nil {
 		return err
 	}
 
@@ -325,17 +407,14 @@ func (r *Restore) configureRecovery(dir string, walRef *proto.Ref) error {
 		return nil
 	}
 
-	return os.WriteFile(filepath.Join(dir, "recovery.signal"), nil, 0o600)
+	_, err = fsys.WriteFile(ctx, fsys.Join(dir, "recovery.signal"), bytes.NewReader(nil))
+
+	return err
 }
 
-// majorVersion reads the major version of the cluster in dir from its
-// PG_VERSION: 9 for 9.6, 10 and on as they are.
-func majorVersion(dir string) (int, error) {
-	content, err := os.ReadFile(filepath.Join(dir, "PG_VERSION"))
-	if err != nil {
-		return 0, fmt.Errorf("the base backup's version: %w", err)
-	}
-
+// majorVersion reads the major version of a cluster from its PG_VERSION:
+// 9 for 9.6, 10 and on as they are.
+func majorVersion(content []byte) (int, error) {
 	text := strings.TrimSpace(string(content))
 	major, _, _ := strings.Cut(text, ".")
 
@@ -376,7 +455,7 @@ func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key
 	}
 	defer end()
 
-	tree, err := openWALTree(ctx, objects, objects, commit, key)
+	tree, err := openCommitFiles(ctx, objects, objects, commit, key)
 	if err != nil {
 		return err
 	}
@@ -395,8 +474,7 @@ func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key
 			return err
 		}
 
-		// a whole segment's size is the cluster's segment size
-		if size := uint64(tree.nodes[i].Stat.GetSize()); h != nil && size > 0 && !h.holds(name, size) {
+		if !tree.onHistory(h, i) {
 			i = -1
 		}
 	}
@@ -405,16 +483,7 @@ func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key
 		return fmt.Errorf("%w: %s", backup.ErrNotFound, name)
 	}
 
-	restorer := &backup.Restorer{Store: objects, Key: tree.key}
-	if _, err := restorer.RestoreFile(ctx, dst, tree.nodes[i].Stat, tree.nodes[i].Ref); err != nil {
-		return err
-	}
-
-	if pad {
-		return padSegment(dst)
-	}
-
-	return nil
+	return tree.restoreWAL(ctx, backup.LocalFS{}, dst, i, pad)
 }
 
 // servesPartial reports whether a commit holding names serves segment from
@@ -438,35 +507,4 @@ func servesPartial(names []string, segment string) bool {
 	}
 
 	return true
-}
-
-// padSegment extends the partial segment at path with zeros to the size
-// its header records: outside standby mode Postgres refuses a restored
-// segment of any other size.
-func padSegment(path string) error {
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
-	if err != nil {
-		return err
-	}
-
-	hdr, err := readSegmentHeader(f)
-	if err != nil {
-		_ = f.Close()
-		return err
-	}
-
-	info, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return err
-	}
-
-	if info.Size() < int64(hdr.segSize) {
-		if err := f.Truncate(int64(hdr.segSize)); err != nil {
-			_ = f.Close()
-			return err
-		}
-	}
-
-	return f.Close()
 }

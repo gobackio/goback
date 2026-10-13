@@ -2,11 +2,14 @@ package mysql
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
@@ -159,39 +162,56 @@ func TestRestoreNeedsMysqlbinlogBeforeItLoadsAnything(t *testing.T) {
 	require.Empty(t, f.srv.loaded)
 }
 
+// frontToBack is the local disk written only front to back, without links
+// or modes, as an FTP server is.
+type frontToBack struct{ backup.WriteFS }
+
+func (frontToBack) Symlink(context.Context, string, string) error {
+	return fmt.Errorf("no links here: %w", errors.ErrUnsupported)
+}
+
+func (frontToBack) Chmod(context.Context, string, os.FileMode) error {
+	return fmt.Errorf("no modes here: %w", errors.ErrUnsupported)
+}
+
 func TestRestoreToADirectoryWritesTheFilesOnly(t *testing.T) {
-	f := newFixture(t)
-	f.mustDump()
-	f.srv.write()
-	f.srv.flush()
-	f.commitFiles(1)
+	for name, fsys := range map[string]backup.WriteFS{"local": nil, "front to back": frontToBack{backup.LocalFS{}}} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.mustDump()
+			f.srv.write()
+			f.srv.flush()
+			f.commitFiles(1)
 
-	to := filepath.Join(t.TempDir(), "out")
-	r := &Restore{
-		Objects:   f.index,
-		Latest:    func(ctx context.Context, set string) (*proto.Ref, error) { return f.index.LatestCommit(ctx, set) },
-		DumpSet:   "db-dump",
-		BinlogSet: "db-binlog",
-		Client:    f.srv,
-		To:        to,
+			to := filepath.Join(t.TempDir(), "out")
+			r := &Restore{
+				Objects:   f.index,
+				Latest:    func(ctx context.Context, set string) (*proto.Ref, error) { return f.index.LatestCommit(ctx, set) },
+				DumpSet:   "db-dump",
+				BinlogSet: "db-binlog",
+				Client:    f.srv,
+				To:        to,
+				FS:        fsys,
+			}
+
+			result, err := r.Run(f.ctx)
+			require.NoError(t, err)
+			require.Empty(t, f.srv.loaded)
+			require.Empty(t, f.srv.replayed)
+
+			content, err := os.ReadFile(result.DumpPath)
+			require.NoError(t, err)
+			require.Equal(t, f.srv.dump, string(content))
+
+			binlog, err := os.ReadFile(filepath.Join(to, "binlog.000001"))
+			require.NoError(t, err)
+
+			disk, err := os.ReadFile(filepath.Join(f.srv.dir, "binlog.000001"))
+			require.NoError(t, err)
+			require.Equal(t, disk, binlog)
+			require.Equal(t, filepath.Join(to, "binlog.000001"), result.ReplayArgs[len(result.ReplayArgs)-1])
+		})
 	}
-
-	result, err := r.Run(f.ctx)
-	require.NoError(t, err)
-	require.Empty(t, f.srv.loaded)
-	require.Empty(t, f.srv.replayed)
-
-	content, err := os.ReadFile(result.DumpPath)
-	require.NoError(t, err)
-	require.Equal(t, f.srv.dump, string(content))
-
-	binlog, err := os.ReadFile(filepath.Join(to, "binlog.000001"))
-	require.NoError(t, err)
-
-	disk, err := os.ReadFile(filepath.Join(f.srv.dir, "binlog.000001"))
-	require.NoError(t, err)
-	require.Equal(t, disk, binlog)
-	require.Equal(t, filepath.Join(to, "binlog.000001"), result.ReplayArgs[len(result.ReplayArgs)-1])
 }
 
 func TestReplayArgs(t *testing.T) {

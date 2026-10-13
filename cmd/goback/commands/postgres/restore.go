@@ -25,7 +25,8 @@ var restoreCmd = cli.Command{
 	Description: "restore_command runs goback again for every WAL file Postgres asks for: this binary with the\n" +
 		"global flags given here, unless --goback names another command. Flags end up in\n" +
 		"postgresql.auto.conf, or recovery.conf before Postgres 12; settings from the environment have to\n" +
-		"be in Postgres's environment.",
+		"be in Postgres's environment. --copy-wal writes the WAL into pg_wal instead, so Postgres needs\n" +
+		"neither goback nor the store.",
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:  "base-set",
@@ -43,6 +44,10 @@ var restoreCmd = cli.Command{
 			Name:  "goback",
 			Usage: "command restore_command runs goback as, global flags included",
 		},
+		cli.BoolFlag{
+			Name:  "copy-wal",
+			Usage: "copy the WAL recovery reads into the data directory instead of fetching it through restore_command",
+		},
 	},
 	Action: restoreAction,
 }
@@ -56,19 +61,15 @@ func restoreAction(c *cli.Context) error {
 		return cli.NewExitError("--at needs --wal-set to recover to", 2)
 	}
 
+	if c.Bool("copy-wal") && c.String("goback") != "" {
+		return cli.NewExitError("--goback is for restore_command, which --copy-wal does without", 2)
+	}
+
 	var at time.Time
 	if s := c.String("at"); s != "" {
 		var err error
 		if at, err = time.Parse(time.RFC3339Nano, s); err != nil {
 			return cli.NewExitError(fmt.Sprintf("--at: %v", err), 2)
-		}
-	}
-
-	goback := c.String("goback")
-	if goback == "" {
-		var err error
-		if goback, err = invocation(c); err != nil {
-			return err
 		}
 	}
 
@@ -86,9 +87,20 @@ func restoreAction(c *cli.Context) error {
 		BaseSet: c.String("base-set"),
 		WALSet:  c.String("wal-set"),
 		At:      at,
-		RestoreCommand: func(wal *proto.Ref) string {
+	}
+
+	if !c.Bool("copy-wal") {
+		goback := c.String("goback")
+		if goback == "" {
+			var err error
+			if goback, err = invocation(c); err != nil {
+				return err
+			}
+		}
+
+		r.RestoreCommand = func(wal *proto.Ref) string {
 			return strings.ReplaceAll(goback, "%", "%%") + " postgres wal-get --wal-set " + shellQuote(c.String("wal-set")) + " --commit " + hex.EncodeToString(wal.Hash) + " %f %p"
-		},
+		}
 	}
 
 	result, err := r.Run(common.Context(c), c.Args().First())
@@ -97,17 +109,26 @@ func restoreAction(c *cli.Context) error {
 	}
 
 	common.Result(struct {
-		Base views.CommitView `json:"base"`
-		WAL  string           `json:"wal,omitempty"`
-	}{common.View.Commit(result.Base), views.Hex(result.WAL)}, func() {
+		Base      views.CommitView `json:"base"`
+		WAL       string           `json:"wal,omitempty"`
+		Copied    []string         `json:"copied,omitempty"`
+		ModeUnset bool             `json:"mode_unset,omitempty"`
+	}{common.View.Commit(result.Base), views.Hex(result.WAL), result.Copied, result.ModeUnset}, func() {
 		log.Printf("Restored the base backup of %s (commit %x)", time.Unix(result.Base.GetTimestamp(), 0).UTC().Format(time.RFC3339), result.BaseRef.Hash)
 
-		if r.WALSet == "" {
+		switch {
+		case r.WALSet == "":
 			log.Printf("Postgres recovers to the end of the base backup")
-		} else if result.WAL == nil {
+		case result.WAL == nil:
 			log.Printf("The WAL set %s has no commits: Postgres recovers to the end of the base backup", r.WALSet)
-		} else {
+		case r.RestoreCommand == nil:
+			log.Printf("Copied %d WAL files of commit %x into the data directory; Postgres recovers from them when it starts", len(result.Copied), result.WAL.Hash)
+		default:
 			log.Printf("Postgres recovers from WAL commit %x when it starts", result.WAL.Hash)
+		}
+
+		if result.ModeUnset {
+			log.Printf("The data directory could not be given mode 0700, which Postgres needs before it starts")
 		}
 	})
 
