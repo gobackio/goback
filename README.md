@@ -160,3 +160,7 @@ go test ./...
 ```
 
 Some tests start Postgres, MySQL and MinIO in Docker through testcontainers.
+
+## License
+
+Apache License 2.0; see [LICENSE](LICENSE).
