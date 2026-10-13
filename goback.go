@@ -26,8 +26,9 @@ const (
 	DefaultBlobCacheSize     = 4_000_000_000
 )
 
-// Settings say where a store lives and how to open it. Every field but
-// Storage may be left zero.
+// Settings say where a store lives and how to open it. Storage is
+// required, and Index for a directory or bucket store; the rest may be
+// left zero.
 type Settings struct {
 	// Storage is the store's location: a directory, gs:// or s3:// with
 	// the bucket's query parameters, or goback:// and goback+insecure://
