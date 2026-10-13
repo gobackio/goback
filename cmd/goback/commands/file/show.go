@@ -84,7 +84,7 @@ func showAction(c *cli.Context) error {
 
 var showCmd = cli.Command{
 	Name:      "show",
-	Usage:     "Show information about a file",
+	Usage:     "List a file's newest ten versions, none newer than <age> ago",
 	ArgsUsage: "<path> [age]",
 	Action:    showAction,
 }

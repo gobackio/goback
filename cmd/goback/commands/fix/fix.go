@@ -12,7 +12,7 @@ import (
 // Command is the fix command.
 var Command = cli.Command{
 	Name:   "fix",
-	Usage:  "Detect and fix problems",
+	Usage:  "Rebuild the index from the objects the store holds, as on a new machine or after the index is lost",
 	Action: fixAction,
 }
 
