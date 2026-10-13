@@ -60,7 +60,7 @@ var DatabaseBase = Policy{KeepLast: 1, Brackets: []Bracket{
 // DatabaseLog is the initial policy of a WAL or binlog set. Each of its
 // commits holds the log back to the oldest base backup inside the
 // recovery window, so the newest commits suffice.
-var DatabaseLog = Policy{KeepLast: 1, KeepWithin: 24 * time.Hour}
+var DatabaseLog = Policy{KeepLast: 60}
 
 // KeepAll is a policy that retires nothing.
 var KeepAll = Policy{KeepLast: 1, KeepWithin: time.Duration(math.MaxInt64)}
