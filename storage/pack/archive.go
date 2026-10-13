@@ -803,12 +803,13 @@ func (a *archive) readAll() ([]byte, error) {
 	}
 	defer file.Close()
 
-	buf := bytes.NewBuffer(make([]byte, 0, a.size))
-	if _, err := io.Copy(buf, file); err != nil {
+	// a growing buffer would double to read the end of the file
+	buf := make([]byte, a.size)
+	if _, err := io.ReadFull(file, buf); err != nil {
 		return nil, errors.Wrapf(err, "reading archive %s", a.name)
 	}
 
-	return buf.Bytes(), nil
+	return buf, nil
 }
 
 // storeReadIndex writes idx as the archive's index file and returns the

@@ -147,6 +147,17 @@ func (c *classes) fold(sizes map[int32]uint64, small uint64) map[int32]int32 {
 	return into
 }
 
+// outputs counts the classes fold leaves of sizes, each written into an
+// output of its own.
+func (c *classes) outputs(sizes map[int32]uint64, small uint64) int {
+	written := make(map[int32]bool)
+	for _, id := range c.fold(sizes, small) {
+		written[id] = true
+	}
+
+	return len(written)
+}
+
 // classed is the output class of every record of one archive a sweep
 // rewrites, and what of each class survives in it.
 type classed struct {
@@ -243,13 +254,11 @@ func (r *gcRun) classify(live *liveRuns) error {
 	return nil
 }
 
-// classesOf is the output classes of a chunk of the sweep.
-func (r *gcRun) classesOf(chunk []*archive) func(candidate *archive, pos int) int32 {
-	return chunkClasses(r.classes, r.ps.compaction.small(), chunk, func(a *archive) *classed {
-		if ga := r.archives[a.name]; ga != nil {
-			return ga.classed
-		}
+// classedOf is the classes the sweep gives the records of a.
+func (r *gcRun) classedOf(a *archive) *classed {
+	if ga := r.archives[a.name]; ga != nil {
+		return ga.classed
+	}
 
-		return nil
-	})
+	return nil
 }

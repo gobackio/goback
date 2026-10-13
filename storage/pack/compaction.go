@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"runtime"
 	"sort"
 	"sync"
@@ -30,10 +31,11 @@ type compactionGroup struct {
 	// reachable and may replace the candidate's.
 	keep   func(candidate *archive, hdr *proto.ObjectHeader) bool
 	marked func(loc *IndexLocation) bool
-	// classes, when set, gives for a chunk of the rewrite the output
-	// class of a candidate's record at an index position, or -1; each
-	// class is written apart.
-	classes func(chunk []*archive) func(candidate *archive, pos int) int32
+	// classes, when set, numbers the output classes of the rewrite, and
+	// classed gives the class of each record of a candidate, nil for one
+	// it has none for; each class is written apart.
+	classes *classes
+	classed func(a *archive) *classed
 	// progress counts the candidates rewritten and their bytes.
 	progress *progress.Phase
 
@@ -153,6 +155,75 @@ func (g *compactionGroup) report(r *CompactReport) {
 // done, so a rewrite that is stopped keeps what it finished.
 const compactionChunk = 1000
 
+// chunkRecords and chunkOutputs bound a chunk of classed candidates: a
+// chunk keeps state for each record it reads and an upload buffer for
+// each output it holds open.
+var (
+	chunkRecords = 1 << 19
+	chunkOutputs = 32
+)
+
+// rewriteAfterChunk, when set, runs after every chunk; tests use it to
+// interrupt a rewrite.
+var rewriteAfterChunk func(chunk int) error
+
+// chunks splits the candidates, in order, into the runs a rewrite takes
+// one at a time: at most size archives each, and, where the candidates
+// are classed, at most chunkRecords records and chunkOutputs outputs
+// unless a single archive holds more.
+func (g *compactionGroup) chunks(size int, small uint64) [][]*archive {
+	var out [][]*archive
+	var chunk []*archive
+	var records int
+	var sizes map[int32]uint64
+
+	for _, a := range g.candidates {
+		var cl *classed
+		if g.classes != nil && g.classed != nil {
+			cl = g.classed(a)
+		}
+
+		grown := sizes
+		if cl != nil {
+			grown = maps.Clone(sizes)
+			if grown == nil {
+				grown = make(map[int32]uint64, len(cl.Bytes))
+			}
+
+			for id, n := range cl.Bytes {
+				grown[id] += n
+			}
+		}
+
+		fits := len(chunk) < size
+		if fits && cl != nil {
+			fits = records+len(cl.Class) <= chunkRecords && g.classes.outputs(grown, small) <= chunkOutputs
+		}
+
+		if len(chunk) > 0 && !fits {
+			out = append(out, chunk)
+			chunk, records, sizes = nil, 0, nil
+
+			if cl != nil {
+				grown = maps.Clone(cl.Bytes)
+			}
+		}
+
+		chunk = append(chunk, a)
+		sizes = grown
+
+		if cl != nil {
+			records += len(cl.Class)
+		}
+	}
+
+	if len(chunk) > 0 {
+		out = append(out, chunk)
+	}
+
+	return out
+}
+
 // maxWorkers bounds the default number of workers: each holds an open
 // output archive and a lookup's rows, which a many-core host would
 // otherwise multiply into gigabytes.
@@ -202,7 +273,7 @@ func (ps *PackStorage) compactGroup(ctx context.Context, group *compactionGroup)
 	defer span.End()
 
 	rw := &rewrite{started: time.Now(), ps: ps, group: group, inGroup: make(map[string]bool, len(group.candidates)),
-		written: make(map[string]bool), unmarked: make(map[string]uint64), open: make(map[int64]*rewriteOutput)}
+		open: make(map[int64]*rewriteOutput)}
 	for _, candidate := range group.candidates {
 		rw.inGroup[candidate.name] = true
 	}
@@ -217,14 +288,20 @@ func (ps *PackStorage) compactGroup(ctx context.Context, group *compactionGroup)
 		size = compactionChunk
 	}
 
-	span.SetAttributes(attribute.Int("candidates", len(group.candidates)), attribute.Int("workers", workers))
+	chunks := group.chunks(size, ps.compaction.small())
 
-	for start := 0; start < len(group.candidates); start += size {
-		chunk := group.candidates[start:min(start+size, len(group.candidates))]
+	span.SetAttributes(attribute.Int("candidates", len(group.candidates)), attribute.Int("workers", workers), attribute.Int("chunks", len(chunks)))
 
+	for n, chunk := range chunks {
 		if err := rw.chunk(ctx, chunk, ps.compaction.workersFor(chunk, workers)); err != nil {
 			span.RecordError(err)
 			return err
+		}
+
+		if rewriteAfterChunk != nil {
+			if err := rewriteAfterChunk(n); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -298,9 +375,11 @@ func (rw *rewrite) chunk(ctx context.Context, chunk []*archive, workers int) err
 		return err
 	}
 
+	rw.written, rw.unmarked = make(map[string]bool), make(map[string]uint64)
+
 	rw.class = nil
 	if rw.group.classes != nil {
-		rw.class = rw.group.classes(chunk)
+		rw.class = chunkClasses(rw.group.classes, rw.ps.compaction.small(), chunk, rw.group.classed)
 	}
 
 	grp, gctx := errgroup.WithContext(ctx)
@@ -398,12 +477,12 @@ func (rw *rewrite) lookUp(ctx context.Context, chunk []*archive, workers int) ([
 		return nil, nil, err
 	}
 
-	seen := make(map[string]bool)
+	seen := make(map[refKey]bool)
 	var refs []*proto.Ref
 
 	for _, idx := range indexes {
 		for i := range idx {
-			if key := string(idx[i].Sum[:]); !seen[key] {
+			if key := keyOf(idx[i].Sum[:]); !seen[key] {
 				seen[key] = true
 				refs = append(refs, &proto.Ref{Hash: idx[i].Sum[:]})
 			}
@@ -619,15 +698,22 @@ func (rw *rewrite) abort() {
 }
 
 // candidate copies what survives of one candidate, whose bytes data
-// holds, into the worker's outputs; standIn names the objects a copy
-// outside the group stands in for.
+// holds or, when nil, the storage streams, into the worker's outputs;
+// standIn names the objects a copy outside the group stands in for.
 func (rw *rewrite) candidate(ctx context.Context, worker int, candidate *archive, idx IndexFile, standIn map[string]bool, data []byte) error {
 	started := time.Now()
 	var copied, moved, superseded uint64
 
 	mark := candidate.gcResult()
 
-	err := candidate.foreachReader(bytes.NewReader(data), loadAll, func(hdr *proto.ObjectHeader, bytes []byte, offset, length uint32) error {
+	walk := candidate.foreach
+	if data != nil {
+		walk = func(load loadPredicate, fn func(*proto.ObjectHeader, []byte, uint32, uint32) error) error {
+			return candidate.foreachReader(bytes.NewReader(data), load, fn)
+		}
+	}
+
+	err := walk(loadAll, func(hdr *proto.ObjectHeader, bytes []byte, offset, length uint32) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -701,23 +787,26 @@ func (rw *rewrite) candidate(ctx context.Context, worker int, candidate *archive
 }
 
 const (
-	// prefetchReads bounds the inputs a worker reads ahead at once, and
-	// prefetchBytes what all the workers of a rewrite hold read ahead.
+	// prefetchReads bounds the inputs a worker reads ahead at once,
+	// prefetchBytes what all the workers of a rewrite hold read ahead, and
+	// prefetchLimit the size of an input read ahead whole.
 	prefetchReads = 8
 	prefetchBytes = 128 << 20
+	prefetchLimit = 32 << 20
 )
 
-// prefetched is an input read ahead of the worker that rewrites it.
+// prefetched is an input read ahead of the worker that rewrites it; data
+// is nil for one too large to read ahead, which the worker streams.
 type prefetched struct {
 	data    []byte
 	err     error
 	release func()
 }
 
-// prefetch reads the inputs ahead of their worker, prefetchReads at a
-// time and in order, holding no more than held allows, and hands each
-// over on its channel. The worker releases what it took once done with
-// it.
+// prefetch reads the inputs of at most prefetchLimit bytes ahead of their
+// worker, prefetchReads at a time and in order, holding no more than held
+// allows, and hands each over on its channel. The worker releases what it
+// took once done with it.
 func prefetch(ctx context.Context, inputs []*archive, held *semaphore.Weighted) []chan prefetched {
 	reads := make([]chan prefetched, len(inputs))
 	for i := range reads {
@@ -728,7 +817,11 @@ func prefetch(ctx context.Context, inputs []*archive, held *semaphore.Weighted) 
 		running := semaphore.NewWeighted(prefetchReads)
 
 		for i, input := range inputs {
-			weight := min(int64(input.size), prefetchBytes)
+			weight := int64(input.size)
+			if weight > prefetchLimit {
+				reads[i] <- prefetched{release: func() {}}
+				continue
+			}
 
 			if err := running.Acquire(ctx, 1); err != nil {
 				reads[i] <- prefetched{err: err, release: func() {}}

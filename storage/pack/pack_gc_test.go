@@ -10,6 +10,8 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"slices"
 	"testing"
 	"time"
@@ -1020,6 +1022,145 @@ func TestCompactionBetweenCollectionsKeepsTheUnreachableCounting(t *testing.T) {
 	requireStored(t, store, unreachable, false)
 	requireStored(t, store, reachable, true)
 
+	require.NoError(t, store.Close())
+}
+
+// requireOneCopy expects the index to place every object exactly once.
+func requireOneCopy(t *testing.T, store *PackStorage, objects []*proto.Object) {
+	t.Helper()
+
+	for _, obj := range objects {
+		copies, err := store.index.LocateCopies([]*proto.Ref{obj.Ref()}, Scope{})
+		require.NoError(t, err)
+		require.Lenf(t, copies[string(obj.Ref().Hash)], 1, "copies of %x of type %s", obj.Ref().Hash, obj.Type())
+	}
+}
+
+func TestASweepStoppedBetweenChunksIsFinishedByTheNextCollection(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	ctx := context.Background()
+
+	reachable, unreachable := makeGCTestData(t)
+	putAll(t, store, append(append([]*proto.Object{}, reachable...), unreachable...))
+
+	_, err := store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+
+	defer func(n int) { chunkRecords = n; rewriteAfterChunk = nil }(chunkRecords)
+	chunkRecords = 200
+
+	var chunks int
+	stopped := errors.New("stopped")
+	rewriteAfterChunk = func(chunk int) error {
+		chunks++
+		if chunk == 1 {
+			return stopped
+		}
+
+		return nil
+	}
+
+	before, _, err := store.archiveNames()
+	require.NoError(t, err)
+
+	_, err = store.Collect(ctx, gcOptions(t, 48*time.Hour))
+	require.ErrorIs(t, err, stopped)
+	require.Equal(t, 2, chunks, "the sweep stopped after its second chunk")
+
+	after, _, err := store.archiveNames()
+	require.NoError(t, err)
+	require.NotEqual(t, before, after, "the finished chunks retired their inputs")
+
+	requireStored(t, store, reachable, true)
+	requireOneCopy(t, store, reachable)
+
+	rewriteAfterChunk = nil
+
+	finished, err := store.Collect(ctx, gcOptions(t, 72*time.Hour))
+	require.NoError(t, err)
+	require.Empty(t, finished.SweepSkipped)
+	require.Greater(t, finished.Swept, 0)
+
+	requireStored(t, store, unreachable, false)
+	requireStored(t, store, reachable, true)
+	requireOneCopy(t, store, reachable)
+
+	// the tombstones go once spent
+	_, err = store.Collect(ctx, gcOptions(t, 96*time.Hour))
+	require.NoError(t, err)
+
+	settled, err := store.Collect(ctx, gcOptions(t, 120*time.Hour))
+	require.NoError(t, err)
+	require.Zero(t, settled.DeadObjects)
+	require.EqualValues(t, len(reachable), settled.Marked, "no copy of the stopped sweep is left over")
+
+	require.NoError(t, store.Close())
+}
+
+func TestASweepStreamsArchivesTooLargeToReadAhead(t *testing.T) {
+	const archiveSize = 2 * prefetchLimit
+
+	store := newTestStore(t, t.TempDir(), WithMaxSize(archiveSize))
+	ctx := context.Background()
+
+	var kept []*proto.Object
+	for range 2 {
+		for i := range archiveSize / (64 << 10) {
+			data := make([]byte, 64<<10)
+			_, _ = rand.Read(data)
+
+			obj := proto.NewObject(&proto.Blob{Data: data})
+			require.NoError(t, store.Put(ctx, obj))
+
+			if i%10 == 0 {
+				kept = append(kept, obj)
+			}
+		}
+
+		require.NoError(t, store.Flush())
+	}
+
+	putAll(t, store, makeChain(kept)[len(kept):])
+
+	_, err := store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+
+	defer debug.SetGCPercent(debug.SetGCPercent(10))
+	runtime.GC()
+
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	base := stats.HeapAlloc
+
+	peak := base
+	done := make(chan struct{})
+	sampled := make(chan struct{})
+
+	go func() {
+		defer close(sampled)
+
+		var stats runtime.MemStats
+		for {
+			runtime.ReadMemStats(&stats)
+			peak = max(peak, stats.HeapAlloc)
+
+			select {
+			case <-done:
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}()
+
+	report, err := store.Collect(ctx, gcOptions(t, 48*time.Hour))
+	close(done)
+	<-sampled
+
+	require.NoError(t, err)
+	require.Greater(t, report.Swept, 1)
+	require.Less(t, peak-base, uint64(archiveSize/2), "the sweep held %d MiB", (peak-base)>>20)
+
+	requireStored(t, store, kept, true)
 	require.NoError(t, store.Close())
 }
 

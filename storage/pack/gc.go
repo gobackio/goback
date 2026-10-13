@@ -513,6 +513,8 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 		ps.logger.Info("gc confirmed the drops", "generation", run.gen, "took", time.Since(checkStart).Round(time.Millisecond))
 	}
 
+	run.releaseMark()
+
 	if report.SweepSkipped == "" && opts.Handoff {
 		phase := progress.Start(ctx, progress.OpCollect, progress.PhasePublish, 0, 0)
 		if report.Published, err = run.publish(); err != nil {
@@ -569,7 +571,7 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 		horizons = append(horizons, prev.Horizon)
 	}
 
-	pruned, err := ps.pruneSessionMarkers(opts.Now, sessions,append(horizons, state.Horizon)...)
+	pruned, err := ps.pruneSessionMarkers(opts.Now, sessions, append(horizons, state.Horizon)...)
 	if err != nil {
 		return nil, errors.Wrap(err, "pruning session markers")
 	}
@@ -1836,6 +1838,14 @@ func (r *gcRun) writeResults() error {
 	return grp.Wait()
 }
 
+// releaseMark lets go of what only the mark and its check read, so the
+// sweep runs with what decides the drops alone.
+func (r *gcRun) releaseMark() {
+	r.reads, r.located, r.pending, r.pendingAt = nil, nil, nil, nil
+	r.roots, r.tombstones, r.targets, r.blobs = nil, nil, nil, nil
+	r.newestTomb, r.condemned, r.untombed, r.oldestCopy = nil, nil, nil, nil
+}
+
 // sweepBlocker returns why this generation must not sweep, or "".
 func (r *gcRun) sweepBlocker() string {
 	if r.opts.NoSweep {
@@ -1857,7 +1867,7 @@ func (r *gcRun) sweepBlocker() string {
 // sweep rewrites the archives whose dead share or age selects them, dropping
 // objects unmarked in two consecutive generations.
 func (r *gcRun) sweep(ctx context.Context, report *CollectReport) error {
-	group := &compactionGroup{keep: r.keep, marked: r.marked, classes: r.classesOf}
+	group := &compactionGroup{keep: r.keep, marked: r.marked, classes: r.classes, classed: r.classedOf}
 
 	for _, ga := range r.order {
 		if !r.selected(ga) {

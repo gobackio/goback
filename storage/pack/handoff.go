@@ -162,10 +162,8 @@ func (ps *PackStorage) readPlan(generation uint64) (*sweepPlan, error) {
 
 func (ps *PackStorage) rewrite(ctx context.Context, plan *sweepPlan, report *RewriteReport) error {
 	marks := &planMarks{ps: ps, indexes: make(map[string]IndexFile), results: make(map[string]*gcFile)}
-	known := newClasses(plan.Classes)
-	group := &compactionGroup{marked: marks.marked, classes: func(chunk []*archive) func(*archive, int) int32 {
-		return chunkClasses(known, ps.compaction.small(), chunk, func(a *archive) *classed { return plan.Classed[a.name] })
-	}}
+	group := &compactionGroup{marked: marks.marked, classes: newClasses(plan.Classes),
+		classed: func(a *archive) *classed { return plan.Classed[a.name] }}
 
 	ps.mtx.RLock()
 	for _, a := range ps.archives {

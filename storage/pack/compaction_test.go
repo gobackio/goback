@@ -167,6 +167,56 @@ func TestCompactionMergesOnlySmallArchivesAndNeverItsOwnOutput(t *testing.T) {
 	}
 }
 
+func TestAClassedRewriteChunksWithinItsRecordAndOutputBounds(t *testing.T) {
+	defer func(records, outputs int) { chunkRecords, chunkOutputs = records, outputs }(chunkRecords, chunkOutputs)
+	chunkRecords, chunkOutputs = 10, 2
+
+	const small = 100
+
+	c := newClasses(nil)
+	class := func(set int64) int32 { return c.id(outputClass{Owner: Attribution{Group: 1, Set: set}}) }
+
+	held := make(map[string]*classed)
+	candidate := func(name string, records int, sizes map[int32]uint64) *archive {
+		held[name] = &classed{Class: make([]int32, records), Bytes: sizes}
+		return &archive{name: name}
+	}
+
+	group := &compactionGroup{classes: c, classed: func(a *archive) *classed { return held[a.name] }}
+	group.candidates = []*archive{
+		candidate("a", 4, map[int32]uint64{class(1): small}),
+		candidate("b", 4, map[int32]uint64{class(1): small}),
+		candidate("c", 4, map[int32]uint64{class(1): small}),
+		candidate("d", 2, map[int32]uint64{class(2): small}),
+		candidate("e", 2, map[int32]uint64{class(3): small}),
+		candidate("f", 30, map[int32]uint64{class(4): small}),
+		{name: "unclassed"},
+		candidate("g", 1, map[int32]uint64{class(5): small, class(6): small, class(7): small}),
+	}
+
+	names := func(chunks [][]*archive) [][]string {
+		var out [][]string
+		for _, chunk := range chunks {
+			var names []string
+			for _, a := range chunk {
+				names = append(names, a.name)
+			}
+
+			out = append(out, names)
+		}
+
+		return out
+	}
+
+	require.Equal(t, [][]string{{"a", "b"}, {"c", "d"}, {"e"}, {"f", "unclassed"}, {"g"}}, names(group.chunks(1000, small)),
+		"a chunk ends before it would exceed either bound, and an archive beyond one takes a chunk of its own")
+	require.Equal(t, [][]string{{"a"}, {"b"}, {"c"}, {"d"}, {"e"}, {"f"}, {"unclassed"}, {"g"}}, names(group.chunks(1, small)))
+
+	group.classed = nil
+	require.Equal(t, [][]string{{"a", "b", "c"}, {"d", "e", "f"}, {"unclassed", "g"}}, names(group.chunks(3, small)),
+		"unclassed candidates are chunked by count alone")
+}
+
 func TestARewriteTrustsOnlyAReachableCopyOutsideItsGroup(t *testing.T) {
 	rw := &rewrite{
 		inGroup: map[string]bool{"candidate": true},
@@ -380,4 +430,9 @@ func TestPrefetchHandsTheInputsOverInOrderWithinItsBudget(t *testing.T) {
 
 		input.release()
 	}
+
+	large := &archive{name: "large", size: prefetchLimit + 1, storage: storage}
+	input := <-prefetch(context.Background(), []*archive{large}, semaphore.NewWeighted(prefetchBytes))[0]
+	require.NoError(t, input.err)
+	require.Nil(t, input.data, "an input too large to read ahead is left to stream")
 }
