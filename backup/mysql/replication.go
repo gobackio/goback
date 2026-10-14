@@ -20,9 +20,10 @@ import (
 	"github.com/go-mysql-org/go-mysql/replication"
 )
 
-// ErrServerIDInUse is returned when another replica connects with the
-// receiver's server id, so the server ends one dump after the other.
-var ErrServerIDInUse = errors.New("another replica uses the receiver's server id")
+// ErrServerIDInUse is returned when the receiver's server id is the
+// server's own, or another replica connects with it, so the server ends
+// one dump after the other.
+var ErrServerIDInUse = errors.New("the receiver's server id is taken")
 
 // ReplicaServerID is the server id a binlog set's receiver connects with
 // unless told otherwise: a hash of the set's name in 2^31 to 2^32-1, above

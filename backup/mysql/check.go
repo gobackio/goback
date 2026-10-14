@@ -32,7 +32,7 @@ func Check(ctx context.Context, defaultsExtraFile string, serverID uint32) []str
 	}
 
 	if _, err := BinaryLogs(ctx, conn); err != nil && srv.LogBin {
-		problems = append(problems, fmt.Sprintf("SHOW BINARY LOGS: %v; GRANT REPLICATION CLIENT ON *.* to the user", err))
+		problems = append(problems, fmt.Sprintf("%v; GRANT REPLICATION CLIENT ON *.* to the user", err))
 	}
 
 	registered, err := replicas(ctx, conn, srv)
@@ -70,7 +70,7 @@ func CheckDump(ctx context.Context, defaultsExtraFile string, position bool) []s
 	}
 
 	if _, err := BinaryLogs(ctx, conn); err != nil {
-		return []string{fmt.Sprintf("SHOW BINARY LOGS: %v; GRANT REPLICATION CLIENT ON *.* to the user, or set no-binlog-position", err)}
+		return []string{fmt.Sprintf("%v; GRANT REPLICATION CLIENT ON *.* to the user, or set no-binlog-position", err)}
 	}
 
 	return nil

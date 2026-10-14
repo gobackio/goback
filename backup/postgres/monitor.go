@@ -228,12 +228,12 @@ func (m *monitor) checkAsync(ctx context.Context, pid uint32, flush uint64) erro
 }
 
 // Check connects to the cluster at connString as the receiver and the
-// base backups do, and lists what it lacks for replication capture: a
-// supported version, the role's REPLICATION attribute, pg_hba.conf entries
-// for both connections, a pg_basebackup of the server's major version where
-// base backups need one (pgBasebackup, or pg_basebackup on the PATH when
-// empty) and, unless slot is empty because nothing streams, a capped slot
-// unless allowUncapped and a free one. An empty list means nothing is
+// base backups do, and lists what it lacks for replication capture: the
+// role's REPLICATION attribute, pg_hba.conf entries for both connections,
+// a pg_basebackup of the server's major version where base backups need
+// one (pgBasebackup, or pg_basebackup on the PATH when empty) and, unless
+// slot is empty because nothing streams, a version that streams, a capped
+// slot unless allowUncapped and a free one. An empty list means nothing is
 // missing.
 func Check(ctx context.Context, connString, pgBasebackup, slot string, allowUncapped bool) []string {
 	m, err := connectMonitor(ctx, connString, "goback")
@@ -249,7 +249,7 @@ func Check(ctx context.Context, connString, pgBasebackup, slot string, allowUnca
 		return []string{err.Error()}
 	}
 
-	if s.version < minReceiveVersion {
+	if slot != "" && s.version < minReceiveVersion {
 		problems = append(problems, fmt.Sprintf("Postgres %s is older than 14, the oldest replication capture supports", versionString(s.version)))
 	}
 

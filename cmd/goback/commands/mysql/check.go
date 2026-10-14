@@ -31,11 +31,12 @@ func checkAction(c *cli.Context) error {
 		return cli.NewExitError("--server-id must fit in 32 bits", 2)
 	}
 
-	ctx, file := common.Context(c), c.String("defaults-extra-file")
+	ctx, file, set := common.Context(c), c.String("defaults-extra-file"), c.GlobalString("set")
 
-	problems := mysql.CheckDump(ctx, file, !c.Bool("no-binlog-position"))
+	// receiving needs what recording the position does, and says so itself
+	problems := mysql.CheckDump(ctx, file, !c.Bool("no-binlog-position") && set == "")
 
-	if set := c.GlobalString("set"); set != "" {
+	if set != "" {
 		id := uint32(c.Uint("server-id"))
 		if id == 0 {
 			id = mysql.ReplicaServerID(set)
