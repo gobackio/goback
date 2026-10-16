@@ -48,6 +48,11 @@ var restoreCmd = cli.Command{
 			Name:  "copy-wal",
 			Usage: "copy the WAL recovery reads into the data directory instead of fetching it through restore_command",
 		},
+		cli.IntFlag{
+			Name:  "workers",
+			Usage: "how many files to write at once",
+			Value: backup.DefaultRestoreWorkers(),
+		},
 	},
 	Action: restoreAction,
 }
@@ -87,6 +92,7 @@ func restoreAction(c *cli.Context) error {
 		BaseSet: c.String("base-set"),
 		WALSet:  c.String("wal-set"),
 		At:      at,
+		Workers: c.Int("workers"),
 	}
 
 	if !c.Bool("copy-wal") {

@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 // OverwriteMode says how an existing destination file is treated.
@@ -125,9 +126,18 @@ type RestoreStats struct {
 }
 
 // DefaultRestoreWorkers is how much of a restore runs at once when nothing
-// says otherwise: twice the cpu count, since a file spends most of its
-// time waiting on the store or on the disk rather than on a core.
-func DefaultRestoreWorkers() int { return 2 * runtime.NumCPU() }
+// says otherwise: twice the cpu count and at least 32, since a file spends
+// most of its time waiting on the store or on the disk rather than on a
+// core.
+func DefaultRestoreWorkers() int { return max(32, 2*runtime.NumCPU()) }
+
+// DefaultReadAhead is how many bytes of parts a restore reads from a
+// RecordReader at once when nothing says otherwise.
+const DefaultReadAhead = 512 << 20
+
+// recordBatch bounds the bytes of the neighbouring parts one ReadRecords
+// call asks for.
+const recordBatch = 16 << 20
 
 var (
 	restoreMeter = otel.Meter("goback.io/backup")
@@ -160,7 +170,11 @@ type Restorer struct {
 
 	// Workers bounds how much of a restore runs at once, files and the
 	// parts of one; 0 means DefaultRestoreWorkers.
-	Workers   int
+	Workers int
+	// ReadAhead bounds the bytes of parts read from a store that is a
+	// RecordReader at once, across every file of the restore; 0 means
+	// DefaultReadAhead.
+	ReadAhead int64
 	Overwrite OverwriteMode
 	// Verify rehashes every written file before it is renamed into place.
 	Verify bool
@@ -179,6 +193,10 @@ type Restorer struct {
 	OnHole func(Hole)
 
 	stats RestoreStats
+
+	budgetOnce sync.Once
+	budget     *semaphore.Weighted
+	capacity   int64
 }
 
 // Stats returns what the restorer has done so far.
@@ -253,6 +271,20 @@ func (r *Restorer) workers() int {
 	}
 
 	return DefaultRestoreWorkers()
+}
+
+// readBudget is the restore's shared allowance of part bytes in flight.
+func (r *Restorer) readBudget() (*semaphore.Weighted, int64) {
+	r.budgetOnce.Do(func() {
+		r.capacity = r.ReadAhead
+		if r.capacity <= 0 {
+			r.capacity = DefaultReadAhead
+		}
+
+		r.budget = semaphore.NewWeighted(r.capacity)
+	})
+
+	return r.budget, r.capacity
 }
 
 // RestoreFile puts the file ref describes at path with the recorded mode
@@ -676,6 +708,10 @@ func (r *Restorer) assemble(ctx context.Context, dst io.WriterAt, source io.Read
 		return nil, r.stream(ctx, parts, dst, reader, copies, ref)
 	}
 
+	if records, ok := r.Store.(RecordReader); ok {
+		return r.readRecords(ctx, records, dst, reader, copies)
+	}
+
 	var (
 		mu      sync.Mutex
 		missing []int
@@ -686,27 +722,125 @@ func (r *Restorer) assemble(ctx context.Context, dst io.WriterAt, source io.Read
 
 	for i, at := range copies {
 		grp.Go(func() error {
-			part := reader.parts[i]
-
-			obj, err := r.Store.Get(gctx, part.Ref)
-			if err != nil {
-				if r.Salvage && errors.Is(err, ErrNotFound) {
-					mu.Lock()
-					missing = append(missing, at...)
-					mu.Unlock()
-
-					return nil
-				}
-
-				return errors.Wrapf(err, "part %d (%x) of file %x", i, part.Ref.Hash, reader.fileRef())
+			lost, err := r.getPart(gctx, dst, reader, i, at, nil)
+			if lost {
+				mu.Lock()
+				missing = append(missing, at...)
+				mu.Unlock()
 			}
 
-			return r.writePart(gctx, dst, reader, at, obj)
+			return err
 		})
 	}
 
 	if err := grp.Wait(); err != nil {
 		return nil, err
+	}
+
+	sort.Ints(missing)
+
+	return missing, nil
+}
+
+// getPart writes part i at every offset in at, from obj or, when that is
+// nil, from the store; it reports a part a salvage goes without as lost.
+func (r *Restorer) getPart(ctx context.Context, dst io.WriterAt, reader *fileReader, i int, at []int, obj *proto.Object) (bool, error) {
+	part := reader.parts[i]
+
+	if obj == nil {
+		var err error
+		if obj, err = r.Store.Get(ctx, part.Ref); err != nil {
+			if r.Salvage && errors.Is(err, ErrNotFound) {
+				return true, nil
+			}
+
+			return false, errors.Wrapf(err, "part %d (%x) of file %x", i, part.Ref.Hash, reader.fileRef())
+		}
+	}
+
+	return false, r.writePart(ctx, dst, reader, at, obj)
+}
+
+// readRecords fetches the wanted parts through ReadRecords, neighbours
+// together in batches of up to recordBatch bytes, as many batches at once
+// as the restore's read budget allows; a part a batch did not return is
+// read on its own.
+func (r *Restorer) readRecords(ctx context.Context, records RecordReader, dst io.WriterAt, reader *fileReader, copies map[int][]int) ([]int, error) {
+	leaders := make([]int, 0, len(copies))
+	for i := range copies {
+		leaders = append(leaders, i)
+	}
+
+	sort.Ints(leaders)
+
+	budget, capacity := r.readBudget()
+
+	var (
+		mu      sync.Mutex
+		missing []int
+		stopped error
+	)
+
+	grp, gctx := errgroup.WithContext(ctx)
+
+	for start := 0; start < len(leaders); {
+		end, size := start+1, int64(reader.parts[leaders[start]].Length)
+		for ; end < len(leaders) && end-start < MaxFilesPerRead; end++ {
+			next := int64(reader.parts[leaders[end]].Length)
+			if size+next > recordBatch {
+				break
+			}
+
+			size += next
+		}
+
+		batch := leaders[start:end]
+		start = end
+		size = min(size, capacity)
+
+		if stopped = budget.Acquire(gctx, size); stopped != nil {
+			break
+		}
+
+		grp.Go(func() error {
+			defer budget.Release(size)
+
+			refs := make([]*proto.Ref, len(batch))
+			for k, i := range batch {
+				refs[k] = reader.parts[i].Ref
+			}
+
+			objects, err := records.ReadRecords(gctx, refs)
+			if err != nil {
+				return errors.Wrapf(err, "reading the parts of file %x", reader.fileRef())
+			}
+
+			parts, pctx := errgroup.WithContext(gctx)
+			parts.SetLimit(r.workers())
+
+			for k, i := range batch {
+				parts.Go(func() error {
+					lost, err := r.getPart(pctx, dst, reader, i, copies[i], objects[k])
+					if lost {
+						mu.Lock()
+						missing = append(missing, copies[i]...)
+						mu.Unlock()
+					}
+
+					return err
+				})
+			}
+
+			return parts.Wait()
+		})
+	}
+
+	if err := grp.Wait(); err != nil {
+		return nil, err
+	}
+
+	if stopped != nil {
+		return nil, stopped
 	}
 
 	sort.Ints(missing)

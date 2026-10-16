@@ -575,6 +575,107 @@ func TestRestoreFileStreamsPartsFromPartReader(t *testing.T) {
 	}
 }
 
+// recordStore reads parts through ReadRecords, leaving out every
+// skipEvery'th ref it is asked for, and records the batches and the most
+// part bytes it held at once.
+type recordStore struct {
+	*memStore
+
+	skipEvery int
+
+	mtx      sync.Mutex
+	batches  [][]*proto.Ref
+	held     int64
+	mostHeld int64
+}
+
+func (s *recordStore) ReadRecords(ctx context.Context, refs []*proto.Ref) ([]*proto.Object, error) {
+	objects := make([]*proto.Object, len(refs))
+
+	var size int64
+
+	for i, ref := range refs {
+		obj, err := s.memStore.Get(ctx, ref)
+		if err != nil {
+			return nil, err
+		}
+
+		size += int64(len(obj.GetBlob().GetData()))
+
+		if s.skipEvery == 0 || (i+1)%s.skipEvery != 0 {
+			objects[i] = obj
+		}
+	}
+
+	s.mtx.Lock()
+	s.batches = append(s.batches, refs)
+	s.held += size
+	s.mostHeld = max(s.mostHeld, s.held)
+	s.mtx.Unlock()
+
+	time.Sleep(time.Millisecond)
+
+	s.mtx.Lock()
+	s.held -= size
+	s.mtx.Unlock()
+
+	return objects, nil
+}
+
+func TestARecordReaderIsAskedForNeighbouringPartsInBatches(t *testing.T) {
+	store := &recordStore{memStore: newMemStore(), skipEvery: 7}
+	data, ref := manyParts(t, store.memStore, 3*MaxFilesPerRead+70)
+	stat := statFor(data)
+	path := filepath.Join(t.TempDir(), "000000010000000000000001")
+
+	r := &Restorer{Store: store, ReadAhead: 2 * 64 * MaxFilesPerRead}
+	outcome, err := r.RestoreFile(context.Background(), path, stat, ref)
+	require.NoError(t, err)
+	require.Equal(t, OutcomeWritten, outcome)
+	requireRestored(t, path, data, stat)
+
+	asked := map[string]int{}
+	for _, batch := range store.batches {
+		require.LessOrEqual(t, len(batch), MaxFilesPerRead)
+
+		for _, ref := range batch {
+			asked[string(ref.Hash)]++
+		}
+	}
+
+	for _, n := range asked {
+		require.Equal(t, 1, n, "every distinct part is asked for once")
+	}
+
+	require.LessOrEqual(t, store.mostHeld, r.ReadAhead, "the read-ahead bounds the bytes asked for at once")
+}
+
+func TestARecordBatchIsAtMostRecordBatchBytes(t *testing.T) {
+	store := &recordStore{memStore: newMemStore()}
+	data := randomData(3*recordBatch+5, 1)
+	ref := putFile(t, store.memStore, nil, data)
+	stat := statFor(data)
+	path := filepath.Join(t.TempDir(), "16384")
+
+	_, err := (&Restorer{Store: store}).RestoreFile(context.Background(), path, stat, ref)
+	require.NoError(t, err)
+	requireRestored(t, path, data, stat)
+
+	require.GreaterOrEqual(t, len(store.batches), 4)
+
+	for _, batch := range store.batches {
+		var size int64
+		for _, ref := range batch {
+			obj, err := store.memStore.Get(context.Background(), ref)
+			require.NoError(t, err)
+
+			size += int64(len(obj.GetBlob().GetData()))
+		}
+
+		require.LessOrEqual(t, size, int64(recordBatch))
+	}
+}
+
 // zeroed returns data with the parts' ranges blanked, which is what a
 // salvaged file holds where its holes are.
 func zeroed(data []byte, parts ...*proto.FilePart) []byte {

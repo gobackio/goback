@@ -23,6 +23,7 @@ import (
 	"github.com/gobackio/goback/storage/pack"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -78,6 +79,7 @@ func dialStore(addr string, creds auth.Credentials, transport credentials.Transp
 		store:     proto.NewStoreClient(con),
 		admin:     adminpb.NewAdminClient(con),
 		downloads: received,
+		fetching:  semaphore.NewWeighted(runFetchers),
 	}, nil
 }
 
@@ -151,6 +153,8 @@ type Client struct {
 	HTTP *http.Client
 
 	downloads *downloads
+	// fetching bounds the runs the client fetches at once, across calls
+	fetching *semaphore.Weighted
 }
 
 // Open is a no-op; the connection is dialed by NewClient.
@@ -249,10 +253,9 @@ func (r *Client) LatestCommit(ctx context.Context, set string) (*proto.Ref, erro
 	return response.Ref, nil
 }
 
-// GetTree implements backup.TreeFetcher over the streaming RPC, fetching
-// the runs it is pointed at runFetchers at a time. It returns only trees
-// reached from ref through the refs of trees it returns, and fails with
-// proto.ErrRefMismatch on any other object the server sends.
+// GetTree implements backup.TreeFetcher over the streaming RPC. It returns
+// only trees reached from ref through the refs of trees it returns, and
+// fails with proto.ErrRefMismatch on any other object the server sends.
 func (r *Client) GetTree(ctx context.Context, ref *proto.Ref, maxDepth uint32) ([]*proto.Object, error) {
 	ctx, cancel := context.WithCancel(r.outgoing(ctx))
 	defer cancel()
@@ -283,7 +286,6 @@ func (r *Client) GetTree(ctx context.Context, ref *proto.Ref, maxDepth uint32) (
 	}
 
 	runs, rctx := errgroup.WithContext(ctx)
-	runs.SetLimit(runFetchers)
 
 	err = receive(stream, func(resp *proto.GetTreeResponse) error {
 		if len(resp.GetRuns()) == 0 {
@@ -586,9 +588,17 @@ func (r *Client) follow(ctx context.Context, location *proto.Location) ([]byte, 
 	return record, nil
 }
 
-// fetchRun follows a run and hands fn each object its body holds with its
-// record, reading the body one record at a time.
+// fetchRun follows a run once the client fetches fewer than runFetchers,
+// and hands fn each object its body holds with its record, reading the
+// body one record at a time.
 func (r *Client) fetchRun(ctx context.Context, run *proto.LocatedRun, fn func(*proto.LocatedRecord, *proto.Object) error) error {
+	if r.fetching != nil {
+		if err := r.fetching.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		defer r.fetching.Release(1)
+	}
+
 	location := run.GetLocation()
 
 	body, err := r.open(ctx, location)
@@ -688,11 +698,12 @@ func (r *Client) BeginCommit(ctx context.Context, set string) (*backup.CommitGra
 	}, nil
 }
 
-// runFetchers bounds the runs one ReadParts call fetches at once.
-const runFetchers = 8
+// runFetchers bounds the runs a client fetches at once, across all its
+// calls: a range read from a bucket takes most of 100ms whatever its size,
+// so a link is filled only with hundreds in flight.
+const runFetchers = 256
 
-// ReadParts implements backup.PartReader through the ReadFile stream,
-// fetching the runs it is pointed at runFetchers at a time.
+// ReadParts implements backup.PartReader through the ReadFile stream.
 func (r *Client) ReadParts(ctx context.Context, file *proto.Ref, skip []int, fn func(int, *proto.Object) error) error {
 	ctx, cancel := context.WithCancel(r.outgoing(ctx))
 	defer cancel()
@@ -708,7 +719,6 @@ func (r *Client) ReadParts(ctx context.Context, file *proto.Ref, skip []int, fn 
 	}
 
 	runs, rctx := errgroup.WithContext(ctx)
-	runs.SetLimit(runFetchers)
 
 	err = receive(stream, func(resp *proto.ReadFileResponse) error {
 		if len(resp.GetRuns()) == 0 {
@@ -736,8 +746,7 @@ func (r *Client) ReadParts(ctx context.Context, file *proto.Ref, skip []int, fn 
 	return err
 }
 
-// ReadFiles implements backup.FilesReader through the ReadFiles stream,
-// fetching the runs it is pointed at runFetchers at a time.
+// ReadFiles implements backup.FilesReader through the ReadFiles stream.
 func (r *Client) ReadFiles(ctx context.Context, files []backup.FileRead, objectsOnly bool, object func(int, *proto.Object) error, part func(int, int, *proto.Object) error) error {
 	ctx, cancel := context.WithCancel(r.outgoing(ctx))
 	defer cancel()
@@ -758,7 +767,6 @@ func (r *Client) ReadFiles(ctx context.Context, files []backup.FileRead, objects
 	}
 
 	runs, rctx := errgroup.WithContext(ctx)
-	runs.SetLimit(runFetchers)
 
 	err = receive(stream, func(resp *proto.ReadFilesResponse) error {
 		switch {

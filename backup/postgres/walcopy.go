@@ -42,7 +42,12 @@ func (r *Restore) copyWAL(ctx context.Context, dir string, base *proto.Commit, w
 		return nil, err
 	}
 
-	var copied []string
+	var (
+		copied  []string
+		indexes []int
+		files   []backup.FileToRestore
+		pads    []bool
+	)
 
 	for _, i := range wal.files.copies(wal.path, base.GetMetadata()[MetaStartWALFile], until) {
 		name := wal.files.names[i]
@@ -52,11 +57,39 @@ func (r *Restore) copyWAL(ctx context.Context, dir string, base *proto.Commit, w
 			name = segment
 		}
 
-		if err := wal.files.restoreWAL(ctx, fsys, fsys.Join(pgWAL, name), i, partial); err != nil {
-			return nil, fmt.Errorf("copying %s: %w", name, err)
+		node := wal.files.nodes[i]
+		files = append(files, backup.FileToRestore{Path: fsys.Join(pgWAL, name), Stat: node.Stat, Ref: node.Ref})
+		indexes = append(indexes, i)
+		pads = append(pads, partial)
+		copied = append(copied, name)
+	}
+
+	random, ok := fsys.(backup.RandomWriteFS)
+	if !ok {
+		for k, file := range files {
+			if err := wal.files.restoreWAL(ctx, fsys, file.Path, indexes[k], pads[k]); err != nil {
+				return nil, fmt.Errorf("copying %s: %w", copied[k], err)
+			}
 		}
 
-		copied = append(copied, name)
+		return copied, nil
+	}
+
+	restorer := &backup.Restorer{Store: wal.files.objects, Key: wal.files.key, FS: fsys, Workers: r.Workers}
+
+	err = restorer.RestoreFiles(ctx, files, func(k int, _ backup.Outcome, err error) error {
+		if err == nil && pads[k] {
+			err = padSegment(ctx, random, files[k].Path)
+		}
+
+		if err != nil {
+			return fmt.Errorf("copying %s: %w", copied[k], err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return copied, nil

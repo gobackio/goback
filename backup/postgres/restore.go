@@ -45,6 +45,9 @@ type Restore struct {
 	// commit's files, with %f and %p for Postgres to fill in. When nil, the
 	// WAL recovery reads is copied into the data directory's pg_wal.
 	RestoreCommand func(walCommit *proto.Ref) string
+	// Workers bounds how many files are written at once; 0 means
+	// backup.DefaultRestoreWorkers.
+	Workers int
 }
 
 // RestoreResult says what a restore chose and did.
@@ -309,7 +312,7 @@ func emptyDir(ctx context.Context, fsys backup.WriteFS, dir string) (modeSet boo
 // writeTree writes the base's data directory into dir, refusing a tree
 // that cannot hold its links.
 func (r *Restore) writeTree(ctx context.Context, base *proto.Commit, dir string) error {
-	restorer := &backup.Restorer{Store: r.Objects, Key: r.Key, FS: r.FS}
+	restorer := &backup.Restorer{Store: r.Objects, Key: r.Key, FS: r.FS, Workers: r.Workers}
 	if err := restorer.RestoreTree(ctx, base, dir, backup.TreeOptions{}); err != nil {
 		return err
 	}
