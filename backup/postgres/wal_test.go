@@ -29,7 +29,7 @@ func base(file string, received time.Time) *proto.Commit {
 	return &proto.Commit{ReceivedAtNs: received.UnixNano(), Metadata: map[string]string{MetaStartWALFile: file}}
 }
 
-func TestTheCutoffIsTheOldestBaseInsideTheWindow(t *testing.T) {
+func TestTheCutoffIsTheNewestBaseBeforeTheWindowStarts(t *testing.T) {
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	day := 24 * time.Hour
 
@@ -39,13 +39,21 @@ func TestTheCutoffIsTheOldestBaseInsideTheWindow(t *testing.T) {
 		base("000000010000000000000004", now.Add(-20*day)),
 	}
 
-	cutoff, ok := Cutoff(newestFirst, 14*day, now)
+	cutoff, ok := Cutoff(newestFirst, 2*day, now)
 	require.True(t, ok)
 	require.Equal(t, "000000010000000000000008", cutoff)
 
+	cutoff, ok = Cutoff(newestFirst, 5*day, now)
+	require.True(t, ok)
+	require.Equal(t, "000000010000000000000008", cutoff, "a base right at the window's start covers it")
+
 	cutoff, ok = Cutoff(newestFirst, day/2, now)
 	require.True(t, ok)
-	require.Equal(t, "00000001000000000000000C", cutoff, "with no base inside the window the newest one stays restorable")
+	require.Equal(t, "00000001000000000000000C", cutoff)
+
+	cutoff, ok = Cutoff(newestFirst, 30*day, now)
+	require.True(t, ok)
+	require.Equal(t, "000000010000000000000004", cutoff, "with every base inside the window the oldest one bounds it")
 
 	_, ok = Cutoff(nil, day, now)
 	require.False(t, ok)

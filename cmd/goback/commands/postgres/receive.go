@@ -55,7 +55,7 @@ var receiveCmd = cli.Command{
 		},
 		cli.DurationFlag{
 			Name:  "window",
-			Usage: "how far back point-in-time recovery reaches; WAL older than the oldest base backup in this window is retired",
+			Usage: "how far back point-in-time recovery reaches at least; WAL older than the newest base backup before it is retired",
 			Value: 14 * 24 * time.Hour,
 		},
 		cli.BoolFlag{

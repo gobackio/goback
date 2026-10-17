@@ -65,7 +65,7 @@ type Receiver struct {
 	Walker func() *backup.Walker
 	// DumpSet is the set the server's dumps go to.
 	DumpSet string
-	// Window is how far back point-in-time recovery reaches.
+	// Window is how far back point-in-time recovery reaches at least.
 	Window time.Duration
 	// CommitEvery is how often new binlog is committed; DefaultCommitEvery
 	// when zero, and at least MinCommitEvery.

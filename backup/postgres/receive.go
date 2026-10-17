@@ -65,7 +65,7 @@ type Receiver struct {
 	Walker func() *backup.Walker
 	// BaseSet is the set the cluster's base backups go to.
 	BaseSet string
-	// Window is how far back point-in-time recovery reaches.
+	// Window is how far back point-in-time recovery reaches at least.
 	Window time.Duration
 	// CommitEvery is how often new WAL is committed; DefaultCommitEvery
 	// when zero, and at least MinCommitEvery.

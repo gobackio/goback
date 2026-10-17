@@ -58,7 +58,7 @@ var DatabaseBase = Policy{KeepLast: 1, Brackets: []Bracket{
 }}
 
 // DatabaseLog is the initial policy of a WAL or binlog set. Each of its
-// commits holds the log back to the oldest base backup inside the
+// commits holds the log back to the newest base backup before the
 // recovery window, so the newest commits suffice.
 var DatabaseLog = Policy{KeepLast: 60}
 

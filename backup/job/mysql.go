@@ -86,7 +86,7 @@ type MySQLReceiveSettings struct {
 	ServerID    uint32
 	CommitEvery time.Duration
 	CommitBytes int64
-	// Window is how far back point-in-time recovery reaches.
+	// Window is how far back point-in-time recovery reaches at least.
 	Window time.Duration
 	// InitialRetention, when set, is the retention policy the set starts
 	// with if this run creates it; a set that exists keeps its own.

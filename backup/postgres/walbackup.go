@@ -15,7 +15,7 @@ import (
 )
 
 // WALBackup commits what a receiver's spool holds to the WAL set. Every
-// commit holds each WAL file back to the oldest base backup inside Window,
+// commit holds each WAL file back to the newest base backup before Window,
 // so any one commit replays on its own.
 type WALBackup struct {
 	// Walker stores the commit; its Root is the spool's directory and its

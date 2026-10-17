@@ -53,7 +53,7 @@ var receiveCmd = cli.Command{
 		},
 		cli.DurationFlag{
 			Name:  "window",
-			Usage: "how far back point-in-time recovery reaches; binlogs older than the oldest dump in this window are retired",
+			Usage: "how far back point-in-time recovery reaches at least; binlogs older than the newest dump before it are retired",
 			Value: 14 * 24 * time.Hour,
 		},
 		cli.BoolFlag{

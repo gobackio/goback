@@ -70,24 +70,29 @@ func TestIdentityByUUIDElseServerIDAndBase(t *testing.T) {
 	require.False(t, Identity{ServerID: 1}.Same(Identity{ServerID: 2}))
 }
 
-func TestWindowKeepsPerChainFromTheOldestDumpInside(t *testing.T) {
+func TestWindowKeepsPerChainFromTheNewestDumpBeforeItsStart(t *testing.T) {
 	now := time.Now()
 	dump := func(chain, file string, age time.Duration) *proto.Commit {
 		return &proto.Commit{ReceivedAtNs: now.Add(-age).UnixNano(), Metadata: map[string]string{MetaChain: chain, MetaBinlogFile: file}}
 	}
 
 	cutoffs, ok := Window([]*proto.Commit{
-		dump("2", "b.000009", time.Hour),
-		dump("2", "b.000004", 2*time.Hour),
-		dump("1", "b.000120", 3*time.Hour),
-		dump("1", "b.000100", 30*24*time.Hour),
+		dump("3", "b.000009", time.Hour),
+		dump("3", "b.000004", 2*time.Hour),
+		dump("2", "b.000120", 3*time.Hour),
+		dump("2", "b.000100", 30*24*time.Hour),
+		dump("1", "b.000050", 40*24*time.Hour),
 	}, 14*24*time.Hour, now)
 	require.True(t, ok)
-	require.Equal(t, map[int]string{2: "b.000004", 1: "b.000120"}, cutoffs)
+	require.Equal(t, map[int]string{3: "b.000004", 2: "b.000100"}, cutoffs)
 
 	cutoffs, ok = Window([]*proto.Commit{dump("1", "b.000100", 30*24*time.Hour), dump("1", "b.000050", 40*24*time.Hour)}, 14*24*time.Hour, now)
 	require.True(t, ok)
 	require.Equal(t, map[int]string{1: "b.000100"}, cutoffs, "the newest dump counts when none is inside the window")
+
+	cutoffs, ok = Window([]*proto.Commit{dump("1", "b.000100", time.Hour), dump("1", "b.000050", 2*time.Hour)}, 14*24*time.Hour, now)
+	require.True(t, ok)
+	require.Equal(t, map[int]string{1: "b.000050"}, cutoffs, "the oldest dump counts when all are inside the window")
 
 	_, ok = Window(nil, time.Hour, now)
 	require.False(t, ok)

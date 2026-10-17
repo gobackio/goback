@@ -116,10 +116,11 @@ func segmentName(timeline uint32, lsn, segSize uint64) string {
 	return fmt.Sprintf("%08X%08X%08X", timeline, n/perLog, n%perLog)
 }
 
-// Cutoff names the WAL file the WAL set must reach back to: the one the
-// oldest base backup received within window started in, or the newest base
-// when none was. ok is false when no base backup records one, and then
-// every WAL file is kept.
+// Cutoff names the WAL file the WAL set must reach back to, given bases
+// newest first: the one the newest base backup received at or before the
+// window's start started in, so recovery reaches at least window back, or
+// the oldest base's when all are newer. ok is false when no base backup
+// records one, and then every WAL file is kept.
 func Cutoff(bases []*proto.Commit, window time.Duration, now time.Time) (string, bool) {
 	since := now.Add(-window).UnixNano()
 
@@ -130,8 +131,9 @@ func Cutoff(bases []*proto.Commit, window time.Duration, now time.Time) (string,
 			continue
 		}
 
-		if cutoff == "" || base.GetReceivedAtNs() >= since {
-			cutoff = file
+		cutoff = file
+		if base.GetReceivedAtNs() <= since {
+			break
 		}
 	}
 

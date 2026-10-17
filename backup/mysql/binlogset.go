@@ -23,14 +23,15 @@ type binlogCommit struct {
 
 // Window decides which binlogs a binlog set keeps from its dumps, newest
 // first: in each chain, those from the start file of the chain's oldest
-// dump received within window on. The newest dump counts as received
-// within window. Chains no such dump belongs to are let go. ok is false
-// when no dump records a position, and then every binlog is kept.
+// dump among the ones received within window and the newest received at or
+// before its start, so recovery reaches at least window back. Chains none
+// of those dumps belongs to are let go. ok is false when no dump records a
+// position, and then every binlog is kept.
 func Window(dumps []*proto.Commit, window time.Duration, now time.Time) (map[int]string, bool) {
 	since := now.Add(-window).UnixNano()
 	cutoffs := map[int]string{}
 
-	for i, dump := range dumps {
+	for _, dump := range dumps {
 		meta := dump.GetMetadata()
 
 		file := meta[MetaBinlogFile]
@@ -38,13 +39,13 @@ func Window(dumps []*proto.Commit, window time.Duration, now time.Time) (map[int
 			continue
 		}
 
-		if i > 0 && dump.GetReceivedAtNs() < since {
-			continue
-		}
-
 		chain := chainOf(meta)
 		if was, ok := cutoffs[chain]; !ok || compareBinlogs(file, was) < 0 {
 			cutoffs[chain] = file
+		}
+
+		if dump.GetReceivedAtNs() <= since {
+			break
 		}
 	}
 
