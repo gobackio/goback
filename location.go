@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -76,7 +77,7 @@ func openDirectory(_ context.Context, u *url.URL, s Settings) (backup.ObjectStor
 
 	return s.withIndex(func(x *sql.Index) (*pack.PackStorage, error) {
 		return pack.NewPackStorage(append(options,
-			pack.WithArchiveStorage(storage.NewBucketStore(file)),
+			pack.WithArchiveStorage(storage.NewBucketStore(file, storage.WithSync(syncUnder(dir)))),
 			pack.WithArchiveIndex(x),
 			pack.WithOwned(x),
 			pack.WithMaxParallel(1),
@@ -85,6 +86,36 @@ func openDirectory(_ context.Context, u *url.URL, s Settings) (backup.ObjectStor
 			pack.WithCompaction(pack.CompactionConfig{MinimumCandidates: 100}),
 		)...)
 	})
+}
+
+// syncUnder syncs the file a directory bucket keeps under key, and the
+// directory holding it, which Windows makes durable without being asked.
+func syncUnder(dir string) func(key string) error {
+	return func(key string) error {
+		path := filepath.Join(dir, filepath.FromSlash(key))
+
+		file, err := os.OpenFile(path, os.O_RDWR, 0)
+		if err != nil {
+			return err
+		}
+
+		err = file.Sync()
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
+
+		if err != nil || runtime.GOOS == "windows" {
+			return err
+		}
+
+		parent, err := os.Open(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		defer parent.Close()
+
+		return parent.Sync()
+	}
 }
 
 // openBucket opens a Cloud Storage or S3-compatible bucket. Every query

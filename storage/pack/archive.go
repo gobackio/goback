@@ -906,5 +906,26 @@ func (a *archive) closeWriter() (IndexFile, int64, error) {
 		stored += written.written
 	}
 
+	if err == nil {
+		err = a.sync()
+	}
+
 	return index, stored, err
+}
+
+// sync makes the archive and its index durable on a storage that needs
+// it, before anything records what they hold.
+func (a *archive) sync() error {
+	syncer, ok := a.storage.(Syncer)
+	if !ok {
+		return nil
+	}
+
+	for _, name := range []string{a.archiveName(), a.indexName()} {
+		if err := syncer.Sync(name); err != nil {
+			return errors.Wrapf(err, "syncing %s", name)
+		}
+	}
+
+	return nil
 }

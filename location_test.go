@@ -1,13 +1,16 @@
 package goback
 
 import (
+	"context"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
+	"github.com/gobackio/goback/storage"
 	"github.com/stretchr/testify/require"
+	"gocloud.dev/blob/fileblob"
 )
 
 func parse(t *testing.T, raw string) *url.URL {
@@ -84,4 +87,17 @@ func TestAMisspelledParameterIsNotIgnored(t *testing.T) {
 	require.ErrorContains(t, err, "cacert")
 	require.ErrorContains(t, err, "ca=", "the error names what the url does carry")
 	require.ErrorContains(t, err, "key-file=")
+}
+
+func TestADirectoryStoreSyncsTheFileItsBucketKeepsUnderAKey(t *testing.T) {
+	dir := t.TempDir()
+
+	bucket, err := fileblob.OpenBucket(dir, &fileblob.Options{NoTempDir: true})
+	require.NoError(t, err)
+	defer bucket.Close()
+
+	key := storage.ArchiveKey("0123.goback")
+	require.NoError(t, bucket.WriteAll(context.Background(), key, []byte("archive"), nil))
+
+	require.NoError(t, syncUnder(dir)(key))
 }

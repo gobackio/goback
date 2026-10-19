@@ -1530,6 +1530,12 @@ type ArchiveStorage interface {
 	DeleteAll() error
 }
 
+// Syncer is an ArchiveStorage whose writes are durable only once synced,
+// as a directory's are. Sync makes the named file and its name durable.
+type Syncer interface {
+	Sync(name string) error
+}
+
 // ListedFile is a file a listing found, with its size and when it was stored.
 type ListedFile struct {
 	Name     string

@@ -227,6 +227,8 @@ type BucketStore struct {
 
 	openFilesMtx sync.Mutex
 	openFiles    map[string]*bucketFile
+
+	sync func(key string) error
 }
 
 // A BucketOption adjusts a BucketStore.
@@ -239,6 +241,23 @@ func WithStoreName(name string) BucketOption {
 	return func(c *BucketStore) {
 		c.attrs = append(c.attrs, keyStore.String(name))
 	}
+}
+
+// WithSync has Sync call sync with the file's bucket key, for a bucket
+// whose writes are not durable when they return, as a directory's are not.
+func WithSync(sync func(key string) error) BucketOption {
+	return func(c *BucketStore) {
+		c.sync = sync
+	}
+}
+
+// Sync implements pack.Syncer.
+func (c *BucketStore) Sync(name string) error {
+	if c.sync == nil {
+		return nil
+	}
+
+	return c.sync(c.key(name))
 }
 
 func (c *BucketStore) openFile(key string) (pack.File, error) {
