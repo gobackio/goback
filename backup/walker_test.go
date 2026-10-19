@@ -1174,3 +1174,24 @@ func TestTheStatCacheCatchesARewriteThatKeepsMtimeAndSize(t *testing.T) {
 	require.EqualValues(t, 1, second.Read)
 	require.Equal(t, "version-2", f.content(second.Commit.Tree, "a.txt"))
 }
+
+func TestAnUnchangedDirectoryIsTakenFromThePreviousCommitUnread(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.write("quiet/a.txt", []byte("one"))
+	f.write("busy/b.txt", []byte("one"))
+	f.run()
+
+	f.write("quiet/a.txt", []byte("two, which the hint says did not happen"))
+	f.write("busy/b.txt", []byte("two"))
+	f.write("fresh/c.txt", []byte("new"))
+	f.walker.Unchanged = func(rel string) bool { return rel == "quiet" || rel == "fresh" }
+
+	second := f.run()
+	require.EqualValues(t, 2, second.Read, "busy/b.txt and fresh/c.txt, which the previous commit lacks")
+	require.Equal(t, "one", f.content(f.tree(second.Commit.Tree)["quiet"].Ref, "a.txt"))
+	require.Equal(t, "two", f.content(f.tree(second.Commit.Tree)["busy"].Ref, "b.txt"))
+
+	f.walker.Verify = true
+	third := f.run()
+	require.Equal(t, "two, which the hint says did not happen", f.content(f.tree(third.Commit.Tree)["quiet"].Ref, "a.txt"))
+}

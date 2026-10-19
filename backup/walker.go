@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -87,6 +88,14 @@ type Walker struct {
 
 	// Include decides per slash-separated relative path; nil includes all.
 	Include func(rel string) bool
+
+	// Unchanged, when set, reports directories known to be as in the
+	// previous commit, everything under them included, such as from a
+	// change journal read since that commit's scan began. The walk takes
+	// such a directory from the previous commit without reading it, so the
+	// stat cache and ForceHashPercent don't reach inside. Include must be
+	// the previous run's.
+	Unchanged func(rel string) bool
 
 	// Growing are files of the root, or of Subdir when it is set, committed
 	// up to a length, continuing the previous commit's versions; a run with
@@ -720,6 +729,8 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 		info := entry.info
 
 		switch {
+		case info.IsDir() && w.reusesUnchanged(childRel, baseNode):
+			results[i] = baseNode
 		case info.IsDir():
 			index := i
 			token := NameToken(w.Key, parent, []byte(name))
@@ -1448,4 +1459,26 @@ func (w *Walker) adoptDamage(grant *CommitGrant) {
 // lost reports whether the store asked for this path to be read again.
 func (w *Walker) lost(rel string) bool {
 	return w.rescan || w.damaged[IndexPath(w.Key, rel)]
+}
+
+// unchanged reports whether Unchanged vouches for the directory at rel.
+func (w *Walker) unchanged(rel string) bool {
+	return w.Unchanged != nil && !w.Verify && w.Unchanged(rel)
+}
+
+// reusesUnchanged reports whether the directory at rel is taken whole from
+// its base node.
+func (w *Walker) reusesUnchanged(rel string, baseNode *proto.TreeNode) bool {
+	if !w.unchanged(rel) || baseNode == nil || !baseNode.Stat.IsDir() || baseNode.Ref == nil || w.rescan {
+		return false
+	}
+
+	dir := IndexPath(w.Key, rel)
+	for path := range w.damaged {
+		if path == dir || strings.HasPrefix(path, dir+"/") {
+			return false
+		}
+	}
+
+	return true
 }

@@ -168,9 +168,14 @@ func (s *scanner) offer(job scanJob, found *scanned) {
 			continue
 		}
 
+		rel := path.Join(job.rel, entry.name)
+		if s.walker.unchanged(rel) {
+			continue
+		}
+
 		s.pending = append(s.pending, scanJob{
 			dir: s.fs.Join(job.dir, entry.name),
-			rel: path.Join(job.rel, entry.name),
+			rel: rel,
 		})
 	}
 
