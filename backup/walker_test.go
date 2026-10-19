@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -903,8 +904,13 @@ func (m *memSessions) EndSession(ctx context.Context) error {
 	}
 
 	m.mtx.Lock()
+	defer m.mtx.Unlock()
+
+	if slices.Contains(m.ended, s) {
+		return ErrNoSession
+	}
+
 	m.ended = append(m.ended, s)
-	m.mtx.Unlock()
 
 	return nil
 }
@@ -934,6 +940,48 @@ func TestWalkerRunsInASessionAndUploadsEachChunkOnce(t *testing.T) {
 	require.Same(t, sessions.began[0], sessions.ended[0])
 	require.Equal(t, "agent", sessions.began[0].AgentID)
 	require.Equal(t, "test", sessions.began[0].Set)
+}
+
+// losingIndex refuses the first commit with ErrSessionLost and ends its
+// session, as a store does when a collection took what the run reused;
+// it refuses anything later put in an ended session.
+type losingIndex struct {
+	*memIndex
+	sessions *memSessions
+	lost     atomic.Bool
+}
+
+func (l *losingIndex) Put(ctx context.Context, obj *proto.Object) error {
+	s, _ := SessionFromContext(ctx)
+
+	l.sessions.mtx.Lock()
+	ended := slices.Contains(l.sessions.ended, s)
+	l.sessions.mtx.Unlock()
+
+	if ended {
+		return ErrNoSession
+	}
+
+	if obj.GetCommit() != nil && l.lost.CompareAndSwap(false, true) {
+		_ = l.sessions.EndSession(ctx)
+		return ErrSessionLost
+	}
+
+	return l.memIndex.Put(ctx, obj)
+}
+
+func TestWalkerRetriesALostSessionInANewOne(t *testing.T) {
+	f := newWalkerFixture(t)
+	sessions := &memSessions{}
+	f.walker.Sessions = sessions
+	f.walker.Index = &losingIndex{memIndex: f.index, sessions: sessions}
+	f.walker.LostRetries = 1
+	f.write("a.txt", []byte("a"))
+
+	f.run()
+
+	require.Len(t, sessions.began, 2)
+	require.Equal(t, sessions.began, sessions.ended)
 }
 
 // TestWalkerCheckpointKeepsTheBaseRunsRacyWindow interrupts a run right

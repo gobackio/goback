@@ -128,7 +128,7 @@ type Walker struct {
 	ReadRetries        int
 
 	// LostRetries is how often a commit refused with ErrSessionLost is
-	// retried by walking again in the same session.
+	// retried by walking again in a new session.
 	LostRetries int
 
 	// ScanWorkers is how many directories are listed ahead of the walk at
@@ -328,20 +328,16 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 	}
 	w.rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
+	outside := ctx
 	if w.Sessions != nil {
-		sctx, err := w.Sessions.BeginSession(ctx, &Session{AgentID: w.AgentID, Set: w.Set, InitialRetention: w.InitialRetention})
+		sctx, err := w.beginSession(outside)
 		if err != nil {
-			return nil, fmt.Errorf("beginning session: %w", err)
+			return nil, err
 		}
 
 		ctx = sctx
 
-		// a commit ends the session itself
-		defer func() {
-			if err := w.Sessions.EndSession(ctx); err != nil && !errors.Is(err, ErrNoSession) {
-				w.logger().Warn("ending the session failed", "err", err)
-			}
-		}()
+		defer func() { w.endSession(ctx) }()
 	}
 
 	// inside the session, so a set the gate creates starts with the
@@ -371,9 +367,36 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 			return result, err
 		}
 
-		// the session's other uploads still count, so walking again in it
-		// uploads only what was lost
-		w.logger().Warn("the store lost objects of this run, walking again", "err", err, "retry", retry+1)
+		w.logger().Warn("the store lost objects of this run, walking again in a new session", "err", err, "retry", retry+1)
+
+		// a store may end the session that lost objects, and it takes the
+		// session's uploads with it
+		if w.Sessions != nil {
+			sctx, err := w.beginSession(outside)
+			if err != nil {
+				return nil, err
+			}
+
+			w.endSession(ctx)
+			ctx = sctx
+		}
+	}
+}
+
+func (w *Walker) beginSession(ctx context.Context) (context.Context, error) {
+	sctx, err := w.Sessions.BeginSession(ctx, &Session{AgentID: w.AgentID, Set: w.Set, InitialRetention: w.InitialRetention})
+	if err != nil {
+		return nil, fmt.Errorf("beginning session: %w", err)
+	}
+
+	return sctx, nil
+}
+
+// endSession ends the session on ctx unless a commit or the store already
+// ended it.
+func (w *Walker) endSession(ctx context.Context) {
+	if err := w.Sessions.EndSession(ctx); err != nil && !errors.Is(err, ErrNoSession) {
+		w.logger().Warn("ending the session failed", "err", err)
 	}
 }
 
