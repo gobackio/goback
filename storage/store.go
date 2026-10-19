@@ -14,6 +14,7 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/backup/storekey"
+	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
 
 	"golang.org/x/sync/errgroup"
@@ -653,6 +654,26 @@ func (s *Store) Retention() (backup.Retention, error) {
 	}
 
 	return ret, nil
+}
+
+// Policies reads and sets the retention policies of a store's sets.
+type Policies interface {
+	// GetPolicy is the named set's retention.
+	GetPolicy(ctx context.Context, set string) (index.SetRetention, error)
+	// SetPolicy replaces the named set's own policy; nil leaves it to the
+	// store's default.
+	SetPolicy(ctx context.Context, set string, p *retention.Policy) error
+}
+
+// Policies is the index's set retention policies, backup.ErrNotImplemented
+// for an index that keeps none.
+func (s *Store) Policies() (Policies, error) {
+	p, ok := s.Index.(Policies)
+	if !ok {
+		return nil, fmt.Errorf("%w: index %T keeps no retention policies", backup.ErrNotImplemented, s.Index)
+	}
+
+	return p, nil
 }
 
 // Escrow returns where the store keeps its escrowed key.

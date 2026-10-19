@@ -141,4 +141,10 @@ func TestRemoteRetentionUnimplementedWithoutState(t *testing.T) {
 
 	_, err := client.Pins(ctx)
 	require.Equal(t, codes.Unimplemented, status.Code(err))
+
+	_, err = client.GetPolicy(ctx, "world")
+	require.Equal(t, codes.Unimplemented, status.Code(err))
+
+	_, err = client.SetPolicy(ctx, "world", nil)
+	require.Equal(t, codes.Unimplemented, status.Code(err))
 }

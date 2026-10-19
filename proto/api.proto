@@ -317,6 +317,30 @@ message CountCommitsResponse {
     repeated CommitCount counts = 1;
 }
 
+message GetRetentionRequest {
+    string backup_set = 1;
+}
+
+message GetRetentionResponse {
+    // the set's own policy; unset when it keeps the store's default
+    RetentionPolicy policy = 1;
+    // the policy the set keeps by
+    RetentionPolicy effective = 2;
+    // a rebuilt set keeps everything until its policy is set
+    bool paused = 3;
+}
+
+message SetRetentionRequest {
+    string backup_set = 1;
+    // unset leaves the set to the store's default
+    RetentionPolicy policy = 2;
+}
+
+message SetRetentionResponse {
+    // the server holds the change until someone confirms it
+    bool pending = 1;
+}
+
 message DeleteSetRequest {
     string backup_set = 1;
     // erase uses a zero window: the commits are tombstoned by the next
@@ -414,6 +438,13 @@ service Store {
     rpc ListTrash(ListTrashRequest) returns (ListTrashResponse) {}
     // CountCommits counts a set's commits per year, month, day or hour
     rpc CountCommits(CountCommitsRequest) returns (CountCommitsResponse) {}
+    // GetRetention reports a set's own retention policy and the one it
+    // keeps by
+    rpc GetRetention(GetRetentionRequest) returns (GetRetentionResponse) {}
+    // SetRetention replaces a set's own retention policy, or without one
+    // leaves the set to the store's default; a server may hold a change
+    // until someone confirms it
+    rpc SetRetention(SetRetentionRequest) returns (SetRetentionResponse) {}
     rpc DeleteSet(DeleteSetRequest) returns (DeleteSetResponse) {}
     rpc UndeleteSet(UndeleteSetRequest) returns (UndeleteSetResponse) {}
     rpc Unpin(UnpinRequest) returns (UnpinResponse) {}

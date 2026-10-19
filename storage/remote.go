@@ -17,6 +17,8 @@ import (
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/presence"
+	"github.com/gobackio/goback/backup/retention"
+	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
 	adminpb "github.com/gobackio/goback/proto/admin"
 	"github.com/gobackio/goback/storage/mapping/gen"
@@ -849,6 +851,28 @@ func (r *Client) TrashedCommits(ctx context.Context, set string, before time.Tim
 	return resp.GetCommits(), nil
 }
 
+// GetPolicy is the named set's retention.
+func (r *Client) GetPolicy(ctx context.Context, set string) (index.SetRetention, error) {
+	resp, err := r.store.GetRetention(r.outgoing(ctx), &proto.GetRetentionRequest{BackupSet: set})
+	if err != nil {
+		return index.SetRetention{}, err
+	}
+
+	return m.FromSetRetention(resp), nil
+}
+
+// SetPolicy replaces the named set's own policy, nil leaving it to the
+// store's default, and reports whether the server holds the change until
+// someone confirms it.
+func (r *Client) SetPolicy(ctx context.Context, set string, p *retention.Policy) (pending bool, err error) {
+	resp, err := r.store.SetRetention(r.outgoing(ctx), &proto.SetRetentionRequest{BackupSet: set, Policy: m.RetentionPolicy(p)})
+	if err != nil {
+		return false, err
+	}
+
+	return resp.GetPending(), nil
+}
+
 // CountCommits implements backup.Retention.
 func (r *Client) CountCommits(ctx context.Context, set string, period proto.Period, from, to time.Time, zone string, deleted bool) ([]*proto.CommitCount, error) {
 	resp, err := r.store.CountCommits(r.outgoing(ctx), &proto.CountCommitsRequest{
@@ -1047,7 +1071,8 @@ func ToStatus(err error) error {
 	case errors.Is(err, auth.ErrForbidden):
 		return status.Error(codes.PermissionDenied, err.Error())
 	case errors.Is(err, ErrInvalidRequest), errors.Is(err, proto.ErrRefMismatch), errors.Is(err, proto.ErrInvalidObject),
-		errors.Is(err, backup.ErrInvalidEscrow), errors.Is(err, backup.ErrSetName), errors.Is(err, backup.ErrInvalidCount):
+		errors.Is(err, backup.ErrInvalidEscrow), errors.Is(err, backup.ErrSetName), errors.Is(err, backup.ErrInvalidCount),
+		errors.Is(err, retention.ErrInvalidPolicy):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, backup.ErrDanglingRef), errors.Is(err, backup.ErrSetClosed),
 		errors.Is(err, backup.ErrTombstoned), errors.Is(err, backup.ErrNewestCommit),
@@ -1120,6 +1145,35 @@ func (r *Server) ListTrash(ctx context.Context, request *proto.ListTrashRequest)
 	}
 
 	return &proto.ListTrashResponse{Commits: commits}, nil
+}
+
+// GetRetention implements proto.StoreServer.
+func (r *Server) GetRetention(ctx context.Context, request *proto.GetRetentionRequest) (*proto.GetRetentionResponse, error) {
+	policies, err := r.store.Policies()
+	if err != nil {
+		return nil, ToStatus(err)
+	}
+
+	got, err := policies.GetPolicy(ctx, request.GetBackupSet())
+	if err != nil {
+		return nil, ToStatus(err)
+	}
+
+	return m.SetRetention(got), nil
+}
+
+// SetRetention implements proto.StoreServer; the change applies at once.
+func (r *Server) SetRetention(ctx context.Context, request *proto.SetRetentionRequest) (*proto.SetRetentionResponse, error) {
+	policies, err := r.store.Policies()
+	if err != nil {
+		return nil, ToStatus(err)
+	}
+
+	if err := policies.SetPolicy(ctx, request.GetBackupSet(), m.FromRetentionPolicy(request.GetPolicy())); err != nil {
+		return nil, ToStatus(err)
+	}
+
+	return &proto.SetRetentionResponse{}, nil
 }
 
 // CountCommits implements proto.StoreServer.

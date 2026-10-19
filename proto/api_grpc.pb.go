@@ -37,6 +37,8 @@ const (
 	Store_UndeleteCommit_FullMethodName = "/proto.Store/UndeleteCommit"
 	Store_ListTrash_FullMethodName      = "/proto.Store/ListTrash"
 	Store_CountCommits_FullMethodName   = "/proto.Store/CountCommits"
+	Store_GetRetention_FullMethodName   = "/proto.Store/GetRetention"
+	Store_SetRetention_FullMethodName   = "/proto.Store/SetRetention"
 	Store_DeleteSet_FullMethodName      = "/proto.Store/DeleteSet"
 	Store_UndeleteSet_FullMethodName    = "/proto.Store/UndeleteSet"
 	Store_Unpin_FullMethodName          = "/proto.Store/Unpin"
@@ -79,6 +81,13 @@ type StoreClient interface {
 	ListTrash(ctx context.Context, in *ListTrashRequest, opts ...grpc.CallOption) (*ListTrashResponse, error)
 	// CountCommits counts a set's commits per year, month, day or hour
 	CountCommits(ctx context.Context, in *CountCommitsRequest, opts ...grpc.CallOption) (*CountCommitsResponse, error)
+	// GetRetention reports a set's own retention policy and the one it
+	// keeps by
+	GetRetention(ctx context.Context, in *GetRetentionRequest, opts ...grpc.CallOption) (*GetRetentionResponse, error)
+	// SetRetention replaces a set's own retention policy, or without one
+	// leaves the set to the store's default; a server may hold a change
+	// until someone confirms it
+	SetRetention(ctx context.Context, in *SetRetentionRequest, opts ...grpc.CallOption) (*SetRetentionResponse, error)
 	DeleteSet(ctx context.Context, in *DeleteSetRequest, opts ...grpc.CallOption) (*DeleteSetResponse, error)
 	UndeleteSet(ctx context.Context, in *UndeleteSetRequest, opts ...grpc.CallOption) (*UndeleteSetResponse, error)
 	Unpin(ctx context.Context, in *UnpinRequest, opts ...grpc.CallOption) (*UnpinResponse, error)
@@ -312,6 +321,26 @@ func (c *storeClient) CountCommits(ctx context.Context, in *CountCommitsRequest,
 	return out, nil
 }
 
+func (c *storeClient) GetRetention(ctx context.Context, in *GetRetentionRequest, opts ...grpc.CallOption) (*GetRetentionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRetentionResponse)
+	err := c.cc.Invoke(ctx, Store_GetRetention_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeClient) SetRetention(ctx context.Context, in *SetRetentionRequest, opts ...grpc.CallOption) (*SetRetentionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetRetentionResponse)
+	err := c.cc.Invoke(ctx, Store_SetRetention_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *storeClient) DeleteSet(ctx context.Context, in *DeleteSetRequest, opts ...grpc.CallOption) (*DeleteSetResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteSetResponse)
@@ -397,6 +426,13 @@ type StoreServer interface {
 	ListTrash(context.Context, *ListTrashRequest) (*ListTrashResponse, error)
 	// CountCommits counts a set's commits per year, month, day or hour
 	CountCommits(context.Context, *CountCommitsRequest) (*CountCommitsResponse, error)
+	// GetRetention reports a set's own retention policy and the one it
+	// keeps by
+	GetRetention(context.Context, *GetRetentionRequest) (*GetRetentionResponse, error)
+	// SetRetention replaces a set's own retention policy, or without one
+	// leaves the set to the store's default; a server may hold a change
+	// until someone confirms it
+	SetRetention(context.Context, *SetRetentionRequest) (*SetRetentionResponse, error)
 	DeleteSet(context.Context, *DeleteSetRequest) (*DeleteSetResponse, error)
 	UndeleteSet(context.Context, *UndeleteSetRequest) (*UndeleteSetResponse, error)
 	Unpin(context.Context, *UnpinRequest) (*UnpinResponse, error)
@@ -467,6 +503,12 @@ func (UnimplementedStoreServer) ListTrash(context.Context, *ListTrashRequest) (*
 }
 func (UnimplementedStoreServer) CountCommits(context.Context, *CountCommitsRequest) (*CountCommitsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CountCommits not implemented")
+}
+func (UnimplementedStoreServer) GetRetention(context.Context, *GetRetentionRequest) (*GetRetentionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRetention not implemented")
+}
+func (UnimplementedStoreServer) SetRetention(context.Context, *SetRetentionRequest) (*SetRetentionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetRetention not implemented")
 }
 func (UnimplementedStoreServer) DeleteSet(context.Context, *DeleteSetRequest) (*DeleteSetResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteSet not implemented")
@@ -800,6 +842,42 @@ func _Store_CountCommits_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Store_GetRetention_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRetentionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServer).GetRetention(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Store_GetRetention_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServer).GetRetention(ctx, req.(*GetRetentionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Store_SetRetention_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetRetentionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServer).SetRetention(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Store_SetRetention_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServer).SetRetention(ctx, req.(*SetRetentionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Store_DeleteSet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeleteSetRequest)
 	if err := dec(in); err != nil {
@@ -952,6 +1030,14 @@ var Store_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CountCommits",
 			Handler:    _Store_CountCommits_Handler,
+		},
+		{
+			MethodName: "GetRetention",
+			Handler:    _Store_GetRetention_Handler,
+		},
+		{
+			MethodName: "SetRetention",
+			Handler:    _Store_SetRetention_Handler,
 		},
 		{
 			MethodName: "DeleteSet",

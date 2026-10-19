@@ -7,6 +7,7 @@ import (
 
 	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/backup/storekey"
+	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
 )
 
@@ -21,6 +22,16 @@ type Mapper interface {
 	RetentionPolicy(in *retention.Policy) *proto.RetentionPolicy
 	// field:KeepWithin using:"Duration"
 	FromRetentionPolicy(in *proto.RetentionPolicy) *retention.Policy
+
+	SetRetention(in index.SetRetention) *proto.GetRetentionResponse
+	FromSetRetention(in *proto.GetRetentionResponse) index.SetRetention
+
+	// Effective is a policy in force, which is never unset.
+	// field:KeepWithin using:"Seconds"
+	Effective(in retention.Policy) *proto.RetentionPolicy
+	// FromEffective is Effective's inverse.
+	// field:KeepWithin using:"Duration"
+	FromEffective(in *proto.RetentionPolicy) retention.Policy
 
 	RetentionBracket(in retention.Bracket) *proto.RetentionBracket
 	FromRetentionBracket(in *proto.RetentionBracket) retention.Bracket

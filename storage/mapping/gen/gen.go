@@ -5,9 +5,39 @@ package gen
 import (
 	retention "github.com/gobackio/goback/backup/retention"
 	storekey "github.com/gobackio/goback/backup/storekey"
+	index "github.com/gobackio/goback/index"
 	proto "github.com/gobackio/goback/proto"
 	mapping "github.com/gobackio/goback/storage/mapping"
 )
+
+func (m MapperImpl) Effective(in retention.Policy) *proto.RetentionPolicy {
+	tmp0 := make([]*proto.RetentionBracket, len(in.Brackets))
+	for i := range in.Brackets {
+		tmp0[i] = m.RetentionBracket(in.Brackets[i])
+	}
+
+	return &proto.RetentionPolicy{
+		KeepLast:   int32(in.KeepLast),
+		KeepWithin: mapping.Seconds(in.KeepWithin),
+		Brackets:   tmp0,
+	}
+}
+
+func (m MapperImpl) FromEffective(in *proto.RetentionPolicy) retention.Policy {
+	if in == nil {
+		return retention.Policy{}
+	}
+	tmp0 := make([]retention.Bracket, len(in.Brackets))
+	for i := range in.Brackets {
+		tmp0[i] = m.FromRetentionBracket(in.Brackets[i])
+	}
+
+	return retention.Policy{
+		Brackets:   tmp0,
+		KeepLast:   int(in.KeepLast),
+		KeepWithin: mapping.Duration(in.KeepWithin),
+	}
+}
 
 func (m MapperImpl) FromRetentionBracket(in *proto.RetentionBracket) retention.Bracket {
 	if in == nil {
@@ -33,6 +63,18 @@ func (m MapperImpl) FromRetentionPolicy(in *proto.RetentionPolicy) *retention.Po
 		Brackets:   tmp0,
 		KeepLast:   int(in.KeepLast),
 		KeepWithin: mapping.Duration(in.KeepWithin),
+	}
+}
+
+func (m MapperImpl) FromSetRetention(in *proto.GetRetentionResponse) index.SetRetention {
+	if in == nil {
+		return index.SetRetention{}
+	}
+
+	return index.SetRetention{
+		Policy:    m.FromRetentionPolicy(in.Policy),
+		Effective: m.FromEffective(in.Effective),
+		Paused:    in.Paused,
 	}
 }
 
@@ -69,6 +111,15 @@ func (m MapperImpl) RetentionPolicy(in *retention.Policy) *proto.RetentionPolicy
 		KeepLast:   int32(in.KeepLast),
 		KeepWithin: mapping.Seconds(in.KeepWithin),
 		Brackets:   tmp0,
+	}
+}
+
+func (m MapperImpl) SetRetention(in index.SetRetention) *proto.GetRetentionResponse {
+
+	return &proto.GetRetentionResponse{
+		Policy:    m.RetentionPolicy(in.Policy),
+		Effective: m.Effective(in.Effective),
+		Paused:    in.Paused,
 	}
 }
 
