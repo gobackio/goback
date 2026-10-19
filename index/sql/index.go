@@ -133,6 +133,13 @@ func (x *Index) Open() error {
 
 		path := filepath.ToSlash(filepath.Join(dir, sqliteFile))
 		db, dialect, err = openSQLite("file:" + path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(300000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_txlock=immediate")
+		if err == nil {
+			// the pool keeps what it opens: a backup's workers query at
+			// once, and reopening the file with its pragmas for each
+			// statement costs more than the statement
+			db.SetMaxIdleConns(sqliteIdle)
+			db.SetConnMaxIdleTime(5 * time.Minute)
+		}
 	}
 
 	if err != nil {
@@ -169,6 +176,10 @@ func migrationDialect(d string) string {
 
 	return migrations.SQLite
 }
+
+// sqliteIdle is how many connections a file index keeps open between
+// statements.
+const sqliteIdle = 64
 
 func openPostgres(dsn string) (*sql.DB, string, error) {
 	db, err := sql.Open("pgx", dsn)
