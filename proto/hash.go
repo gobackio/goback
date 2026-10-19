@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -669,7 +670,58 @@ func canonicalFileInfo(info *FileInfo) ([]byte, error) {
 		return nil, invalid("link target on a %s node", info.Type)
 	}
 
-	return appendBytes(b, 10, info.LinkTarget), nil
+	b = appendBytes(b, 10, info.LinkTarget)
+	b = appendVarint(b, 11, uint64(info.CtimeNs))
+	b = appendVarint(b, 12, uint64(info.BirthtimeNs))
+	b = appendVarint(b, 13, uint64(info.Attributes))
+
+	if info.Security != nil {
+		var err error
+		if b, err = appendRef(b, 14, info.Security); err != nil {
+			return nil, err
+		}
+	}
+
+	var last []byte
+
+	for i, stream := range info.Streams {
+		if stream == nil {
+			return nil, invalid("stream %d is empty", i)
+		}
+
+		if err := noUnknown(stream); err != nil {
+			return nil, err
+		}
+
+		if len(stream.Name) == 0 {
+			return nil, invalid("stream %d without a name", i)
+		}
+
+		if i > 0 && bytes.Compare(stream.Name, last) <= 0 {
+			return nil, invalid("streams not sorted or not unique at %q", stream.Name)
+		}
+		last = stream.Name
+
+		if stream.Size < 0 {
+			return nil, invalid("stream %q of %d bytes", stream.Name, stream.Size)
+		}
+
+		body := appendBytes(nil, 1, stream.Name)
+
+		body, err := appendRef(body, 2, stream.Ref)
+		if err != nil {
+			return nil, fmt.Errorf("stream %q: %w", stream.Name, err)
+		}
+
+		b = appendMessage(b, 15, appendVarint(body, 3, uint64(stream.Size)))
+	}
+
+	return appendVarint(b, 16, uint64(info.ReparseTag)), nil
+}
+
+// SortStreams puts streams in the order a FileInfo records them, by name.
+func SortStreams(streams []*Stream) {
+	slices.SortFunc(streams, func(a, b *Stream) int { return bytes.Compare(a.Name, b.Name) })
 }
 
 func canonicalTree(t *Tree) ([]byte, error) {

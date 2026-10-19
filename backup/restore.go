@@ -75,6 +75,9 @@ const (
 	// OutcomeSalvaged means the file was written with holes where parts
 	// could not be read.
 	OutcomeSalvaged
+	// OutcomeCloudOnly means the file was left out: its content was only in
+	// a cloud sync service when it was backed up, and was not read.
+	OutcomeCloudOnly
 )
 
 // A Hole is a range of a salvaged file that no source could fill; the
@@ -100,6 +103,8 @@ func (o Outcome) String() string {
 		return "would write"
 	case OutcomeSalvaged:
 		return "salvaged"
+	case OutcomeCloudOnly:
+		return "cloud only"
 	}
 
 	return "unknown"
@@ -118,6 +123,14 @@ type RestoreStats struct {
 	// Unsupported counts the symlinks left out of a tree that cannot hold
 	// them.
 	Unsupported int64 `json:"unsupported"`
+	// SecurityLeftOut counts the security descriptors left out without an
+	// elevated administrator or on a tree that cannot hold them, and
+	// StreamsLeftOut the alternate data streams left out on such a tree.
+	SecurityLeftOut int64 `json:"security_left_out"`
+	StreamsLeftOut  int64 `json:"streams_left_out"`
+	// CloudOnly counts the files left out because their content was only
+	// in a cloud sync service when they were backed up.
+	CloudOnly int64 `json:"cloud_only"`
 
 	BytesFromDestination int64 `json:"bytes_from_destination"`
 	BytesFromSeeds       int64 `json:"bytes_from_seeds"`
@@ -192,7 +205,8 @@ type Restorer struct {
 	// with, possibly from several goroutines at once.
 	OnHole func(Hole)
 
-	stats RestoreStats
+	stats       RestoreStats
+	descriptors restoredDescriptors
 
 	budgetOnce sync.Once
 	budget     *semaphore.Weighted
@@ -209,6 +223,9 @@ func (r *Restorer) Stats() RestoreStats {
 		Salvaged:             atomic.LoadInt64(&r.stats.Salvaged),
 		MissingBytes:         atomic.LoadInt64(&r.stats.MissingBytes),
 		Unsupported:          atomic.LoadInt64(&r.stats.Unsupported),
+		SecurityLeftOut:      atomic.LoadInt64(&r.stats.SecurityLeftOut),
+		StreamsLeftOut:       atomic.LoadInt64(&r.stats.StreamsLeftOut),
+		CloudOnly:            atomic.LoadInt64(&r.stats.CloudOnly),
 		BytesFromDestination: atomic.LoadInt64(&r.stats.BytesFromDestination),
 		BytesFromSeeds:       atomic.LoadInt64(&r.stats.BytesFromSeeds),
 		BytesFromCache:       atomic.LoadInt64(&r.stats.BytesFromCache),
@@ -355,7 +372,7 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 			}
 
 			if !r.DryRun {
-				if err := setMeta(ctx, fsys, path, fileMode(stat), mtimeOf(stat)); err != nil {
+				if err := r.placeMeta(ctx, fsys, path, stat); err != nil {
 					return 0, err
 				}
 			}
@@ -444,6 +461,10 @@ func (r *Restorer) settle(ctx context.Context, fsys RandomWriteFS, tmp RandomFil
 	}
 
 	if err == nil {
+		err = r.putStreams(ctx, fsys, partial, stat)
+	}
+
+	if err == nil {
 		err = setMeta(ctx, fsys, partial, fileMode(stat), mtimeOf(stat))
 	}
 
@@ -454,6 +475,10 @@ func (r *Restorer) settle(ctx context.Context, fsys RandomWriteFS, tmp RandomFil
 
 	if err == nil {
 		err = fsys.Rename(ctx, partial, path)
+	}
+
+	if err == nil {
+		err = r.putSecurity(ctx, fsys, path, stat)
 	}
 
 	return err

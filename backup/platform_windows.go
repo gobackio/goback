@@ -90,16 +90,34 @@ func (e *lstatEntry) Info() (os.FileInfo, error) {
 	return lstat(filepath.Join(e.dir, e.Name()), e.Name())
 }
 
-// lstat is os.Lstat with the change time and file ID for anything but a
-// reparse point, at the cost of one query by name.
+// lstat is os.Lstat with fileStatInformation as its Sys, at the cost of
+// one query by name.
 func lstat(path, name string) (os.FileInfo, error) {
 	stat, err := statByName(path)
-	if err != nil || stat.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+	if err != nil {
 		return os.Lstat(path)
+	}
+
+	if stat.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, err
+		}
+
+		return &reparsed{FileInfo: info, stat: stat}, nil
 	}
 
 	return &identified{name: name, stat: stat}, nil
 }
+
+// reparsed is os.Lstat's view of a reparse point, which knows a symlink
+// from a placeholder, with fileStatInformation as its Sys.
+type reparsed struct {
+	os.FileInfo
+	stat fileStatInformation
+}
+
+func (r *reparsed) Sys() any { return &r.stat }
 
 var queryInformationByName = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtQueryInformationByName")
 

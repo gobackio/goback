@@ -897,6 +897,16 @@ func (d *treeDiff) dir(l level, trees map[string][]byte, files map[string]*ent.F
 		child := proto.JoinPath(l.dir, info.GetName())
 		seen[child] = true
 
+		for _, ref := range info.MetadataRefs() {
+			d.ref(ref.GetHash())
+		}
+
+		for _, stream := range info.GetStreams() {
+			if stream.GetSize() >= backup.SplitFileSize {
+				large = append(large, descent{path: child, node: &proto.TreeNode{Ref: stream.GetRef()}})
+			}
+		}
+
 		if info.IsDir() {
 			cur, open := trees[child]
 			if open && bytes.Equal(cur, node.GetRef().GetHash()) {

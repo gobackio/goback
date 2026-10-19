@@ -114,22 +114,23 @@ func (b *Backup) fullTask(kind, set, fallback string, initial *retention.Policy,
 
 // PathBackup backs up a directory, with commit new's settings.
 type PathBackup struct {
-	Dir                string            `yaml:"dir"`
-	Include            []string          `yaml:"include"`
-	Exclude            []string          `yaml:"exclude"`
-	Workers            int               `yaml:"workers"`
-	ForceHash          int               `yaml:"force-hash"`
-	CheckpointInterval time.Duration     `yaml:"checkpoint-interval"`
-	ScanWorkers        int               `yaml:"scan-workers"`
-	ReadRetries        int               `yaml:"read-retries"`
-	LostRetries        int               `yaml:"lost-retries"`
-	ProgressInterval   time.Duration     `yaml:"progress-interval"`
-	Meta               map[string]string `yaml:"meta"`
-	PreHook            string            `yaml:"pre-hook"`
-	PostHook           string            `yaml:"post-hook"`
-	HookTimeout        time.Duration     `yaml:"hook-timeout"`
-	HookOptional       bool              `yaml:"hook-optional"`
-	VSS                bool              `yaml:"vss"`
+	Dir                  string            `yaml:"dir"`
+	Include              []string          `yaml:"include"`
+	Exclude              []string          `yaml:"exclude"`
+	Workers              int               `yaml:"workers"`
+	ForceHash            int               `yaml:"force-hash"`
+	CheckpointInterval   time.Duration     `yaml:"checkpoint-interval"`
+	ScanWorkers          int               `yaml:"scan-workers"`
+	ReadRetries          int               `yaml:"read-retries"`
+	LostRetries          int               `yaml:"lost-retries"`
+	ProgressInterval     time.Duration     `yaml:"progress-interval"`
+	Meta                 map[string]string `yaml:"meta"`
+	PreHook              string            `yaml:"pre-hook"`
+	PostHook             string            `yaml:"post-hook"`
+	HookTimeout          time.Duration     `yaml:"hook-timeout"`
+	HookOptional         bool              `yaml:"hook-optional"`
+	VSS                  bool              `yaml:"vss"`
+	DownloadPlaceholders bool              `yaml:"download-placeholders"`
 }
 
 // UnmarshalYAML fills in commit new's defaults before decoding. It takes
@@ -166,24 +167,25 @@ func (p *PathBackup) validate(b *Backup) []error {
 
 func (p *PathBackup) tasks(b *Backup) []*Task {
 	settings := job.PathSettings{
-		Set:                b.Name,
-		Dir:                p.Dir,
-		Include:            p.Include,
-		Exclude:            p.Exclude,
-		Workers:            p.Workers,
-		ForceHash:          p.ForceHash,
-		CheckpointInterval: p.CheckpointInterval,
-		ScanWorkers:        p.ScanWorkers,
-		ReadRetries:        p.ReadRetries,
-		LostRetries:        p.LostRetries,
-		ProgressInterval:   p.ProgressInterval,
-		Meta:               p.Meta,
-		PreHook:            p.PreHook,
-		PostHook:           p.PostHook,
-		HookTimeout:        p.HookTimeout,
-		HookOptional:       p.HookOptional,
-		VSS:                p.VSS,
-		InitialRetention:   b.initialRetention(nil),
+		Set:                  b.Name,
+		Dir:                  p.Dir,
+		Include:              p.Include,
+		Exclude:              p.Exclude,
+		Workers:              p.Workers,
+		ForceHash:            p.ForceHash,
+		CheckpointInterval:   p.CheckpointInterval,
+		ScanWorkers:          p.ScanWorkers,
+		ReadRetries:          p.ReadRetries,
+		LostRetries:          p.LostRetries,
+		ProgressInterval:     p.ProgressInterval,
+		Meta:                 p.Meta,
+		PreHook:              p.PreHook,
+		PostHook:             p.PostHook,
+		HookTimeout:          p.HookTimeout,
+		HookOptional:         p.HookOptional,
+		VSS:                  p.VSS,
+		DownloadPlaceholders: p.DownloadPlaceholders,
+		InitialRetention:     b.initialRetention(nil),
 	}
 
 	return []*Task{b.fullTask("path", b.Name, "", settings.InitialRetention, func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {

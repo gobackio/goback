@@ -30,6 +30,42 @@ var fixtureFS = func() FS {
 	return nil
 }()
 
+// descriptorPuts is how many objects a fixture's first run stores for the
+// security descriptor its files share: one where LocalFS records them.
+var descriptorPuts = func() int64 {
+	if _, ok := any(LocalFS{}).(MetadataFS); ok {
+		return 1
+	}
+
+	return 0
+}()
+
+// descriptorBytes is the size of the distinct security descriptors LocalFS
+// records for paths, 0 where it records none.
+func descriptorBytes(t *testing.T, paths ...string) int64 {
+	t.Helper()
+
+	fsys, ok := any(LocalFS{}).(MetadataFS)
+	if !ok {
+		return 0
+	}
+
+	distinct := map[string]bool{}
+	for _, path := range paths {
+		sd, err := fsys.Security(context.Background(), path)
+		require.NoError(t, err)
+
+		distinct[string(sd)] = true
+	}
+
+	var size int64
+	for sd := range distinct {
+		size += int64(len(sd))
+	}
+
+	return size
+}
+
 func TestThePackageTestsPassWithLocalFSSetExplicitly(t *testing.T) {
 	if fixtureFS != nil {
 		t.Skip("this is the run with LocalFS set")

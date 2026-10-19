@@ -40,6 +40,25 @@ type WriteFS interface {
 	Chtimes(ctx context.Context, path string, mtime time.Time) error
 }
 
+// MetadataWriteFS is a WriteFS that puts back what a MetadataFS records.
+// LocalFS is one on Windows.
+type MetadataWriteFS interface {
+	// WriteStream writes one alternate data stream of path, replacing one
+	// of that name.
+	WriteStream(ctx context.Context, path, name string, r io.Reader) error
+	// SetSecurity sets path's owner, group, DACL and the SACL the
+	// descriptor holds. It fails with ErrNotPrivileged when the process may
+	// not set any owner.
+	SetSecurity(ctx context.Context, path string, sd []byte) error
+	// SetAttributes sets path's creation time, unless it is zero, and the
+	// FILE_ATTRIBUTE_* flags a file can be given.
+	SetAttributes(ctx context.Context, path string, birth time.Time, attributes uint32) error
+}
+
+// ErrNotPrivileged is returned for a security descriptor the process may
+// not set, which needs an elevated administrator.
+var ErrNotPrivileged = errors.New("setting a security descriptor needs an elevated administrator")
+
 // RandomWriteFS is a WriteFS whose files are read and written at any
 // offset, so a restore takes parts from the file already there, resumes
 // a partial file and fetches the parts of one file in parallel.

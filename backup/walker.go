@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -129,6 +130,11 @@ type Walker struct {
 	// catches a write that kept a file's mtime and size.
 	Verify bool
 
+	// DownloadPlaceholders reads files a cloud sync client such as OneDrive
+	// keeps only in the cloud, which downloads them. Without it they are
+	// recorded with their stat and security descriptor and no content.
+	DownloadPlaceholders bool
+
 	Workers int
 	// ForceHashPercent is the share of reused files re-hashed as a check;
 	// ignored on an FS whose Traits do not allow a Reread.
@@ -188,6 +194,10 @@ type Walker struct {
 	dirSlots chan struct{}
 	result   WalkResult
 	sent     *sentSet
+	// descriptors is where this run stored each security descriptor
+	descriptors *descriptors
+	// emptyFile stores the empty file once a run, for placeholders
+	emptyFile func() (*proto.Ref, error)
 	// clock stands in for time.Now in tests; the Windows monotonic clock
 	// ticks too coarsely for a short run to see any time pass
 	clock func() time.Time
@@ -217,14 +227,17 @@ type WalkResult struct {
 	Files  int64
 	// Bytes is what those files hold on disk, whether or not the walk
 	// had to read them; Uploaded is the chunk bytes actually sent.
-	Bytes       int64
-	Uploaded    int64
-	Reused      int64
-	Read        int64
-	Torn        int64
-	Unreadable  int64
-	Skipped     int64
-	Checkpoints int64
+	Bytes      int64
+	Uploaded   int64
+	Reused     int64
+	Read       int64
+	Torn       int64
+	Unreadable int64
+	Skipped    int64
+	// Placeholders counts the files recorded without content because it
+	// was only in the cloud; Files and Bytes leave them out.
+	Placeholders int64
+	Checkpoints  int64
 	// Assumed counts parts skipped because a filter or the previous version
 	// held them; Repaired counts those the store then turned out to lack.
 	Assumed  int64
@@ -247,17 +260,18 @@ const DefaultProgressInterval = 15 * time.Second
 // reports are left out, because they are only written once it is over.
 func (w *Walker) snapshot() WalkResult {
 	return WalkResult{
-		Files:       atomic.LoadInt64(&w.result.Files),
-		Bytes:       atomic.LoadInt64(&w.result.Bytes),
-		Uploaded:    atomic.LoadInt64(&w.result.Uploaded),
-		Reused:      atomic.LoadInt64(&w.result.Reused),
-		Read:        atomic.LoadInt64(&w.result.Read),
-		Torn:        atomic.LoadInt64(&w.result.Torn),
-		Unreadable:  atomic.LoadInt64(&w.result.Unreadable),
-		Skipped:     atomic.LoadInt64(&w.result.Skipped),
-		Checkpoints: atomic.LoadInt64(&w.result.Checkpoints),
-		Assumed:     atomic.LoadInt64(&w.result.Assumed),
-		Repaired:    atomic.LoadInt64(&w.result.Repaired),
+		Files:        atomic.LoadInt64(&w.result.Files),
+		Bytes:        atomic.LoadInt64(&w.result.Bytes),
+		Uploaded:     atomic.LoadInt64(&w.result.Uploaded),
+		Reused:       atomic.LoadInt64(&w.result.Reused),
+		Read:         atomic.LoadInt64(&w.result.Read),
+		Torn:         atomic.LoadInt64(&w.result.Torn),
+		Unreadable:   atomic.LoadInt64(&w.result.Unreadable),
+		Skipped:      atomic.LoadInt64(&w.result.Skipped),
+		Placeholders: atomic.LoadInt64(&w.result.Placeholders),
+		Checkpoints:  atomic.LoadInt64(&w.result.Checkpoints),
+		Assumed:      atomic.LoadInt64(&w.result.Assumed),
+		Repaired:     atomic.LoadInt64(&w.result.Repaired),
 	}
 }
 
@@ -416,6 +430,10 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 	w.scanStart = w.started.UnixNano()
 	w.result = WalkResult{}
 	w.sent = newSentSet()
+	w.descriptors = &descriptors{}
+	w.emptyFile = sync.OnceValues(func() (*proto.Ref, error) {
+		return w.putContent(ctx, 0, bytes.NewReader(nil))
+	})
 	w.traits = w.fs().Traits()
 
 	workers := w.ScanWorkers
@@ -781,13 +799,32 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 			}
 
 		case info.Mode().IsRegular():
+			stat := w.stat(info, "")
+
+			if cloudOnly(stat) && !w.DownloadPlaceholders {
+				node, err := w.placeholder(ctx, childPath, childRel, stat, baseNode)
+				if err != nil {
+					return nil, false, err
+				}
+
+				results[i] = node
+				if !nodeEqual(node, baseNode) {
+					markChanged()
+				}
+
+				continue
+			}
+
 			atomic.AddInt64(&w.result.Files, 1)
 			atomic.AddInt64(&w.result.Bytes, info.Size())
 			index := i
-			stat := w.stat(info, "")
 
 			if w.reusable(ctx, childPath, childRel, info, stat, baseNode) {
 				atomic.AddInt64(&w.result.Reused, 1)
+				if err := w.metadata(ctx, childPath, childRel, stat, baseNode); err != nil {
+					return nil, false, err
+				}
+
 				node := &proto.TreeNode{Stat: stat, Ref: baseNode.Ref}
 				results[index] = node
 				if !nodeEqual(node, baseNode) {
@@ -929,6 +966,9 @@ func (w *Walker) walkSubdir(ctx context.Context, base []*proto.TreeNode) ([]*pro
 
 	stat := w.stat(info, "")
 	stat.Name = []byte(w.Subdir)
+	if err := w.metadata(ctx, w.Root, "", stat, prev); err != nil {
+		return nil, false, err
+	}
 
 	node := &proto.TreeNode{Stat: stat}
 	if !innerChanged && inner != nil {
@@ -961,6 +1001,9 @@ func (w *Walker) walkChildDir(ctx context.Context, dir, rel string, token []byte
 	}
 
 	stat := w.stat(info, "")
+	if err := w.metadata(ctx, dir, rel, stat, baseNode); err != nil {
+		return nil, false, err
+	}
 
 	if !childChanged && baseChildren != nil {
 		node := &proto.TreeNode{Stat: stat, Ref: baseNode.Ref}
@@ -999,7 +1042,7 @@ func (w *Walker) reusable(ctx context.Context, path, rel string, info os.FileInf
 		return false
 	}
 
-	if !metaEqual(baseNode.Stat, stat) {
+	if !metaEqual(baseNode.Stat, stat) || cloudOnly(baseNode.Stat) != cloudOnly(stat) {
 		return false
 	}
 
@@ -1102,7 +1145,12 @@ func (w *Walker) backupFile(ctx context.Context, path, rel string, info os.FileI
 		}
 	}
 
-	return &proto.TreeNode{Stat: w.stat(info, ""), Ref: ref}, nil
+	stat := w.stat(info, "")
+	if err := w.metadata(ctx, path, rel, stat, baseNode); err != nil {
+		return nil, err
+	}
+
+	return &proto.TreeNode{Stat: stat, Ref: ref}, nil
 }
 
 // readFile chunks and stores one file. forced refs are uploaded even when
@@ -1309,7 +1357,10 @@ func (w *Walker) checkpoint(ctx context.Context, done []*proto.TreeNode, base []
 func (w *Walker) stat(info os.FileInfo, linkTarget string) *proto.FileInfo {
 	user, group := w.fs().Owners(info)
 
-	return proto.GetFileInfo(proto.WithDetails(info, user, group, linkTarget))
+	stat := proto.GetFileInfo(proto.WithDetails(info, user, group, linkTarget))
+	recordPlatform(stat, info)
+
+	return stat
 }
 
 // metaEqual is the change test on stat data alone.
@@ -1333,7 +1384,19 @@ func nodeEqual(node, base *proto.TreeNode) bool {
 		bytes.Equal(a.GetUser(), b.GetUser()) &&
 		bytes.Equal(a.GetGroup(), b.GetGroup()) &&
 		bytes.Equal(a.GetLinkTarget(), b.GetLinkTarget()) &&
+		a.GetCtimeNs() == b.GetCtimeNs() &&
+		a.GetBirthtimeNs() == b.GetBirthtimeNs() &&
+		a.GetAttributes() == b.GetAttributes() &&
+		a.GetReparseTag() == b.GetReparseTag() &&
+		a.GetSecurity().Equal(b.GetSecurity()) &&
+		streamsEqual(a.GetStreams(), b.GetStreams()) &&
 		node.Ref.Equal(base.Ref)
+}
+
+func streamsEqual(a, b []*proto.Stream) bool {
+	return slices.EqualFunc(a, b, func(x, y *proto.Stream) bool {
+		return bytes.Equal(x.GetName(), y.GetName()) && x.GetRef().Equal(y.GetRef()) && x.GetSize() == y.GetSize()
+	})
 }
 
 // HashFile computes the File ref a backup of path on the local disk would

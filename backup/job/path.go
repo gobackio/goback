@@ -51,6 +51,10 @@ type PathSettings struct {
 	// VSS reads Dir from a shadow copy taken after the pre hook, on
 	// Windows; when none can be taken, the live files are read.
 	VSS bool
+	// DownloadPlaceholders reads files a cloud sync client keeps only in
+	// the cloud, which downloads them; otherwise they are recorded without
+	// content.
+	DownloadPlaceholders bool
 	// InitialRetention, when set, is the retention policy the set starts
 	// with if this run creates it; a set that exists keeps its own.
 	InitialRetention *retention.Policy
@@ -73,28 +77,29 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 	}
 
 	walker := &backup.Walker{
-		Index:              env.Index,
-		Objects:            objects,
-		Sessions:           env.sessions(),
-		InitialRetention:   s.InitialRetention,
-		Set:                s.Set,
-		AgentID:            env.AgentID,
-		Metadata:           pathMeta(s.Meta),
-		Key:                env.Key,
-		Logger:             logger,
-		Root:               root,
-		FS:                 s.FS,
-		Include:            includeFilter(logger, s.Include, s.Exclude),
-		Workers:            s.Workers,
-		ForceHashPercent:   s.ForceHash,
-		Verify:             s.Verify,
-		CheckpointInterval: s.CheckpointInterval,
-		ReadRetries:        s.ReadRetries,
-		LostRetries:        s.LostRetries,
-		PrefetchDepth:      2,
-		ProgressInterval:   s.ProgressInterval,
-		ScanWorkers:        s.ScanWorkers,
-		BlobCache:          env.BlobCache,
+		Index:                env.Index,
+		Objects:              objects,
+		Sessions:             env.sessions(),
+		InitialRetention:     s.InitialRetention,
+		Set:                  s.Set,
+		AgentID:              env.AgentID,
+		Metadata:             pathMeta(s.Meta),
+		Key:                  env.Key,
+		Logger:               logger,
+		Root:                 root,
+		FS:                   s.FS,
+		Include:              includeFilter(logger, s.Include, s.Exclude),
+		Workers:              s.Workers,
+		ForceHashPercent:     s.ForceHash,
+		Verify:               s.Verify,
+		DownloadPlaceholders: s.DownloadPlaceholders,
+		CheckpointInterval:   s.CheckpointInterval,
+		ReadRetries:          s.ReadRetries,
+		LostRetries:          s.LostRetries,
+		PrefetchDepth:        2,
+		ProgressInterval:     s.ProgressInterval,
+		ScanWorkers:          s.ScanWorkers,
+		BlobCache:            env.BlobCache,
 	}
 
 	if walker.ProgressInterval >= 0 {

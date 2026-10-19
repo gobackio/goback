@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+
+	"github.com/gobackio/goback/proto"
 )
 
 // IsPermissionError reports whether an open or list failed for lack of access.
@@ -88,3 +90,7 @@ var localTraits = Traits{Identity: true, Reread: true}
 func localReadDir(dir string) ([]os.DirEntry, error) {
 	return os.ReadDir(dir)
 }
+
+// recordPlatform adds what a stat holds beyond the portable fields, which
+// on Unix is nothing yet.
+func recordPlatform(*proto.FileInfo, os.FileInfo) {}

@@ -196,7 +196,7 @@ func TestWalkerPresenceRepairsFalsePositives(t *testing.T) {
 
 		require.EqualValues(t, len(parts), result.Assumed, "window %d", window)
 		require.EqualValues(t, len(parts), result.Repaired, "window %d", window)
-		require.EqualValues(t, len(parts)+2, atomic.LoadInt64(&f.objects.puts), "every chunk once, then file and tree")
+		require.EqualValues(t, int64(len(parts))+2+descriptorPuts, atomic.LoadInt64(&f.objects.puts), "every chunk once, then file and tree")
 		require.Equal(t, 2, ps.putFiles, "the file is put again once the parts are there")
 		require.Equal(t, len(parts), ps.missing)
 	}
@@ -257,7 +257,7 @@ func TestWalkerIgnoresFiltersWithoutConfirmer(t *testing.T) {
 	result := f.run()
 	parts := f.requireComplete(result.Ref, "a.bin")
 	require.Zero(t, result.Assumed)
-	require.EqualValues(t, len(parts)+2, atomic.LoadInt64(&f.objects.puts))
+	require.EqualValues(t, int64(len(parts))+2+descriptorPuts, atomic.LoadInt64(&f.objects.puts))
 }
 
 type sourceOnly struct {

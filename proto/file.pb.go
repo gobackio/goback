@@ -131,7 +131,22 @@ type FileInfo struct {
 	MtimeNs int64    `protobuf:"varint,8,opt,name=mtime_ns,json=mtimeNs,proto3" json:"mtime_ns,omitempty"`
 	Type    NodeType `protobuf:"varint,9,opt,name=type,proto3,enum=proto.NodeType" json:"type,omitempty"`
 	// the target of a symlink, empty for every other type
-	LinkTarget    []byte `protobuf:"bytes,10,opt,name=link_target,json=linkTarget,proto3" json:"link_target,omitempty"`
+	LinkTarget []byte `protobuf:"bytes,10,opt,name=link_target,json=linkTarget,proto3" json:"link_target,omitempty"`
+	// change time in nanoseconds since the Unix epoch, which moves when the
+	// content, a stream, the security descriptor or the attributes change
+	CtimeNs int64 `protobuf:"varint,11,opt,name=ctime_ns,json=ctimeNs,proto3" json:"ctime_ns,omitempty"`
+	// creation time in nanoseconds since the Unix epoch
+	BirthtimeNs int64 `protobuf:"varint,12,opt,name=birthtime_ns,json=birthtimeNs,proto3" json:"birthtime_ns,omitempty"`
+	// the FILE_ATTRIBUTE_* flags
+	Attributes uint32 `protobuf:"varint,13,opt,name=attributes,proto3" json:"attributes,omitempty"`
+	// a File object holding the self-relative security descriptor, one
+	// object for every entry with the same descriptor
+	Security *Ref `protobuf:"bytes,14,opt,name=security,proto3" json:"security,omitempty"`
+	// the alternate data streams, by name
+	Streams []*Stream `protobuf:"bytes,15,rep,name=streams,proto3" json:"streams,omitempty"`
+	// the tag of a reparse point that is not a symlink, such as a cloud
+	// placeholder
+	ReparseTag    uint32 `protobuf:"varint,16,opt,name=reparse_tag,json=reparseTag,proto3" json:"reparse_tag,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -222,6 +237,111 @@ func (x *FileInfo) GetLinkTarget() []byte {
 	return nil
 }
 
+func (x *FileInfo) GetCtimeNs() int64 {
+	if x != nil {
+		return x.CtimeNs
+	}
+	return 0
+}
+
+func (x *FileInfo) GetBirthtimeNs() int64 {
+	if x != nil {
+		return x.BirthtimeNs
+	}
+	return 0
+}
+
+func (x *FileInfo) GetAttributes() uint32 {
+	if x != nil {
+		return x.Attributes
+	}
+	return 0
+}
+
+func (x *FileInfo) GetSecurity() *Ref {
+	if x != nil {
+		return x.Security
+	}
+	return nil
+}
+
+func (x *FileInfo) GetStreams() []*Stream {
+	if x != nil {
+		return x.Streams
+	}
+	return nil
+}
+
+func (x *FileInfo) GetReparseTag() uint32 {
+	if x != nil {
+		return x.ReparseTag
+	}
+	return 0
+}
+
+// Stream is one alternate data stream of a file or directory.
+type Stream struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// sealed like the entry's name, within the entry
+	Name []byte `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// a File object holding the stream's content
+	Ref           *Ref  `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
+	Size          int64 `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Stream) Reset() {
+	*x = Stream{}
+	mi := &file_file_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Stream) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Stream) ProtoMessage() {}
+
+func (x *Stream) ProtoReflect() protoreflect.Message {
+	mi := &file_file_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Stream.ProtoReflect.Descriptor instead.
+func (*Stream) Descriptor() ([]byte, []int) {
+	return file_file_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Stream) GetName() []byte {
+	if x != nil {
+		return x.Name
+	}
+	return nil
+}
+
+func (x *Stream) GetRef() *Ref {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *Stream) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
 type File struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// an ordered list of file parts
@@ -249,7 +369,7 @@ type File struct {
 
 func (x *File) Reset() {
 	*x = File{}
-	mi := &file_file_proto_msgTypes[1]
+	mi := &file_file_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -261,7 +381,7 @@ func (x *File) String() string {
 func (*File) ProtoMessage() {}
 
 func (x *File) ProtoReflect() protoreflect.Message {
-	mi := &file_file_proto_msgTypes[1]
+	mi := &file_file_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -274,7 +394,7 @@ func (x *File) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use File.ProtoReflect.Descriptor instead.
 func (*File) Descriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{1}
+	return file_file_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *File) GetParts() []*FilePart {
@@ -337,7 +457,7 @@ type FilePart struct {
 
 func (x *FilePart) Reset() {
 	*x = FilePart{}
-	mi := &file_file_proto_msgTypes[2]
+	mi := &file_file_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -349,7 +469,7 @@ func (x *FilePart) String() string {
 func (*FilePart) ProtoMessage() {}
 
 func (x *FilePart) ProtoReflect() protoreflect.Message {
-	mi := &file_file_proto_msgTypes[2]
+	mi := &file_file_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -362,7 +482,7 @@ func (x *FilePart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FilePart.ProtoReflect.Descriptor instead.
 func (*FilePart) Descriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{2}
+	return file_file_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *FilePart) GetOffset() uint64 {
@@ -391,7 +511,7 @@ var File_file_proto protoreflect.FileDescriptor
 const file_file_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"file.proto\x12\x05proto\x1a\tref.proto\x1a\x10encryption.proto\"\xee\x01\n" +
+	"file.proto\x12\x05proto\x1a\tref.proto\x1a\x10encryption.proto\"\xbe\x03\n" +
 	"\bFileInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\fR\x04name\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\rR\x04mode\x12\x12\n" +
@@ -402,7 +522,22 @@ const file_file_proto_rawDesc = "" +
 	"\x04type\x18\t \x01(\x0e2\x0f.proto.NodeTypeR\x04type\x12\x1f\n" +
 	"\vlink_target\x18\n" +
 	" \x01(\fR\n" +
-	"linkTargetJ\x04\b\x05\x10\x06J\x04\b\a\x10\bR\ttimestampR\x04tree\"\xa5\x02\n" +
+	"linkTarget\x12\x19\n" +
+	"\bctime_ns\x18\v \x01(\x03R\actimeNs\x12!\n" +
+	"\fbirthtime_ns\x18\f \x01(\x03R\vbirthtimeNs\x12\x1e\n" +
+	"\n" +
+	"attributes\x18\r \x01(\rR\n" +
+	"attributes\x12&\n" +
+	"\bsecurity\x18\x0e \x01(\v2\n" +
+	".proto.RefR\bsecurity\x12'\n" +
+	"\astreams\x18\x0f \x03(\v2\r.proto.StreamR\astreams\x12\x1f\n" +
+	"\vreparse_tag\x18\x10 \x01(\rR\n" +
+	"reparseTagJ\x04\b\x05\x10\x06J\x04\b\a\x10\bR\ttimestampR\x04tree\"N\n" +
+	"\x06Stream\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\fR\x04name\x12\x1c\n" +
+	"\x03ref\x18\x02 \x01(\v2\n" +
+	".proto.RefR\x03ref\x12\x12\n" +
+	"\x04size\x18\x03 \x01(\x03R\x04size\"\xa5\x02\n" +
 	"\x04File\x12%\n" +
 	"\x05parts\x18\x01 \x03(\v2\x0f.proto.FilePartR\x05parts\x12\"\n" +
 	"\x06splits\x18\x02 \x03(\v2\n" +
@@ -438,28 +573,32 @@ func file_file_proto_rawDescGZIP() []byte {
 }
 
 var file_file_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_file_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_file_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_file_proto_goTypes = []any{
 	(NodeType)(0),    // 0: proto.NodeType
 	(Chunker)(0),     // 1: proto.Chunker
 	(*FileInfo)(nil), // 2: proto.FileInfo
-	(*File)(nil),     // 3: proto.File
-	(*FilePart)(nil), // 4: proto.FilePart
-	(*Ref)(nil),      // 5: proto.Ref
-	(Encryption)(0),  // 6: proto.Encryption
+	(*Stream)(nil),   // 3: proto.Stream
+	(*File)(nil),     // 4: proto.File
+	(*FilePart)(nil), // 5: proto.FilePart
+	(*Ref)(nil),      // 6: proto.Ref
+	(Encryption)(0),  // 7: proto.Encryption
 }
 var file_file_proto_depIdxs = []int32{
 	0, // 0: proto.FileInfo.type:type_name -> proto.NodeType
-	4, // 1: proto.File.parts:type_name -> proto.FilePart
-	5, // 2: proto.File.splits:type_name -> proto.Ref
-	1, // 3: proto.File.chunker:type_name -> proto.Chunker
-	6, // 4: proto.File.inline_encryption:type_name -> proto.Encryption
-	5, // 5: proto.FilePart.ref:type_name -> proto.Ref
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	6, // 1: proto.FileInfo.security:type_name -> proto.Ref
+	3, // 2: proto.FileInfo.streams:type_name -> proto.Stream
+	6, // 3: proto.Stream.ref:type_name -> proto.Ref
+	5, // 4: proto.File.parts:type_name -> proto.FilePart
+	6, // 5: proto.File.splits:type_name -> proto.Ref
+	1, // 6: proto.File.chunker:type_name -> proto.Chunker
+	7, // 7: proto.File.inline_encryption:type_name -> proto.Encryption
+	6, // 8: proto.FilePart.ref:type_name -> proto.Ref
+	9, // [9:9] is the sub-list for method output_type
+	9, // [9:9] is the sub-list for method input_type
+	9, // [9:9] is the sub-list for extension type_name
+	9, // [9:9] is the sub-list for extension extendee
+	0, // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_file_proto_init() }
@@ -475,7 +614,7 @@ func file_file_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_file_proto_rawDesc), len(file_file_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   3,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

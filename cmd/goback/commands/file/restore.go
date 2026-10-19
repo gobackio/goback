@@ -30,6 +30,18 @@ func (f *file) restore() error {
 	}{common.View.Node(node), outcome.String(), f.dst, stats}, func() {
 		log.Printf("%s: %s", outcome, f.dst)
 		log.Printf("bytes from destination %d, seeds %d, cache %d, store %d", stats.BytesFromDestination, stats.BytesFromSeeds, stats.BytesFromCache, stats.BytesFromStore)
+
+		if stats.SecurityLeftOut > 0 {
+			log.Print("the security descriptor was left out, which a restore on Windows as an elevated administrator sets")
+		}
+
+		if stats.CloudOnly > 0 {
+			log.Print("left out: its content was only in the cloud when it was backed up")
+		}
+
+		if stats.StreamsLeftOut > 0 {
+			log.Printf("%d alternate data streams left out: the destination cannot hold them", stats.StreamsLeftOut)
+		}
 	})
 
 	return nil

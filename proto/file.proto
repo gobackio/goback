@@ -33,6 +33,33 @@ message FileInfo {
 
 	// the target of a symlink, empty for every other type
 	bytes link_target = 10;
+
+	// the fields below are recorded on Windows and 0 or empty elsewhere
+
+	// change time in nanoseconds since the Unix epoch, which moves when the
+	// content, a stream, the security descriptor or the attributes change
+	int64 ctime_ns = 11;
+	// creation time in nanoseconds since the Unix epoch
+	int64 birthtime_ns = 12;
+	// the FILE_ATTRIBUTE_* flags
+	uint32 attributes = 13;
+	// a File object holding the self-relative security descriptor, one
+	// object for every entry with the same descriptor
+	Ref security = 14;
+	// the alternate data streams, by name
+	repeated Stream streams = 15;
+	// the tag of a reparse point that is not a symlink, such as a cloud
+	// placeholder
+	uint32 reparse_tag = 16;
+}
+
+// Stream is one alternate data stream of a file or directory.
+message Stream {
+	// sealed like the entry's name, within the entry
+	bytes name = 1;
+	// a File object holding the stream's content
+	Ref ref = 2;
+	int64 size = 3;
 }
 
 // Chunker names the boundary function and parameters that cut a file.

@@ -170,6 +170,23 @@ func (fi *FileInfo) IsDir() bool {
 	return fi.GetType() == NodeType_NODE_DIRECTORY
 }
 
+// MetadataRefs lists the File objects the entry's security descriptor and
+// streams are stored in.
+func (fi *FileInfo) MetadataRefs() []*Ref {
+	var refs []*Ref
+	if fi.GetSecurity() != nil {
+		refs = append(refs, fi.Security)
+	}
+
+	for _, stream := range fi.GetStreams() {
+		if stream.GetRef() != nil {
+			refs = append(refs, stream.Ref)
+		}
+	}
+
+	return refs
+}
+
 // ModTime returns the recorded modification time.
 func (fi *FileInfo) ModTime() time.Time {
 	return time.Unix(0, fi.GetMtimeNs())

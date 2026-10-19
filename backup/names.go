@@ -22,6 +22,11 @@ func sealInfo(key *storekey.Key, parent []byte, info *proto.FileInfo) *proto.Fil
 	sealed.Group = key.SealField(parent, storekey.FieldGroup, info.Group)
 	sealed.LinkTarget = key.SealField(parent, storekey.FieldTarget, info.LinkTarget)
 
+	for _, stream := range sealed.Streams {
+		stream.Name = key.SealField(sealed.Name, storekey.FieldStream, stream.Name)
+	}
+	proto.SortStreams(sealed.Streams)
+
 	return sealed
 }
 
@@ -51,6 +56,14 @@ func openInfo(key *storekey.Key, parent []byte, info *proto.FileInfo) (*proto.Fi
 			return nil, err
 		}
 	}
+
+	for _, stream := range opened.Streams {
+		stream.Name, err = key.OpenField(info.Name, storekey.FieldStream, stream.Name)
+		if err != nil {
+			return nil, err
+		}
+	}
+	proto.SortStreams(opened.Streams)
 
 	return opened, nil
 }

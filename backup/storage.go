@@ -80,7 +80,8 @@ type HeadKeeper interface {
 }
 
 // References lists the refs an object points at directly: a commit's tree,
-// a tree's nodes and splits, a file's parts, a pin's target.
+// a tree's nodes with their security descriptors and streams, a tree's
+// splits, a file's parts, a pin's target.
 func References(obj *proto.Object) []*proto.Ref {
 	switch obj.Type() {
 	case proto.ObjectType_COMMIT:
@@ -94,6 +95,7 @@ func References(obj *proto.Object) []*proto.Ref {
 			if node.Ref != nil {
 				refs = append(refs, node.Ref)
 			}
+			refs = append(refs, node.GetStat().MetadataRefs()...)
 		}
 		return append(refs, tree.Splits...)
 	case proto.ObjectType_FILE:

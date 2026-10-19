@@ -1540,6 +1540,9 @@ func appendChildren(children []refKey, live *[]liveRef, obj *proto.Object) []ref
 			if node.GetRef() != nil {
 				children = append(children, keyOf(node.Ref.Hash))
 			}
+			for _, ref := range node.GetStat().MetadataRefs() {
+				children = append(children, keyOf(ref.Hash))
+			}
 		}
 		for _, split := range tree.GetSplits() {
 			children = append(children, keyOf(split.Hash))

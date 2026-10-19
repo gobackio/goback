@@ -183,6 +183,16 @@ func (x *Index) walkRefs(ctx context.Context, trees []*proto.Ref, visited map[st
 			}
 
 			for _, node := range t.GetNodes() {
+				for _, ref := range node.GetStat().MetadataRefs() {
+					visit(ref.GetHash())
+				}
+
+				for _, stream := range node.GetStat().GetStreams() {
+					if stream.GetSize() >= backup.SplitFileSize {
+						large = append(large, stream.GetRef())
+					}
+				}
+
 				if node.GetRef() == nil {
 					continue
 				}

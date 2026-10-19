@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ func TestAWalkCountsTheBytesItCoversAndTheOnesItSends(t *testing.T) {
 	first := f.run()
 	require.EqualValues(t, 2, first.Files)
 	require.EqualValues(t, len("hello")+len(big), first.Bytes, "what the files hold on disk")
-	require.EqualValues(t, first.Bytes, first.Uploaded, "a first run sends all of it")
+	require.EqualValues(t, first.Bytes+descriptorBytes(t, filepath.Join(f.root, "a.txt"), filepath.Join(f.root, "sub")), first.Uploaded, "a first run sends all of it, and the descriptors")
 
 	// a run that changes nothing covers the same bytes and sends none
 	second := f.run()

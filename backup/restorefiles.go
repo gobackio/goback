@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gobackio/goback/proto"
 
@@ -61,6 +62,16 @@ func (r *Restorer) RestoreFiles(ctx context.Context, files []FileToRestore, done
 	for i, file := range files {
 		if gctx.Err() != nil {
 			break
+		}
+
+		if cloudOnly(file.Stat) {
+			atomic.AddInt64(&r.stats.CloudOnly, 1)
+			if err := done(i, OutcomeCloudOnly, nil); err != nil {
+				_ = grp.Wait()
+				return err
+			}
+
+			continue
 		}
 
 		if !grouped || file.Stat.GetSize() >= smallFile {
@@ -271,7 +282,7 @@ func (g *group) plan(writes *errgroup.Group, m *member, obj *proto.Object) error
 			writes.Go(func() error {
 				err := r.dropPartial(m.ctx, path)
 				if err == nil {
-					err = setMeta(m.ctx, fsys, path, fileMode(m.file.Stat), mtimeOf(m.file.Stat))
+					err = r.placeMeta(m.ctx, fsys, path, m.file.Stat)
 				}
 
 				return g.finish(m, OutcomeUnchanged, err)
@@ -450,11 +461,19 @@ func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.File
 
 		_, err := fsys.WriteFile(ctx, partial, bytes.NewReader(buf))
 		if err == nil {
+			err = r.putStreams(ctx, fsys, partial, stat)
+		}
+
+		if err == nil {
 			err = setMeta(ctx, fsys, partial, fileMode(stat), mtimeOf(stat))
 		}
 
 		if err == nil {
 			err = fsys.Rename(ctx, partial, path)
+		}
+
+		if err == nil {
+			err = r.putSecurity(ctx, fsys, path, stat)
 		}
 
 		return err

@@ -53,24 +53,25 @@ func runNew(c *cli.Context) error {
 	}
 
 	result, err := job.Path(ctx, env, job.PathSettings{
-		Set:                c.GlobalString("set"),
-		Dir:                dir,
-		Include:            c.StringSlice("include"),
-		Exclude:            c.StringSlice("exclude"),
-		Workers:            c.Int("workers"),
-		ForceHash:          c.Int("force-hash"),
-		CheckpointInterval: c.Duration("checkpoint-interval"),
-		ScanWorkers:        c.Int("scan-workers"),
-		ReadRetries:        c.Int("read-retries"),
-		LostRetries:        c.Int("lost-retries"),
-		ProgressInterval:   c.Duration("progress-interval"),
-		Meta:               common.Metadata(c),
-		PreHook:            c.String("pre-hook"),
-		PostHook:           c.String("post-hook"),
-		HookTimeout:        c.Duration("hook-timeout"),
-		HookOptional:       c.Bool("hook-optional"),
-		VSS:                c.Bool("vss"),
-		InitialRetention:   initial,
+		Set:                  c.GlobalString("set"),
+		Dir:                  dir,
+		Include:              c.StringSlice("include"),
+		Exclude:              c.StringSlice("exclude"),
+		Workers:              c.Int("workers"),
+		ForceHash:            c.Int("force-hash"),
+		CheckpointInterval:   c.Duration("checkpoint-interval"),
+		ScanWorkers:          c.Int("scan-workers"),
+		ReadRetries:          c.Int("read-retries"),
+		LostRetries:          c.Int("lost-retries"),
+		ProgressInterval:     c.Duration("progress-interval"),
+		Meta:                 common.Metadata(c),
+		PreHook:              c.String("pre-hook"),
+		PostHook:             c.String("post-hook"),
+		HookTimeout:          c.Duration("hook-timeout"),
+		HookOptional:         c.Bool("hook-optional"),
+		VSS:                  c.Bool("vss"),
+		DownloadPlaceholders: c.Bool("download-placeholders"),
+		InitialRetention:     initial,
 	})
 	if err != nil {
 		return err
@@ -83,6 +84,10 @@ func runNew(c *cli.Context) error {
 
 		if result.Torn > 0 || result.Unreadable > 0 || result.Skipped > 0 {
 			log.Printf("%d files changed while being read, %d could not be read, %d irregular entries skipped", result.Torn, result.Unreadable, result.Skipped)
+		}
+
+		if result.Placeholders > 0 {
+			log.Printf("%d files only in the cloud recorded without content; --download-placeholders reads them", result.Placeholders)
 		}
 	})
 
@@ -164,6 +169,10 @@ var newCmd = cli.Command{
 		cli.BoolFlag{
 			Name:  "vss",
 			Usage: "on Windows, read the directory from a shadow copy taken after the pre-hook, which needs an elevated administrator; without one the live files are read",
+		},
+		cli.BoolFlag{
+			Name:  "download-placeholders",
+			Usage: "on Windows, read files OneDrive and other sync clients keep only in the cloud, which downloads them; without it they are recorded without content",
 		},
 		cli.DurationFlag{
 			Name:  "max-duration",

@@ -49,6 +49,8 @@ const (
 	FieldGroup Field = "group"
 	// FieldTarget is a symlink's target.
 	FieldTarget Field = "link_target"
+	// FieldStream is an alternate stream's name, sealed within its entry.
+	FieldStream Field = "stream"
 )
 
 // Mode is the store policy's encryption requirement for new writes. An

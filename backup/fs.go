@@ -29,6 +29,25 @@ type FS interface {
 	Traits() Traits
 }
 
+// MetadataFS is an FS whose entries carry a security descriptor and
+// alternate data streams, which a walk records with the entry. LocalFS is
+// one on Windows.
+type MetadataFS interface {
+	// Security returns the entry's self-relative security descriptor: owner,
+	// group and DACL, and the SACL when the process may read it.
+	Security(ctx context.Context, path string) ([]byte, error)
+	// Streams lists the entry's alternate data streams by name.
+	Streams(ctx context.Context, path string) ([]StreamInfo, error)
+	// OpenStream opens one of the entry's streams for reading.
+	OpenStream(ctx context.Context, path, name string) (File, error)
+}
+
+// StreamInfo names an alternate data stream and its size.
+type StreamInfo struct {
+	Name string
+	Size int64
+}
+
 // File is an open file of an FS. One that is also an io.ReaderAt lets the
 // walker re-read a single part rather than the whole file.
 type File interface {

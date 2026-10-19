@@ -233,6 +233,18 @@ func logStats(stats backup.RestoreStats) {
 	if stats.Salvaged > 0 {
 		log.Printf("%d files salvaged with %s missing", stats.Salvaged, humanize.Bytes(uint64(stats.MissingBytes)))
 	}
+
+	if stats.SecurityLeftOut > 0 {
+		log.Printf("%d security descriptors left out, which a restore on Windows as an elevated administrator sets", stats.SecurityLeftOut)
+	}
+
+	if stats.CloudOnly > 0 {
+		log.Printf("%d files left out: their content was only in the cloud when they were backed up", stats.CloudOnly)
+	}
+
+	if stats.StreamsLeftOut > 0 {
+		log.Printf("%d alternate data streams left out: the destination cannot hold them", stats.StreamsLeftOut)
+	}
 }
 
 func restoreAction(c *cli.Context) {

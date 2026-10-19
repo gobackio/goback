@@ -153,7 +153,15 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 			continue
 		}
 
+		if err := r.putStreams(ctx, r.fs(), e.path, e.stat); err != nil {
+			return err
+		}
+
 		if err := setMeta(ctx, r.fs(), e.path, e.info.Mode().Perm(), e.info.ModTime()); err != nil {
+			return err
+		}
+
+		if err := r.putSecurity(ctx, r.fs(), e.path, e.stat); err != nil {
 			return err
 		}
 	}

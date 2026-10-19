@@ -85,6 +85,17 @@ func TestCanonicalGoldenVectors(t *testing.T) {
 			}}),
 			payload: "0a300a0a0a016110a4033005400112220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed10a310a0b0a016210ed83808008480112220a20dc9c5edb8b2d479e697b4b0b8ab874f32b325138598ce9e7b759eb8292110622",
 		},
+		{
+			name: "tree with windows metadata",
+			object: NewObject(&Tree{Nodes: []*TreeNode{
+				{Stat: &FileInfo{
+					Name: []byte("a"), Mode: 0644, Size: 5, MtimeNs: 1, CtimeNs: 2, BirthtimeNs: 3, Attributes: 0x20, Security: tree,
+					Streams:    []*Stream{{Name: []byte("x"), Ref: part, Size: 4}, {Name: []byte("y"), Ref: part}},
+					ReparseTag: 0x9000001a,
+				}, Ref: part},
+			}}),
+			payload: "0ab6010a8f010a016110a4033005400158026003682072220a20dc9c5edb8b2d479e697b4b0b8ab874f32b325138598ce9e7b759eb82921106227a290a017812220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed118047a270a017912220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed180019a8080800912220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed1",
+		},
 	}
 
 	for _, tc := range cases {
@@ -118,6 +129,10 @@ func TestCanonicalRejects(t *testing.T) {
 		"missing ref":        NewObject(&Commit{}),
 		"unsorted tree":      NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("b")}, Ref: good}, {Stat: &FileInfo{Name: []byte("a")}, Ref: good}}}),
 		"duplicate name":     NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a")}, Ref: good}, {Stat: &FileInfo{Name: []byte("a")}, Ref: good}}}),
+		"unsorted streams":   NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a"), Streams: []*Stream{{Name: []byte("y"), Ref: good}, {Name: []byte("x"), Ref: good}}}, Ref: good}}}),
+		"unnamed stream":     NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a"), Streams: []*Stream{{Ref: good}}}, Ref: good}}}),
+		"stream without ref": NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a"), Streams: []*Stream{{Name: []byte("x")}}}, Ref: good}}}),
+		"short security ref": NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a"), Security: &Ref{Hash: []byte("short")}}, Ref: good}}}),
 		"nameless node":      NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{}, Ref: good}}}),
 		"link target on dir": NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a"), Type: NodeType_NODE_DIRECTORY, LinkTarget: []byte("x")}, Ref: good}}}),
 		"nodes and splits":   NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a")}, Ref: good}}, Splits: []*Ref{good}}),
