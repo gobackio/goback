@@ -80,9 +80,11 @@ func (m *memIndex) Put(ctx context.Context, obj *proto.Object) error {
 		return err
 	}
 
-	if obj.ReceivedAtNs() == 0 {
-		obj.Stamp(7, time.Now())
+	received := time.Now()
+	if carried := time.Unix(0, obj.ReceivedAtNs()); obj.ReceivedAtNs() != 0 && carried.Before(received) {
+		received = carried
 	}
+	obj.Stamp(7, received)
 
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
@@ -592,12 +594,14 @@ func TestRemotePutStampsCommitsAndPins(t *testing.T) {
 	tree := proto.NewObject(&proto.Tree{})
 	require.NoError(t, client.Put(ctx, tree))
 
-	commit := proto.NewObject(&proto.Commit{Timestamp: 1, Tree: tree.Ref(), AgentId: "node-1", BackupSet: "world", SetId: 99, ReceivedAtNs: 12345})
+	future := time.Now().Add(time.Hour).UnixNano()
+	commit := proto.NewObject(&proto.Commit{Timestamp: 1, Tree: tree.Ref(), AgentId: "node-1", BackupSet: "world", SetId: 99, ReceivedAtNs: future})
 	before := time.Now().UnixNano()
 	require.NoError(t, client.Put(ctx, commit))
 
 	require.EqualValues(t, 7, commit.GetCommit().SetId, "the server assigns the set id, whatever the client sent")
-	require.GreaterOrEqual(t, commit.GetCommit().ReceivedAtNs, before, "the server assigns the receipt time")
+	require.GreaterOrEqual(t, commit.GetCommit().ReceivedAtNs, before, "the index decides the receipt time")
+	require.Less(t, commit.GetCommit().ReceivedAtNs, future)
 	require.Equal(t, tree.Ref().Hash, commit.GetCommit().Tree.Hash)
 
 	stored, err := index.Get(ctx, commit.Ref())

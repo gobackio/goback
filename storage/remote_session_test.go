@@ -60,9 +60,11 @@ func (p *packIndex) Put(ctx context.Context, obj *proto.Object) error {
 		return err
 	}
 
-	if obj.ReceivedAtNs() == 0 {
-		obj.Stamp(7, time.Now())
+	received := time.Now()
+	if carried := time.Unix(0, obj.ReceivedAtNs()); obj.ReceivedAtNs() != 0 && carried.Before(received) {
+		received = carried
 	}
+	obj.Stamp(7, received)
 
 	err = p.PackStorage.Put(ctx, obj)
 	if err != nil {

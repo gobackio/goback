@@ -10,8 +10,9 @@ import (
 
 // An Index stamps a commit or pin it receives with the receipt time, and a
 // commit with its set id, before storing it; the caller reads the ref off
-// the stamped object afterwards. An object that already carries a receipt
-// time is a replay and is stored as it is.
+// the stamped object afterwards. A commit that already carries a receipt
+// time, such as one an agent stored locally while offline, keeps it if the
+// index accepts it.
 type Index interface {
 	// Open readies the index for use.
 	Open() error

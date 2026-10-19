@@ -34,13 +34,22 @@ import (
 // m maps index rows to what the callers speak; one value for the package.
 var m = gen.MapperImpl{}
 
+// carriedReceipt bounds how far back a commit's carried receipt time is
+// kept.
+const carriedReceipt = 90 * 24 * time.Hour
+
 // Stamp assigns the receipt time to a commit or pin and the set id to a
-// commit, replacing whatever they carried.
+// commit. A commit keeps a receipt time it carries that is no later than
+// now, no more than carriedReceipt before it, and later than its set's
+// newest commit, as one an agent stored locally while offline does;
+// anything else is replaced.
 func (x *Index) Stamp(ctx context.Context, object *proto.Object) error {
 	commit := object.GetCommit()
 	if commit == nil && object.GetPin() == nil {
 		return nil
 	}
+
+	at := x.stamp()
 
 	var setID int64
 	if commit != nil {
@@ -49,9 +58,20 @@ func (x *Index) Stamp(ctx context.Context, object *proto.Object) error {
 		if err != nil {
 			return err
 		}
+
+		if carried := time.Unix(0, commit.GetReceivedAtNs()).UTC(); commit.GetReceivedAtNs() > 0 && !carried.After(at) && at.Sub(carried) <= carriedReceipt {
+			newest, err := newestCommit(ctx, x.client, setID)
+			if err != nil {
+				return err
+			}
+
+			if newest == nil || carried.Truncate(receiptGrain).After(newest.ReceivedAt.Truncate(receiptGrain)) {
+				at = carried
+			}
+		}
 	}
 
-	object.Stamp(uint64(setID), x.stamp())
+	object.Stamp(uint64(setID), at)
 
 	return nil
 }

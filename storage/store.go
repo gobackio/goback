@@ -156,12 +156,12 @@ func (s *Store) Put(ctx context.Context, up Upload) (*Receipt, error) {
 	return receipt, nil
 }
 
-// clearStamp removes a client-supplied receipt time and set id so the
-// index assigns its own.
+// clearStamp removes a client-supplied set id, and a pin's receipt time,
+// so the index assigns its own. A commit's receipt time is the index's to
+// keep or replace.
 func clearStamp(object *proto.Object) {
 	if commit := object.GetCommit(); commit != nil {
 		commit.SetId = 0
-		commit.ReceivedAtNs = 0
 	}
 
 	if pin := object.GetPin(); pin != nil {
