@@ -58,6 +58,7 @@ type Index struct {
 
 	external  *externalDB
 	noMigrate bool
+	behind    backup.ObjectStore
 
 	// DefaultPolicy is the retention policy sets inherit when the store
 	// has none set; nil means retention.Default.

@@ -49,6 +49,11 @@ type Settings struct {
 	// AtRestKey is the file of the key a directory or bucket store
 	// encrypts its archives with.
 	AtRestKey string
+	// Behind is a store that a directory or bucket store stands in front
+	// of: where it holds nothing itself, its index checks a Put's
+	// references against Behind and reads the trees a commit names from
+	// it, so its commits may refer to what only Behind holds.
+	Behind backup.ObjectStore
 	// CacheDir holds every cache, apart per store; empty caches nothing.
 	CacheDir string
 	// MetadataCacheSize bounds a bucket's metadata cache in bytes; zero

@@ -180,7 +180,12 @@ func (s Settings) withIndex(build func(*sql.Index) (*pack.PackStorage, error)) (
 	s.logger().Info("opening the index", "location", location)
 
 	// a local index keeps every commit until a policy is set
-	x := sql.New(location, nil)
+	var opts []sql.Option
+	if s.Behind != nil {
+		opts = append(opts, sql.WithBehind(s.Behind))
+	}
+
+	x := sql.New(location, nil, opts...)
 	x.DefaultPolicy = &retention.KeepAll
 
 	packs, err := build(x)

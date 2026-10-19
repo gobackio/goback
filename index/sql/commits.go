@@ -97,7 +97,7 @@ func (x *Index) seedStamp(ctx context.Context) error {
 
 // Put stores an object and indexes a commit or pin.
 func (x *Index) Put(ctx context.Context, object *proto.Object) error {
-	err := backup.CheckReferences(ctx, x.ObjectStore, object)
+	err := backup.CheckReferences(ctx, x.reads(), object)
 	if err != nil {
 		return err
 	}
@@ -202,7 +202,7 @@ func (x *Index) ensureSet(ctx context.Context, c *ent.Client, commit *proto.Comm
 // indexed one at a time, in receipt order: strict mode fails a commit
 // received before the set's newest, which otherwise is left out.
 func (x *Index) indexCommit(ctx context.Context, commit *proto.Commit, ref *proto.Ref, strict, evaluate bool) (placement, error) {
-	treeObj, err := x.ObjectStore.Get(ctx, commit.Tree)
+	treeObj, err := x.reads().Get(ctx, commit.Tree)
 	if errors.Is(err, backup.ErrNotFound) && strict {
 		return unplaced, fmt.Errorf("%w: root tree %x", backup.ErrDanglingRef, commit.Tree.GetHash())
 	}
@@ -316,7 +316,7 @@ func (x *Index) planCommit(ctx context.Context, commit *proto.Commit, ref *proto
 	}
 
 	at := plan.at
-	diff := &treeDiff{read: c, store: x.ObjectStore, setID: setID, at: at, tolerant: !strict}
+	diff := &treeDiff{read: c, store: x.reads(), setID: setID, at: at, tolerant: !strict}
 
 	root := &proto.Tree{}
 	if treeObj == nil {

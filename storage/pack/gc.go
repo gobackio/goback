@@ -39,6 +39,9 @@ type CollectOptions struct {
 	MinAge time.Duration
 	// NoSweep stops after the mark.
 	NoSweep bool
+	// Behind says the store stands in front of another, so a reachable
+	// object it lacks is passed over without a warning.
+	Behind bool
 	// Handoff publishes the sweep as a plan for RewritePlan instead of
 	// running it.
 	Handoff bool
@@ -1359,7 +1362,7 @@ func (r *gcRun) placeAll(ctx context.Context, keys []refKey) ([]placed, error) {
 	found := records[:0]
 	for i, p := range records {
 		if p.rec == nil {
-			r.ps.logger.Warn("reachable object is missing", "ref", fmt.Sprintf("%x", keys[i]))
+			r.missing(keys[i])
 			continue
 		}
 
@@ -1419,6 +1422,17 @@ type placed struct {
 // place finds a copy of the object to read: in the snapshot, or, for one
 // written since, through the index, or in a live session's archive. It
 // returns a zero placed when there is none.
+// missing reports a reachable object the store lacks, which only a store
+// in front of another expects.
+func (r *gcRun) missing(key refKey) {
+	if r.opts.Behind {
+		r.ps.logger.Debug("reachable object is held behind", "ref", fmt.Sprintf("%x", key))
+		return
+	}
+
+	r.ps.logger.Warn("reachable object is missing", "ref", fmt.Sprintf("%x", key))
+}
+
 func (r *gcRun) place(ctx context.Context, key refKey) (placed, error) {
 	if p, ok := r.located[key]; ok {
 		return p, nil
@@ -1491,7 +1505,7 @@ func (r *gcRun) readSpan(ctx context.Context, records []placed, span int64) ([]m
 			}
 
 			if errors.Is(err, backup.ErrNotFound) {
-				r.ps.logger.Warn("reachable object is missing", "ref", fmt.Sprintf("%x", record.key))
+				r.missing(record.key)
 				continue
 			}
 

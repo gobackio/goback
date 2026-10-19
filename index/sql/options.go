@@ -1,9 +1,13 @@
 package sql
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 
 	"entgo.io/ent/dialect"
+	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/proto"
 )
 
 // Option configures an index before it is opened.
@@ -28,6 +32,16 @@ func WithoutMigrations() Option {
 	}
 }
 
+// WithBehind puts the index's store in front of behind: where the store
+// holds nothing itself, a Put's references are checked against behind and
+// the trees and files a commit names are read from it. Everything else,
+// collection and retention among it, sees the store alone.
+func WithBehind(behind backup.ObjectStore) Option {
+	return func(x *Index) {
+		x.behind = behind
+	}
+}
+
 // externalDB is a caller-connected database.
 type externalDB struct {
 	db      *sql.DB
@@ -36,4 +50,38 @@ type externalDB struct {
 
 func (e *externalDB) locking() bool {
 	return e.dialect == dialect.Postgres
+}
+
+// reads is the store a Put's references are checked against and a
+// commit's trees are read from.
+func (x *Index) reads() backup.ObjectStore {
+	if x.behind == nil {
+		return x.ObjectStore
+	}
+
+	return inFront{ObjectStore: x.ObjectStore, behind: x.behind}
+}
+
+// inFront is a store with another behind it for what it lacks.
+type inFront struct {
+	backup.ObjectStore
+	behind backup.ObjectStore
+}
+
+func (s inFront) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
+	obj, err := s.ObjectStore.Get(ctx, ref)
+	if errors.Is(err, backup.ErrNotFound) {
+		return s.behind.Get(ctx, ref)
+	}
+
+	return obj, err
+}
+
+func (s inFront) Has(ctx context.Context, ref *proto.Ref) (bool, error) {
+	ok, err := s.ObjectStore.Has(ctx, ref)
+	if err != nil || ok {
+		return ok, err
+	}
+
+	return s.behind.Has(ctx, ref)
 }
