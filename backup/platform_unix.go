@@ -80,7 +80,7 @@ func FileIdentity(info os.FileInfo) (ctimeNs int64, inode uint64) {
 		return 0, 0
 	}
 
-	return stat.Ctim.Sec*1e9 + stat.Ctim.Nsec, stat.Ino
+	return ctime(stat), stat.Ino
 }
 
 var localTraits = Traits{Identity: true, Reread: true}
