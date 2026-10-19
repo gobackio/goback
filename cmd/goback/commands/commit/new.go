@@ -69,6 +69,7 @@ func runNew(c *cli.Context) error {
 		PostHook:           c.String("post-hook"),
 		HookTimeout:        c.Duration("hook-timeout"),
 		HookOptional:       c.Bool("hook-optional"),
+		VSS:                c.Bool("vss"),
 		InitialRetention:   initial,
 	})
 	if err != nil {
@@ -159,6 +160,10 @@ var newCmd = cli.Command{
 		cli.BoolFlag{
 			Name:  "hook-optional",
 			Usage: "back up even if the pre-hook fails",
+		},
+		cli.BoolFlag{
+			Name:  "vss",
+			Usage: "on Windows, read the directory from a shadow copy taken after the pre-hook, which needs an elevated administrator; without one the live files are read",
 		},
 		cli.DurationFlag{
 			Name:  "max-duration",

@@ -129,6 +129,7 @@ type PathBackup struct {
 	PostHook           string            `yaml:"post-hook"`
 	HookTimeout        time.Duration     `yaml:"hook-timeout"`
 	HookOptional       bool              `yaml:"hook-optional"`
+	VSS                bool              `yaml:"vss"`
 }
 
 // UnmarshalYAML fills in commit new's defaults before decoding. It takes
@@ -181,6 +182,7 @@ func (p *PathBackup) tasks(b *Backup) []*Task {
 		PostHook:           p.PostHook,
 		HookTimeout:        p.HookTimeout,
 		HookOptional:       p.HookOptional,
+		VSS:                p.VSS,
 		InitialRetention:   b.initialRetention(nil),
 	}
 

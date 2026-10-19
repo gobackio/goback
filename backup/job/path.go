@@ -11,6 +11,7 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/hooks"
 	"github.com/gobackio/goback/backup/retention"
+	"github.com/gobackio/goback/backup/vss"
 	"github.com/gobackio/goback/storage/cache"
 
 	"github.com/bmatcuk/doublestar"
@@ -47,6 +48,9 @@ type PathSettings struct {
 	HookTimeout      time.Duration
 	// HookOptional backs up anyway when the pre hook fails.
 	HookOptional bool
+	// VSS reads Dir from a shadow copy taken after the pre hook, on
+	// Windows; when none can be taken, the live files are read.
+	VSS bool
 	// InitialRetention, when set, is the retention policy the set starts
 	// with if this run creates it; a set that exists keeps its own.
 	InitialRetention *retention.Policy
@@ -139,6 +143,11 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 		logger.Info("Pre hook redirected the walk to " + walker.Root)
 	}
 
+	if s.VSS {
+		release := shadow(ctx, logger, walker, s.FS)
+		defer release()
+	}
+
 	result, walkErr := walker.Run(ctx)
 
 	if err := runner.RunPost(ctx); err != nil {
@@ -150,6 +159,31 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 	}
 
 	return result, nil
+}
+
+// shadow points walker at a shadow copy of its root and marks the run
+// quiesced, or leaves it on the live files when no copy can be taken. The
+// returned func releases the copy.
+func shadow(ctx context.Context, logger *slog.Logger, walker *backup.Walker, fsys backup.FS) func() {
+	if fsys != nil {
+		logger.Warn("not taking a shadow copy: the directory is not on the local disk")
+		return func() {}
+	}
+
+	snapshot, err := vss.Take(ctx, walker.Root)
+	if err != nil {
+		logger.Warn("taking a shadow copy failed, reading the live files", "err", err)
+		return func() {}
+	}
+
+	walker.FS = snapshot.FS()
+	walker.Quiesced = true
+
+	return func() {
+		if err := snapshot.Release(); err != nil {
+			logger.Warn("releasing the shadow copy failed", "err", err)
+		}
+	}
 }
 
 // rootOf is dir as a walk's root: absolute on the local disk, and as given
