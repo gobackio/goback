@@ -498,6 +498,10 @@ func TestARunThatFindsTheLatestTreeCommitsItWithinHalfTheStoresExpectedInterval(
 	require.True(t, second.Commit.Parent.Equal(first.Ref))
 
 	f.walker.clock = nil
+	f.index.rescan = true
+	require.False(t, f.run().SameTree, "a run the store asked to read everything again commits what it read")
+
+	f.index.rescan = false
 	f.walker.Metadata = map[string]string{"env": "other"}
 	require.False(t, f.run().SameTree, "a commit made otherwise doesn't stand for this run")
 }

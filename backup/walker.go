@@ -553,9 +553,10 @@ const SameTreeFor = 12 * time.Hour
 
 // recent reports whether base, the latest commit, stands for a run that
 // found its tree: a complete commit made in the same way, younger than
-// SameTreeFor and than half the grant's Every.
+// SameTreeFor and than half the grant's Every, by a run the store didn't
+// ask to read lost content again.
 func (w *Walker) recent(base *proto.Commit) bool {
-	if w.base == nil || base == nil || base.Partial || w.Stream != nil || w.Subdir != "" {
+	if w.base == nil || base == nil || base.Partial || w.Stream != nil || w.Subdir != "" || w.rescan || w.damaged != nil {
 		return false
 	}
 
