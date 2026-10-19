@@ -1125,3 +1125,52 @@ func TestKnownPartsReachThePartsOfSplitFilesAndEarlierVersions(t *testing.T) {
 
 	require.Equal(t, want, known)
 }
+
+// identityCache is a StatCache that compares what FileIdentity reads.
+type identityCache struct {
+	mtx  sync.Mutex
+	seen map[string][2]any
+}
+
+func (c *identityCache) identity(info os.FileInfo) [2]any {
+	ctime, id := FileIdentity(info)
+	return [2]any{[2]int64{ctime, int64(id)}, [2]int64{info.ModTime().UnixNano(), info.Size()}}
+}
+
+func (c *identityCache) Lookup(path string, info os.FileInfo) (bool, bool) {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	seen, ok := c.seen[path]
+
+	return ok, seen == c.identity(info)
+}
+
+func (c *identityCache) Store(path string, info os.FileInfo, _ *proto.Ref) error {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	c.seen[path] = c.identity(info)
+
+	return nil
+}
+
+func TestTheStatCacheCatchesARewriteThatKeepsMtimeAndSize(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.walker.FS = LocalFS{}
+	f.walker.Cache = &identityCache{seen: map[string][2]any{}}
+	f.write("a.txt", []byte("version-1"))
+
+	path := filepath.Join(f.root, "a.txt")
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+
+	f.run()
+
+	f.write("a.txt", []byte("version-2"))
+	require.NoError(t, os.Chtimes(path, info.ModTime(), info.ModTime()))
+
+	second := f.run()
+	require.EqualValues(t, 1, second.Read)
+	require.Equal(t, "version-2", f.content(second.Commit.Tree, "a.txt"))
+}

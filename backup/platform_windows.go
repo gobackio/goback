@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -50,12 +52,19 @@ func OwnerNames(os.FileInfo) (string, string) {
 	return "", ""
 }
 
-// FileIdentity has no ctime or inode on Windows without opening the file.
-func FileIdentity(os.FileInfo) (int64, uint64) {
-	return 0, 0
+// FileIdentity returns the change time and file ID of a file LocalFS
+// listed, the signals the stat cache adds on top of mtime and size; it is
+// 0, 0 for any other FileInfo.
+func FileIdentity(info os.FileInfo) (ctimeNs int64, id uint64) {
+	stat, ok := info.Sys().(*fileStatInformation)
+	if !ok {
+		return 0, 0
+	}
+
+	return filetimeNs(stat.ChangeTime), uint64(stat.FileID)
 }
 
-var localTraits = Traits{Reread: true}
+var localTraits = Traits{Identity: true, Reread: true}
 
 // localReadDir lists dir with entries whose Info stats the path itself:
 // the listing lags behind writes through a handle another process holds
@@ -78,5 +87,111 @@ type lstatEntry struct {
 }
 
 func (e *lstatEntry) Info() (os.FileInfo, error) {
-	return os.Lstat(filepath.Join(e.dir, e.Name()))
+	return lstat(filepath.Join(e.dir, e.Name()), e.Name())
 }
+
+// lstat is os.Lstat with the change time and file ID for anything but a
+// reparse point, at the cost of one query by name.
+func lstat(path, name string) (os.FileInfo, error) {
+	stat, err := statByName(path)
+	if err != nil || stat.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return os.Lstat(path)
+	}
+
+	return &identified{name: name, stat: stat}, nil
+}
+
+var queryInformationByName = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtQueryInformationByName")
+
+const fileStatInformationClass = 68
+
+// fileStatInformation is FILE_STAT_INFORMATION.
+type fileStatInformation struct {
+	FileID          int64
+	CreationTime    int64
+	LastAccessTime  int64
+	LastWriteTime   int64
+	ChangeTime      int64
+	AllocationSize  int64
+	EndOfFile       int64
+	FileAttributes  uint32
+	ReparseTag      uint32
+	NumberOfLinks   uint32
+	EffectiveAccess uint32
+}
+
+func statByName(path string) (fileStatInformation, error) {
+	var stat fileStatInformation
+
+	if err := queryInformationByName.Find(); err != nil {
+		return stat, err
+	}
+
+	dosName, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return stat, err
+	}
+
+	var ntName windows.NTUnicodeString
+	if err := windows.RtlDosPathNameToNtPathName(dosName, &ntName, nil, nil); err != nil {
+		return stat, err
+	}
+	defer windows.LocalFree(windows.Handle(unsafe.Pointer(ntName.Buffer)))
+
+	attrs := windows.OBJECT_ATTRIBUTES{
+		Length:     uint32(unsafe.Sizeof(windows.OBJECT_ATTRIBUTES{})),
+		ObjectName: &ntName,
+		Attributes: windows.OBJ_CASE_INSENSITIVE,
+	}
+
+	var iosb windows.IO_STATUS_BLOCK
+	status, _, _ := queryInformationByName.Call(
+		uintptr(unsafe.Pointer(&attrs)),
+		uintptr(unsafe.Pointer(&iosb)),
+		uintptr(unsafe.Pointer(&stat)),
+		unsafe.Sizeof(stat),
+		fileStatInformationClass,
+	)
+	if status != 0 {
+		return stat, windows.NTStatus(status)
+	}
+
+	return stat, nil
+}
+
+// filetimeNs converts 100-nanosecond intervals since 1601 to Unix
+// nanoseconds, as os.FileInfo.ModTime does.
+func filetimeNs(t int64) int64 {
+	ft := windows.Filetime{LowDateTime: uint32(t), HighDateTime: uint32(t >> 32)}
+	return ft.Nanoseconds()
+}
+
+// identified is what os.Lstat returns for a file or directory that is not
+// a reparse point, with fileStatInformation as its Sys.
+type identified struct {
+	name string
+	stat fileStatInformation
+}
+
+func (i *identified) Name() string { return i.name }
+
+func (i *identified) Size() int64 { return i.stat.EndOfFile }
+
+func (i *identified) Mode() os.FileMode {
+	mode := os.FileMode(0o666)
+	if i.stat.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
+		mode = 0o444
+	}
+
+	if i.stat.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		mode |= os.ModeDir | 0o111
+	}
+
+	return mode
+}
+
+func (i *identified) ModTime() time.Time { return time.Unix(0, filetimeNs(i.stat.LastWriteTime)) }
+
+func (i *identified) IsDir() bool { return i.Mode().IsDir() }
+
+func (i *identified) Sys() any { return &i.stat }
