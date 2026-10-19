@@ -7,8 +7,8 @@ option go_package = "github.com/gobackio/goback/proto/admin";
 import "google/protobuf/timestamp.proto";
 
 // Admin is the operator surface of a store server: sets, the store policy
-// and job triggers. It is served on its own listener behind the admin
-// token, over gRPC.
+// and job triggers. It is served over gRPC next to the Store service,
+// behind the same secret.
 service Admin {
     rpc ListSets(ListSetsRequest) returns (ListSetsResponse) {}
     rpc DeleteSet(DeleteSetRequest) returns (DeleteSetResponse) {}
