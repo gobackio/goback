@@ -173,6 +173,49 @@ func TestRemoteSessionsScopeVisibility(t *testing.T) {
 	require.Equal(t, codes.Unauthenticated, status.Code(err))
 }
 
+func TestATouchedSessionOutlivesItsLeaseAndAnEndedOneCantBeTouched(t *testing.T) {
+	bucket, err := fileblob.OpenBucket(t.TempDir(), nil)
+	require.NoError(t, err)
+
+	sessions := pack.NewInMemoryIndex()
+	store, err := pack.NewPackStorage(
+		pack.WithArchiveStorage(NewBucketStore(bucket)),
+		pack.WithArchiveIndex(sessions),
+		pack.WithSessionLease(time.Minute),
+		pack.WithCloseBeforeRead(true),
+	)
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	t.Cleanup(func() { _ = store.Close() })
+
+	dial := startServerWith(t, &packIndex{PackStorage: store, latest: map[string]*proto.Ref{}}, store)
+	ctx := context.Background()
+	client := dial("node-1")
+
+	sctx, err := client.BeginSession(ctx, &backup.Session{Set: "world"})
+	require.NoError(t, err)
+	session, _ := backup.SessionFromContext(sctx)
+
+	tree := proto.NewObject(&proto.Tree{})
+	require.NoError(t, client.Put(sctx, tree))
+
+	idle := func() { require.NoError(t, sessions.TouchSession(session.ID, time.Now().Add(-2*time.Minute))) }
+
+	idle()
+	require.NoError(t, client.TouchSession(sctx))
+	store.Sweep(time.Now())
+
+	_, err = client.Get(sctx, tree.Ref())
+	require.NoError(t, err, "the touch renewed the lease")
+
+	other := dial("node-2").TouchSession(backup.WithSession(ctx, &backup.Session{ID: session.ID}))
+	require.Equal(t, codes.PermissionDenied, status.Code(other), "only its own agent touches a session")
+
+	idle()
+	store.Sweep(time.Now())
+	require.ErrorIs(t, client.TouchSession(sctx), backup.ErrNoSession, "a session past its lease ended")
+}
+
 func TestRemoteSessionsUnsupported(t *testing.T) {
 	_, dial := startServer(t)
 

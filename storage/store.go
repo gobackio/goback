@@ -771,6 +771,21 @@ func (s *Store) EndSession(ctx context.Context, id string) error {
 	return s.Sessions.EndSession(backup.WithSession(ctx, session))
 }
 
+// TouchSession renews the lease of the caller's session id.
+func (s *Store) TouchSession(ctx context.Context, id string) error {
+	session, err := s.Session(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	toucher, ok := s.Sessions.(backup.SessionToucher)
+	if !ok {
+		return fmt.Errorf("%w: this store's sessions have no lease", backup.ErrNotImplemented)
+	}
+
+	return toucher.TouchSession(backup.WithSession(ctx, session))
+}
+
 // Session returns the live session behind id if it belongs to the caller;
 // an unknown id is backup.ErrNotFound, another caller's auth.ErrForbidden.
 func (s *Store) Session(ctx context.Context, id string) (*backup.Session, error) {

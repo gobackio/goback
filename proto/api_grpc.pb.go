@@ -31,6 +31,7 @@ const (
 	Store_BeginCommit_FullMethodName    = "/proto.Store/BeginCommit"
 	Store_BeginSession_FullMethodName   = "/proto.Store/BeginSession"
 	Store_EndSession_FullMethodName     = "/proto.Store/EndSession"
+	Store_TouchSession_FullMethodName   = "/proto.Store/TouchSession"
 	Store_GetPresence_FullMethodName    = "/proto.Store/GetPresence"
 	Store_DeleteCommit_FullMethodName   = "/proto.Store/DeleteCommit"
 	Store_UndeleteCommit_FullMethodName = "/proto.Store/UndeleteCommit"
@@ -67,6 +68,9 @@ type StoreClient interface {
 	BeginCommit(ctx context.Context, in *BeginCommitRequest, opts ...grpc.CallOption) (*BeginCommitResponse, error)
 	BeginSession(ctx context.Context, in *BeginSessionRequest, opts ...grpc.CallOption) (*BeginSessionResponse, error)
 	EndSession(ctx context.Context, in *EndSessionRequest, opts ...grpc.CallOption) (*EndSessionResponse, error)
+	// TouchSession keeps a session alive between writes, such as while its
+	// commit waits for an upload; a session that ended is NotFound
+	TouchSession(ctx context.Context, in *TouchSessionRequest, opts ...grpc.CallOption) (*TouchSessionResponse, error)
 	// GetPresence streams the presence filters of the caller's scope
 	GetPresence(ctx context.Context, in *GetPresenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetPresenceResponse], error)
 	DeleteCommit(ctx context.Context, in *DeleteCommitRequest, opts ...grpc.CallOption) (*DeleteCommitResponse, error)
@@ -239,6 +243,16 @@ func (c *storeClient) EndSession(ctx context.Context, in *EndSessionRequest, opt
 	return out, nil
 }
 
+func (c *storeClient) TouchSession(ctx context.Context, in *TouchSessionRequest, opts ...grpc.CallOption) (*TouchSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TouchSessionResponse)
+	err := c.cc.Invoke(ctx, Store_TouchSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *storeClient) GetPresence(ctx context.Context, in *GetPresenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetPresenceResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[3], Store_GetPresence_FullMethodName, cOpts...)
@@ -372,6 +386,9 @@ type StoreServer interface {
 	BeginCommit(context.Context, *BeginCommitRequest) (*BeginCommitResponse, error)
 	BeginSession(context.Context, *BeginSessionRequest) (*BeginSessionResponse, error)
 	EndSession(context.Context, *EndSessionRequest) (*EndSessionResponse, error)
+	// TouchSession keeps a session alive between writes, such as while its
+	// commit waits for an upload; a session that ended is NotFound
+	TouchSession(context.Context, *TouchSessionRequest) (*TouchSessionResponse, error)
 	// GetPresence streams the presence filters of the caller's scope
 	GetPresence(*GetPresenceRequest, grpc.ServerStreamingServer[GetPresenceResponse]) error
 	DeleteCommit(context.Context, *DeleteCommitRequest) (*DeleteCommitResponse, error)
@@ -432,6 +449,9 @@ func (UnimplementedStoreServer) BeginSession(context.Context, *BeginSessionReque
 }
 func (UnimplementedStoreServer) EndSession(context.Context, *EndSessionRequest) (*EndSessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method EndSession not implemented")
+}
+func (UnimplementedStoreServer) TouchSession(context.Context, *TouchSessionRequest) (*TouchSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TouchSession not implemented")
 }
 func (UnimplementedStoreServer) GetPresence(*GetPresenceRequest, grpc.ServerStreamingServer[GetPresenceResponse]) error {
 	return status.Error(codes.Unimplemented, "method GetPresence not implemented")
@@ -679,6 +699,24 @@ func _Store_EndSession_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Store_TouchSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TouchSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServer).TouchSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Store_TouchSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServer).TouchSession(ctx, req.(*TouchSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Store_GetPresence_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(GetPresenceRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -894,6 +932,10 @@ var Store_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EndSession",
 			Handler:    _Store_EndSession_Handler,
+		},
+		{
+			MethodName: "TouchSession",
+			Handler:    _Store_TouchSession_Handler,
 		},
 		{
 			MethodName: "DeleteCommit",

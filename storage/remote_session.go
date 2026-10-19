@@ -65,6 +65,31 @@ func (r *Client) EndSession(ctx context.Context) error {
 	return err
 }
 
+// TouchSession renews the lease of the context's session; one the store
+// no longer has is backup.ErrNoSession.
+func (r *Client) TouchSession(ctx context.Context) error {
+	s, ok := backup.SessionFromContext(ctx)
+	if !ok {
+		return nil
+	}
+
+	_, err := r.store.TouchSession(ctx, &proto.TouchSessionRequest{SessionId: s.ID})
+	if status.Code(err) == codes.NotFound {
+		return fmt.Errorf("session %s: %w", s.ID, backup.ErrNoSession)
+	}
+
+	return err
+}
+
+// TouchSession implements proto.StoreServer.
+func (r *Server) TouchSession(ctx context.Context, request *proto.TouchSessionRequest) (*proto.TouchSessionResponse, error) {
+	if err := r.store.TouchSession(ctx, request.SessionId); err != nil {
+		return nil, ToStatus(err)
+	}
+
+	return &proto.TouchSessionResponse{}, nil
+}
+
 // BeginSession implements proto.StoreServer.
 func (r *Server) BeginSession(ctx context.Context, request *proto.BeginSessionRequest) (*proto.BeginSessionResponse, error) {
 	session, err := r.store.BeginSession(ctx, request.BackupSet, request.Restore, m.FromRetentionPolicy(request.InitialRetention))

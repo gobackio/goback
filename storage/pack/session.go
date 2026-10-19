@@ -148,6 +148,31 @@ func (ps *PackStorage) EndSession(ctx context.Context) error {
 	return ps.endSession(s.ID)
 }
 
+// TouchSession implements backup.SessionToucher.
+func (ps *PackStorage) TouchSession(ctx context.Context) error {
+	s, ok := backup.SessionFromContext(ctx)
+	if !ok {
+		return nil
+	}
+
+	now := time.Now()
+	if err := ps.index.TouchSession(s.ID, now); err != nil {
+		return err
+	}
+
+	ps.sessionsMtx.Lock()
+	ws := ps.sessions[s.ID]
+	ps.sessionsMtx.Unlock()
+
+	if ws != nil {
+		ws.mtx.Lock()
+		ws.lastTouch = now
+		ws.mtx.Unlock()
+	}
+
+	return nil
+}
+
 // LookupSession returns a live session by id.
 func (ps *PackStorage) LookupSession(_ context.Context, id string) (*backup.Session, error) {
 	return ps.index.GetSession(id)

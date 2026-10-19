@@ -65,6 +65,13 @@ type SessionStore interface {
 	EndSession(ctx context.Context) error
 }
 
+// SessionToucher is a SessionStore whose sessions end some time after
+// their last write. TouchSession renews the context's session as a write
+// would; a session the store no longer has is ErrNoSession.
+type SessionToucher interface {
+	TouchSession(ctx context.Context) error
+}
+
 // HoldRestore opens a restore session naming ref when store keeps
 // sessions, so retirement and garbage collection keep it until end is
 // called; read through held meanwhile. Without sessions it holds nothing.

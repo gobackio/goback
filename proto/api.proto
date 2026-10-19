@@ -228,6 +228,13 @@ message EndSessionRequest {
 
 message EndSessionResponse {}
 
+// TouchSessionRequest renews a live session's lease without writing
+message TouchSessionRequest {
+    string session_id = 1;
+}
+
+message TouchSessionResponse {}
+
 message GetPresenceRequest {
     // the set whose filter is wanted when the scope is the set
     string backup_set = 1;
@@ -395,6 +402,9 @@ service Store {
     rpc BeginCommit(BeginCommitRequest) returns (BeginCommitResponse) {}
     rpc BeginSession(BeginSessionRequest) returns (BeginSessionResponse) {}
     rpc EndSession(EndSessionRequest) returns (EndSessionResponse) {}
+    // TouchSession keeps a session alive between writes, such as while its
+    // commit waits for an upload; a session that ended is NotFound
+    rpc TouchSession(TouchSessionRequest) returns (TouchSessionResponse) {}
     // GetPresence streams the presence filters of the caller's scope
     rpc GetPresence(GetPresenceRequest) returns (stream GetPresenceResponse) {}
 
