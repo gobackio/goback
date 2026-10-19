@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// Period is how finely a bracket keeps: one commit per hour, day, week
-// or month of the stretch it covers.
+// Period is how finely a bracket keeps: one commit per hour, day, week,
+// month or year of the stretch it covers.
 type Period string
 
 // The periods a bracket may keep by.
@@ -21,6 +21,7 @@ const (
 	Daily   Period = "daily"
 	Weekly  Period = "weekly"
 	Monthly Period = "monthly"
+	Yearly  Period = "yearly"
 )
 
 // A Bracket keeps the last commit of each of Count UTC calendar periods.
@@ -81,7 +82,7 @@ func (p Policy) Validate() error {
 
 	for i, b := range p.Brackets {
 		if _, ok := periods[b.Period]; !ok {
-			return fmt.Errorf("%w: bracket %d keeps by %q, not one of hourly, daily, weekly or monthly",
+			return fmt.Errorf("%w: bracket %d keeps by %q, not one of hourly, daily, weekly, monthly or yearly",
 				ErrInvalidPolicy, i, b.Period)
 		}
 
@@ -109,6 +110,7 @@ var periods = map[Period]func(time.Time) string{
 		return fmt.Sprintf("%04d-W%02d", y, w)
 	},
 	Monthly: func(t time.Time) string { return t.UTC().Format("2006-01") },
+	Yearly:  func(t time.Time) string { return t.UTC().Format("2006") },
 }
 
 // startOf is when the period holding t began.
@@ -124,8 +126,10 @@ func startOf(period Period, t time.Time) time.Time {
 		day := startOf(Daily, t)
 
 		return day.AddDate(0, 0, -(int(day.Weekday())+6)%7)
-	default:
+	case Monthly:
 		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+	default:
+		return time.Date(t.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 }
 
@@ -138,8 +142,10 @@ func back(period Period, start time.Time, n int) time.Time {
 		return start.AddDate(0, 0, -n)
 	case Weekly:
 		return start.AddDate(0, 0, -7*n)
-	default:
+	case Monthly:
 		return start.AddDate(0, -n, 0)
+	default:
+		return start.AddDate(-n, 0, 0)
 	}
 }
 

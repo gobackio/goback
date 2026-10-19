@@ -2,6 +2,7 @@ package retention
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -62,6 +63,48 @@ func TestEvaluateThinsDailiesToWeekliesToMonthlies(t *testing.T) {
 	require.InDelta(t, 4, weeklies, 1)
 	require.InDelta(t, 3, monthlies, 1)
 	require.Less(t, kept(got), 20, "120 daily commits thinned to a fortnight of detail and a tail")
+}
+
+func TestAYearlyTailKeepsEachCalendarYearsLastCommitPastTheMonthlies(t *testing.T) {
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+
+	var commits []Commit
+	for i := range 50 {
+		commits = append(commits, Commit{ReceivedAt: now.AddDate(0, -i, 0)})
+	}
+
+	got := Evaluate(commits, Policy{KeepLast: 1, Brackets: []Bracket{
+		{Period: Monthly, Count: 12},
+		{Period: Yearly},
+	}}, now)
+
+	var yearly []time.Time
+	for i, d := range got {
+		if i < 12 {
+			require.True(t, d.Keep, "month %d", i)
+		}
+
+		if slices.Contains(d.Reasons, "yearly") {
+			yearly = append(yearly, commits[i].ReceivedAt)
+		}
+	}
+
+	require.Equal(t, []time.Time{
+		time.Date(2024, 12, 16, 12, 0, 0, 0, time.UTC),
+		time.Date(2023, 12, 16, 12, 0, 0, 0, time.UTC),
+		time.Date(2022, 12, 16, 12, 0, 0, 0, time.UTC),
+	}, yearly, "past the twelve months, the last commit of each year; 2025's is a monthly already")
+	require.Equal(t, 15, kept(got))
+
+	got = Evaluate(commits, Policy{KeepLast: 1, Brackets: []Bracket{
+		{Period: Monthly, Count: 12},
+		{Period: Yearly, Count: 3},
+	}}, now)
+	require.Equal(t, 14, kept(got), "three years counting the one the monthlies ended in: 2025, 2024 and 2023")
+
+	p, err := Parse([]byte(`{"keep_last":1,"brackets":[{"period":"monthly","count":12},{"period":"yearly"}]}`))
+	require.NoError(t, err)
+	require.Equal(t, Yearly, p.Brackets[1].Period)
 }
 
 // Brackets go by a commit's age, not by how many periods happen to hold

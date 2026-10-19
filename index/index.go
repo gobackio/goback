@@ -170,7 +170,7 @@ type CommitDetail struct {
 	LogicalSize, Files *int64
 	// RetainedBy names the retention rules keeping this commit, comma
 	// separated: "last", "within", "pinned", "hourly", "daily", "weekly",
-	// "monthly". It is empty for a commit retention has not evaluated yet
+	// "monthly", "yearly". It is empty for a commit retention has not evaluated yet
 	// or has retired.
 	RetainedBy string
 	// Incomplete reports a commit indexed around objects the store no
