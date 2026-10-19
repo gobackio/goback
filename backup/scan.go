@@ -5,6 +5,9 @@ import (
 	"os"
 	"path"
 	"sync"
+	"sync/atomic"
+
+	"github.com/gobackio/goback/proto"
 )
 
 // DefaultScanWorkers is how many directories a walk lists ahead of itself
@@ -14,9 +17,9 @@ import (
 const DefaultScanWorkers = 4
 
 // DefaultScanWindow is how many entries a walk holds for directories it has
-// not reached yet when the caller names no window. An entry costs a couple
-// of hundred bytes, so this is tens of megabytes whatever the root holds.
-const DefaultScanWindow = 50_000
+// not reached yet when the caller names no window. An entry costs about 230
+// bytes, so this is at most a quarter of a gigabyte whatever the root holds.
+const DefaultScanWindow = 1_000_000
 
 // scanEntry is one directory entry with the stat data taken for it. An
 // entry the walk excludes carries neither, because nothing stats it.
@@ -45,7 +48,9 @@ type scanJob struct {
 // scanner lists directories ahead of the walk, so discovery is not a queue
 // of one, and holds what it found until the walk takes it. It reads no
 // further ahead than window entries, and the walk lists a directory itself
-// whenever the read-ahead has not got to it.
+// whenever the read-ahead has not got to it. Counting, it lists the whole
+// tree however far ahead, holding what fits in the window and counting all
+// of it.
 type scanner struct {
 	ctx    context.Context
 	walker *Walker
@@ -62,6 +67,9 @@ type scanner struct {
 	// publishes even when the window is full
 	wanted map[string]int
 	closed bool
+	// counted holds the directories counted so far, while counting
+	counting bool
+	counted  map[string]bool
 }
 
 func newScanner(ctx context.Context, w *Walker, workers, window int) *scanner {
@@ -70,13 +78,14 @@ func newScanner(ctx context.Context, w *Walker, workers, window int) *scanner {
 	}
 
 	s := &scanner{
-		ctx:    ctx,
-		walker: w,
-		fs:     w.fs(),
-		window: window,
-		ready:  map[string]*scanned{},
-		flight: map[string]bool{},
-		wanted: map[string]int{},
+		ctx:     ctx,
+		walker:  w,
+		fs:      w.fs(),
+		window:  window,
+		ready:   map[string]*scanned{},
+		flight:  map[string]bool{},
+		wanted:  map[string]int{},
+		counted: map[string]bool{},
 	}
 	s.cond.L = &s.mtx
 
@@ -130,7 +139,7 @@ func (s *scanner) next(ctx context.Context) (scanJob, bool) {
 			job := s.pending[len(s.pending)-1]
 			s.pending = s.pending[:len(s.pending)-1]
 
-			if s.ready[job.dir] != nil || s.flight[job.dir] {
+			if s.ready[job.dir] != nil || s.flight[job.dir] || s.counted[job.dir] {
 				continue
 			}
 
@@ -143,22 +152,83 @@ func (s *scanner) next(ctx context.Context) (scanJob, bool) {
 	}
 }
 
-// publish hands a worker's listing to the walk once there is room for it.
-// The caller holds the lock.
+// publish hands a worker's listing to the walk once there is room for it;
+// counting, it counts the listing and drops it when there is none. The
+// caller holds the lock.
 func (s *scanner) publish(job scanJob, found *scanned) {
-	for !s.closed && s.held > 0 && s.held+len(found.entries) > s.window && s.wanted[job.dir] == 0 {
+	for !s.closed && !s.counting && !s.fits(job, found) {
 		s.cond.Wait()
 	}
 
 	delete(s.flight, job.dir)
 
 	if !s.closed {
-		s.ready[job.dir] = found
-		s.held += len(found.entries)
+		s.count(job, found)
+
+		if s.fits(job, found) {
+			s.ready[job.dir] = found
+			s.held += len(found.entries)
+		}
+
 		s.offer(job, found)
+		s.settle()
 	}
 
 	s.cond.Broadcast()
+}
+
+// fits reports whether the window has room for a listing, or the walk is
+// waiting for it. The caller holds the lock.
+func (s *scanner) fits(job scanJob, found *scanned) bool {
+	return s.held == 0 || s.held+len(found.entries) <= s.window || s.wanted[job.dir] > 0
+}
+
+// countAll has the scanner list the whole tree and count it.
+func (s *scanner) countAll() {
+	s.mtx.Lock()
+	s.counting = true
+	s.mtx.Unlock()
+}
+
+// count adds a listing's files to the walk's Found once, while counting,
+// and reports whether it did. The caller holds the lock.
+func (s *scanner) count(job scanJob, found *scanned) bool {
+	if !s.counting || s.counted[job.dir] {
+		return false
+	}
+
+	s.counted[job.dir] = true
+
+	var files, bytes int64
+
+	for _, entry := range found.entries {
+		if entry.excluded || entry.info == nil || !entry.info.Mode().IsRegular() {
+			continue
+		}
+
+		stat := &proto.FileInfo{Type: proto.NodeType_NODE_FILE}
+		recordPlatform(stat, entry.info)
+
+		if cloudOnly(stat) && !s.walker.DownloadPlaceholders {
+			continue
+		}
+
+		files++
+		bytes += entry.info.Size()
+	}
+
+	atomic.AddInt64(&s.walker.result.Found, files)
+	atomic.AddInt64(&s.walker.result.FoundBytes, bytes)
+
+	return true
+}
+
+// settle marks the count whole once nothing is left to list. The caller
+// holds the lock.
+func (s *scanner) settle() {
+	if s.counting && len(s.pending) == 0 && len(s.flight) == 0 {
+		s.walker.foundAll.Store(true)
+	}
 }
 
 // offer queues the directories a listing found, nearest first so a worker
@@ -183,7 +253,7 @@ func (s *scanner) offer(job scanJob, found *scanned) {
 		})
 	}
 
-	if over := len(s.pending) - s.window; over > 0 {
+	if over := len(s.pending) - s.window; over > 0 && !s.counting {
 		s.pending = append(s.pending[:0], s.pending[over:]...)
 	}
 }
@@ -235,8 +305,10 @@ func (s *scanner) take(job scanJob) *scanned {
 
 	s.mtx.Lock()
 	delete(s.flight, job.dir)
-	if !s.closed {
+	// a directory counted already offered what it holds
+	if !s.closed && (s.count(job, found) || !s.counting) {
 		s.offer(job, found)
+		s.settle()
 	}
 	s.cond.Broadcast()
 	s.mtx.Unlock()

@@ -174,3 +174,43 @@ func TestWalkingDirectoriesAtOnceCommitsTheTreeOfASerialWalk(t *testing.T) {
 
 	require.True(t, parallel.run().Commit.Tree.Equal(serial.run().Commit.Tree))
 }
+
+func TestAFirstWalkCountsTheWholeTreeBeforeItHasReadIt(t *testing.T) {
+	f := newWalkerFixture(t)
+	for dir := range 12 {
+		for file := range 4 {
+			f.write(fmt.Sprintf("d%02d/sub/f%d.bin", dir, file), f.random(1+dir*100+file))
+		}
+	}
+	f.write("skip/big.bin", f.random(4096))
+
+	f.walker.Include = func(rel string) bool { return rel != "skip" }
+	// a window of three entries leaves most of the tree to be counted
+	// without being held
+	f.walker.ScanWindow = 3
+	f.walker.dirSlots = make(chan struct{})
+	f.walker.ProgressInterval = time.Millisecond
+
+	var whole atomic.Pointer[WalkResult]
+	f.walker.Progress = func(r WalkResult) {
+		if r.FoundAll && whole.Load() == nil {
+			whole.Store(&r)
+		}
+	}
+
+	first := f.run()
+	require.True(t, first.FoundAll)
+	require.Equal(t, first.Files, first.Found, "it counted what it covered")
+	require.Equal(t, first.Bytes, first.FoundBytes)
+
+	require.NotNil(t, whole.Load())
+	require.Less(t, whole.Load().Files, first.Files, "the count was whole before the walk had read everything")
+	require.Equal(t, first.Found, whole.Load().Found, "and it was whole when it said so")
+
+	f.write("d00/sub/new.bin", f.random(10))
+
+	f.walker.Progress = nil
+	later := f.run()
+	require.False(t, later.FoundAll, "a walk with a base leaves unchanged directories unlisted")
+	require.Zero(t, later.Found)
+}

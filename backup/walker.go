@@ -179,6 +179,7 @@ type Walker struct {
 	window    *chunkWindow
 	gate      *syncutil.Gate
 	scan      *scanner
+	foundAll  atomic.Bool
 	traits    Traits
 	trees     *treeSource
 	scanStart int64
@@ -254,6 +255,12 @@ type WalkResult struct {
 	// held them; Repaired counts those the store then turned out to lack.
 	Assumed  int64
 	Repaired int64
+	// Found and FoundBytes count the files, and their bytes, that a walk
+	// with no base has listed ahead of reading them; FoundAll reports it
+	// has listed the whole tree, so they are what the walk covers.
+	Found      int64
+	FoundBytes int64
+	FoundAll   bool
 }
 
 // Dirty reports whether any file was recorded from an inconsistent or failed
@@ -286,6 +293,9 @@ func (w *Walker) snapshot() WalkResult {
 		Checkpoints:   atomic.LoadInt64(&w.result.Checkpoints),
 		Assumed:       atomic.LoadInt64(&w.result.Assumed),
 		Repaired:      atomic.LoadInt64(&w.result.Repaired),
+		Found:         atomic.LoadInt64(&w.result.Found),
+		FoundBytes:    atomic.LoadInt64(&w.result.FoundBytes),
+		FoundAll:      w.foundAll.Load(),
 	}
 }
 
@@ -444,6 +454,7 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 	w.last = w.started
 	w.scanStart = w.started.UnixNano()
 	w.result = WalkResult{}
+	w.foundAll.Store(false)
 	w.sent = newSentSet()
 	w.descriptors = &descriptors{}
 	w.emptyFile = sync.OnceValues(func() (*proto.Ref, error) {
@@ -470,6 +481,10 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 	baseNodes, err := w.loadBase(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	if baseNodes == nil && w.Stream == nil && w.Subdir == "" {
+		w.scan.countAll()
 	}
 
 	var (
@@ -515,6 +530,7 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 		w.result.SameTree = true
 
 		result := w.result
+		result.FoundAll = w.foundAll.Load()
 
 		return &result, nil
 	}
@@ -543,6 +559,7 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 	w.result.Base = w.base
 
 	result := w.result
+	result.FoundAll = w.foundAll.Load()
 
 	return &result, nil
 }
