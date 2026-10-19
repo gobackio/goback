@@ -47,6 +47,10 @@ type PathSettings struct {
 	LostRetries        int
 	// ProgressInterval is how often the walk reports; negative never.
 	ProgressInterval time.Duration
+	// Progress, when set, hears the walk's counters every ProgressInterval,
+	// the default when it is not positive, and once more when it ends,
+	// in place of the log line.
+	Progress func(backup.WalkResult)
 	Meta             map[string]string
 	PreHook          string
 	PostHook         string
@@ -108,7 +112,10 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 		BlobCache:            env.BlobCache,
 	}
 
-	if walker.ProgressInterval >= 0 {
+	switch {
+	case s.Progress != nil:
+		walker.Progress = s.Progress
+	case walker.ProgressInterval >= 0:
 		walker.Progress = logProgress(logger, time.Now())
 	}
 
