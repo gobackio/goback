@@ -107,6 +107,10 @@ type CommitGrant struct {
 	// reads them again whatever its change detection says, and takes no
 	// chunk of theirs on trust.
 	Damaged []string
+	// Every is how often the store expects a commit of the set; zero
+	// expects nothing. A run that finds the latest commit's tree commits it
+	// again before half of Every has passed.
+	Every time.Duration
 }
 
 // CommitGate is asked before a run whether the caller may commit to a set.

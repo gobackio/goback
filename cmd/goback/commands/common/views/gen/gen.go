@@ -268,6 +268,7 @@ func (m MapperImpl) Walk(in *backup.WalkResult) views.WalkView {
 	return views.WalkView{
 		Commit:        views.Hex(in.Ref),
 		Base:          views.Hex(in.Base),
+		SameTree:      in.SameTree,
 		Files:         in.Files,
 		Bytes:         in.Bytes,
 		Uploaded:      in.Uploaded,

@@ -192,6 +192,8 @@ message BeginCommitResponse {
     // paths whose stored content the store lost: read them again and take
     // no chunk of theirs on trust
     repeated string damaged_paths = 6;
+    // how often the store expects a commit of the set, 0 for nothing
+    int64 every_seconds = 7;
 }
 
 // StorePolicy is a store's write policy: the encryption mode of new

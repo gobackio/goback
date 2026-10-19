@@ -135,6 +135,7 @@ func TestTheAgentPlansFromTheStoreAcrossRestarts(t *testing.T) {
 
 	require.True(t, byHand.Add(time.Hour).Equal(jobNamed(status, "one").NextDue), "%v vs %v", byHand, jobNamed(status, "one").NextDue)
 
+	require.NoError(t, os.WriteFile(filepath.Join(home, "one", "data.txt"), []byte("one, changed"), 0o644))
 	s = agentAt(t, home, backups("1s"))
 
 	status = runUntil(t, s, func(status *agent.Status) bool {

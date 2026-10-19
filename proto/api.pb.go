@@ -1380,7 +1380,9 @@ type BeginCommitResponse struct {
 	Rescan bool `protobuf:"varint,5,opt,name=rescan,proto3" json:"rescan,omitempty"`
 	// paths whose stored content the store lost: read them again and take
 	// no chunk of theirs on trust
-	DamagedPaths  []string `protobuf:"bytes,6,rep,name=damaged_paths,json=damagedPaths,proto3" json:"damaged_paths,omitempty"`
+	DamagedPaths []string `protobuf:"bytes,6,rep,name=damaged_paths,json=damagedPaths,proto3" json:"damaged_paths,omitempty"`
+	// how often the store expects a commit of the set, 0 for nothing
+	EverySeconds  int64 `protobuf:"varint,7,opt,name=every_seconds,json=everySeconds,proto3" json:"every_seconds,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1448,6 +1450,13 @@ func (x *BeginCommitResponse) GetDamagedPaths() []string {
 		return x.DamagedPaths
 	}
 	return nil
+}
+
+func (x *BeginCommitResponse) GetEverySeconds() int64 {
+	if x != nil {
+		return x.EverySeconds
+	}
+	return 0
 }
 
 // StorePolicy is a store's write policy: the encryption mode of new
@@ -3386,13 +3395,14 @@ const file_api_proto_rawDesc = "" +
 	".proto.RefR\x03ref\"9\n" +
 	"\x12BeginCommitRequest\x12\x1d\n" +
 	"\n" +
-	"backup_set\x18\x01 \x01(\tR\tbackupSetJ\x04\b\x02\x10\x03\"\xb6\x01\n" +
+	"backup_set\x18\x01 \x01(\tR\tbackupSetJ\x04\b\x02\x10\x03\"\xdb\x01\n" +
 	"\x13BeginCommitResponse\x12\x18\n" +
 	"\aallowed\x18\x02 \x01(\bR\aallowed\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12*\n" +
 	"\x06policy\x18\x04 \x01(\v2\x12.proto.StorePolicyR\x06policy\x12\x16\n" +
 	"\x06rescan\x18\x05 \x01(\bR\x06rescan\x12#\n" +
-	"\rdamaged_paths\x18\x06 \x03(\tR\fdamagedPathsJ\x04\b\x01\x10\x02\"z\n" +
+	"\rdamaged_paths\x18\x06 \x03(\tR\fdamagedPaths\x12#\n" +
+	"\revery_seconds\x18\a \x01(\x03R\feverySecondsJ\x04\b\x01\x10\x02\"z\n" +
 	"\vStorePolicy\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12%\n" +

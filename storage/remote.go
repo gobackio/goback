@@ -697,6 +697,7 @@ func (r *Client) BeginCommit(ctx context.Context, set string) (*backup.CommitGra
 		Policy:  m.FromStorePolicy(resp.Policy),
 		Rescan:  resp.Rescan,
 		Damaged: resp.DamagedPaths,
+		Every:   time.Duration(resp.EverySeconds) * time.Second,
 	}, nil
 }
 
@@ -948,6 +949,7 @@ func (r *Server) BeginCommit(ctx context.Context, request *proto.BeginCommitRequ
 		Policy:       m.StorePolicy(grant.Policy),
 		Rescan:       grant.Rescan,
 		DamagedPaths: grant.Damaged,
+		EverySeconds: int64(grant.Every / time.Second),
 	}, nil
 }
 

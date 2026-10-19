@@ -88,7 +88,9 @@ func TestAStoreInFrontOfAnotherCommitsWhatOnlyTheOtherHolds(t *testing.T) {
 
 	run := func(front *goback.Repo) (*backup.WalkResult, error) {
 		index := seeing{Index: front.Index, behind: back.Index}
-		return job.Path(ctx, &job.Env{Store: index, Index: index, AgentID: "pc"}, job.PathSettings{Set: "pc/files", Dir: src, ProgressInterval: -1})
+		// other metadata, so the run commits the tree it finds again
+		meta := map[string]string{"through": "front"}
+		return job.Path(ctx, &job.Env{Store: index, Index: index, AgentID: "pc"}, job.PathSettings{Set: "pc/files", Dir: src, ProgressInterval: -1, Meta: meta})
 	}
 
 	alone := open(goback.Settings{Storage: t.TempDir(), Index: t.TempDir(), AgentID: "pc"})

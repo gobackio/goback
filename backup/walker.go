@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math/rand"
 	"os"
 	"path"
@@ -184,12 +185,14 @@ type Walker struct {
 	// policyVersion is what the commit records, kept apart from Key
 	// because a policy without encryption drops the key for the run
 	policyVersion uint32
-	base          *proto.Ref
-	baseScan      int64
-	started       time.Time
-	last          time.Time
-	rand          *rand.Rand
-	randMtx       sync.Mutex
+	// every is the grant's Every
+	every    time.Duration
+	base     *proto.Ref
+	baseScan int64
+	started  time.Time
+	last     time.Time
+	rand     *rand.Rand
+	randMtx  sync.Mutex
 	// dirSlots bounds the directories walked beside the ones the walk
 	// descends into itself
 	dirSlots chan struct{}
@@ -225,7 +228,10 @@ type WalkResult struct {
 	Ref    *proto.Ref
 	Commit *proto.Commit
 	Base   *proto.Ref
-	Files  int64
+	// SameTree reports a run that found the latest commit's tree and wrote
+	// no commit; Ref and Commit are that commit.
+	SameTree bool
+	Files    int64
 	// Bytes is what those files hold on disk, whether or not the walk
 	// had to read them; Uploaded is the chunk bytes actually sent.
 	Bytes      int64
@@ -385,6 +391,7 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 		}
 
 		w.adoptDamage(grant)
+		w.every = grant.Every
 	}
 
 	w.policyVersion = 0
@@ -500,6 +507,18 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 		changed = changed || grown || len(nodes) != len(baseNodes)
 	}
 
+	if !changed && w.recent(w.result.Commit) {
+		stopProgress()
+
+		w.result.Ref = w.base
+		w.result.Base = w.base
+		w.result.SameTree = true
+
+		result := w.result
+
+		return &result, nil
+	}
+
 	var root *proto.Ref
 	if !changed && w.base != nil {
 		root = w.result.Commit.Tree
@@ -526,6 +545,40 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 	result := w.result
 
 	return &result, nil
+}
+
+// SameTreeFor is how long a run that finds the latest commit's tree takes
+// that commit as its own instead of writing another.
+const SameTreeFor = 12 * time.Hour
+
+// recent reports whether base, the latest commit, stands for a run that
+// found its tree: a complete commit made in the same way, younger than
+// SameTreeFor and than half the grant's Every.
+func (w *Walker) recent(base *proto.Commit) bool {
+	if w.base == nil || base == nil || base.Partial || w.Stream != nil || w.Subdir != "" {
+		return false
+	}
+
+	if base.PolicyVersion != w.policyVersion || !maps.Equal(base.Metadata, w.Metadata) {
+		return false
+	}
+
+	consistent := w.Quiesced && atomic.LoadInt64(&w.result.Torn) == 0 && atomic.LoadInt64(&w.result.Unreadable) == 0
+	if consistent && !base.Consistent {
+		return false
+	}
+
+	within := SameTreeFor
+	if w.every > 0 {
+		within = min(within, w.every/2)
+	}
+
+	made := time.Unix(0, base.ReceivedAtNs)
+	if base.ReceivedAtNs == 0 {
+		made = time.Unix(base.Timestamp, 0)
+	}
+
+	return w.now().Sub(made) < within
 }
 
 // adoptPolicy writes this run under the store's policy instead of the key

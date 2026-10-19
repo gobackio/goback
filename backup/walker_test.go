@@ -35,6 +35,8 @@ type memIndex struct {
 	putSetIDs []uint64
 	rescan    bool
 	damaged   []string
+	// every is the Every BeginCommit grants
+	every time.Duration
 
 	// versions are the file nodes FileInfo answers, newest first, by
 	// "<set>/<index path>"
@@ -97,7 +99,7 @@ func (m *memIndex) BeginCommit(_ context.Context, set string) (*CommitGrant, err
 
 	m.gated = append(m.gated, set)
 
-	return &CommitGrant{Policy: m.policy, Rescan: m.rescan, Damaged: m.damaged}, nil
+	return &CommitGrant{Policy: m.policy, Rescan: m.rescan, Damaged: m.damaged, Every: m.every}, nil
 }
 
 func (m *memIndex) Put(ctx context.Context, obj *proto.Object) error {
@@ -464,13 +466,40 @@ func TestWalkerUnchangedRunUploadsOnlyTheCommit(t *testing.T) {
 	require.Equal(t, proto.NodeType_NODE_FILE, root["a.txt"].Stat.Type)
 
 	second := f.run()
+	require.True(t, second.SameTree, "a run that finds the latest tree takes the latest commit")
+	require.True(t, second.Ref.Equal(first.Ref))
 	require.True(t, second.Base.Equal(first.Ref))
-	require.True(t, second.Commit.Parent.Equal(first.Ref))
-	require.True(t, second.Commit.Tree.Equal(first.Commit.Tree))
 	require.EqualValues(t, 4, second.Reused)
 	require.EqualValues(t, 0, second.Read)
 	require.EqualValues(t, 0, atomic.LoadInt64(&f.objects.puts))
 	require.False(t, second.Dirty())
+
+	f.walker.clock = func() time.Time { return time.Now().Add(SameTreeFor) }
+	third := f.run()
+	require.False(t, third.SameTree, "the latest commit is too old to stand for this run")
+	require.True(t, third.Commit.Parent.Equal(first.Ref))
+	require.True(t, third.Commit.Tree.Equal(first.Commit.Tree))
+	require.EqualValues(t, 0, atomic.LoadInt64(&f.objects.puts), "only the commit is new")
+}
+
+func TestARunThatFindsTheLatestTreeCommitsItWithinHalfTheStoresExpectedInterval(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.write("a.txt", []byte("hello"))
+	f.index.every = time.Hour
+
+	first := f.run()
+
+	f.walker.clock = func() time.Time { return time.Now().Add(29 * time.Minute) }
+	require.True(t, f.run().SameTree)
+
+	f.walker.clock = func() time.Time { return time.Now().Add(31 * time.Minute) }
+	second := f.run()
+	require.False(t, second.SameTree)
+	require.True(t, second.Commit.Parent.Equal(first.Ref))
+
+	f.walker.clock = nil
+	f.walker.Metadata = map[string]string{"env": "other"}
+	require.False(t, f.run().SameTree, "a commit made otherwise doesn't stand for this run")
 }
 
 func TestWalkerChangedFileRewritesOnlyItsPath(t *testing.T) {

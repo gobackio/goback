@@ -197,6 +197,7 @@ type NodeView struct {
 type WalkView struct {
 	Commit        string `json:"commit"`
 	Base          string `json:"base,omitempty"`
+	SameTree      bool   `json:"same_tree,omitempty"`
 	Files         int64  `json:"files"`
 	Bytes         int64  `json:"bytes"`
 	Uploaded      int64  `json:"uploaded"`
