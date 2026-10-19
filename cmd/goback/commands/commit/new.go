@@ -56,8 +56,7 @@ func runNew(c *cli.Context) error {
 	result, err := job.Path(ctx, env, job.PathSettings{
 		Set:                  c.GlobalString("set"),
 		Dir:                  dir,
-		Include:              c.StringSlice("include"),
-		Exclude:              c.StringSlice("exclude"),
+		Filters:              []job.Filter{job.Globs(env.Logger, c.StringSlice("include"), c.StringSlice("exclude"))},
 		Workers:              c.Int("workers"),
 		ForceHash:            c.Int("force-hash"),
 		CheckpointInterval:   c.Duration("checkpoint-interval"),

@@ -169,8 +169,7 @@ func (p *PathBackup) tasks(b *Backup) []*Task {
 	settings := job.PathSettings{
 		Set:                  b.Name,
 		Dir:                  p.Dir,
-		Include:              p.Include,
-		Exclude:              p.Exclude,
+		Filters:              []job.Filter{job.Globs(nil, p.Include, p.Exclude)},
 		Workers:              p.Workers,
 		ForceHash:            p.ForceHash,
 		CheckpointInterval:   p.CheckpointInterval,

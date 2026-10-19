@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -27,11 +28,15 @@ type PathSettings struct {
 	// FS is the tree Dir is read from; nil means the local disk, and on
 	// any other FS Dir is taken as that FS's path.
 	FS backup.FS
-	// Include and Exclude are globs over paths that start with / at Dir;
-	// an included path is backed up even when an exclude matches it.
-	Include []string
-	Exclude []string
-	Workers int
+	// Filters decide what is backed up: a path is when every filter keeps
+	// it. Globs makes one from patterns.
+	Filters []Filter
+	// Unchanged, when set, reports directories known to be as in the set's
+	// latest commit, everything under them included, such as from a change
+	// journal; the walk takes them from that commit without reading them.
+	// Filters must be the ones that commit was made with.
+	Unchanged func(rel string) bool
+	Workers   int
 	// ForceHash is the percent of unchanged files re-hashed as a check.
 	ForceHash int
 	// Verify reads every file, changed or not.
@@ -88,7 +93,8 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 		Logger:               logger,
 		Root:                 root,
 		FS:                   s.FS,
-		Include:              includeFilter(logger, s.Include, s.Exclude),
+		Include:              all(s.Filters),
+		Unchanged:            s.Unchanged,
 		Workers:              s.Workers,
 		ForceHashPercent:     s.ForceHash,
 		Verify:               s.Verify,
@@ -202,32 +208,52 @@ func rootOf(fsys backup.FS, dir string) (string, error) {
 	return dir, nil
 }
 
-// includeFilter applies the include and exclude patterns to a path relative
-// to the backup root, written with a leading slash.
-func includeFilter(logger *slog.Logger, includes, excludes []string) func(string) bool {
-	match := func(patterns []string, name string) bool {
-		for _, pat := range patterns {
-			ok, err := doublestar.Match(pat, name)
-			if err != nil {
-				logger.Info(fmt.Sprintf("Malformed pattern: \"%s\" %v", pat, err))
-			}
+// Filter reports whether the slash-separated path rel, relative to the
+// backed-up directory, is backed up. A directory it keeps out is skipped
+// whole.
+type Filter func(rel string) bool
 
-			if ok {
-				return true
+// all keeps what every filter keeps; nil keeps everything.
+func all(filters []Filter) func(string) bool {
+	if len(filters) == 0 {
+		return nil
+	}
+
+	return func(rel string) bool {
+		for _, keep := range filters {
+			if !keep(rel) {
+				return false
 			}
 		}
 
-		return false
+		return true
+	}
+}
+
+// Globs is a Filter of doublestar patterns over the path with a leading
+// slash: a path an include matches is kept even when an exclude matches
+// it too, and one no exclude matches is kept. A malformed pattern matches
+// nothing and is reported to logger, nil meaning slog.Default.
+func Globs(logger *slog.Logger, include, exclude []string) Filter {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	match := func(patterns []string, name string) bool {
+		return slices.ContainsFunc(patterns, func(pat string) bool {
+			ok, err := doublestar.Match(pat, name)
+			if err != nil {
+				logger.Warn("malformed pattern", "pattern", pat, "err", err)
+			}
+
+			return ok
+		})
 	}
 
 	return func(rel string) bool {
 		name := "/" + rel
 
-		if match(includes, name) {
-			return true
-		}
-
-		return !match(excludes, name)
+		return match(include, name) || !match(exclude, name)
 	}
 }
 
