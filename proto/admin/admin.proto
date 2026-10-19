@@ -104,7 +104,7 @@ message SetStorePolicyRequest {
 // periods. Brackets run consecutively back from now, each starting with
 // the period the one before it ended in.
 message RetentionBracket {
-    // hourly, daily, weekly or monthly
+    // hourly, daily, weekly, monthly or yearly
     string period = 1;
     reserved 2;
     // zero is the tail, which keeps every older period and so must be last

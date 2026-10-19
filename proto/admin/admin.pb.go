@@ -562,7 +562,7 @@ func (x *SetStorePolicyRequest) GetAcknowledgeKey() bool {
 // the period the one before it ended in.
 type RetentionBracket struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// hourly, daily, weekly or monthly
+	// hourly, daily, weekly, monthly or yearly
 	Period string `protobuf:"bytes,1,opt,name=period,proto3" json:"period,omitempty"`
 	// zero is the tail, which keeps every older period and so must be last
 	Count         int32 `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
