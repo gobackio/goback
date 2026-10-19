@@ -87,7 +87,8 @@ type Walker struct {
 	// Subdir writes no checkpoints.
 	Subdir string
 
-	// Include decides per slash-separated relative path; nil includes all.
+	// Include decides per slash-separated relative path, asked once per
+	// entry the walk lists; nil includes all.
 	Include func(rel string) bool
 
 	// Unchanged, when set, reports directories known to be as in the
@@ -737,7 +738,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 		childPath := fsys.Join(dir, name)
 		baseNode := baseByName[name]
 
-		if !w.included(childRel) {
+		if entry.excluded {
 			atomic.AddInt64(&w.result.Excluded, 1)
 			atomic.AddInt64(&w.result.ExcludedBytes, entry.excludedSize)
 			if baseNode != nil {

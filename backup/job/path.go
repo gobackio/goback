@@ -209,8 +209,8 @@ func rootOf(fsys backup.FS, dir string) (string, error) {
 }
 
 // Filter reports whether the slash-separated path rel, relative to the
-// backed-up directory, is backed up. A directory it keeps out is skipped
-// whole.
+// backed-up directory, is backed up. A run asks once per path it lists, and
+// a directory it keeps out is skipped whole.
 type Filter func(rel string) bool
 
 // all keeps what every filter keeps; nil keeps everything.

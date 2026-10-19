@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,7 +32,16 @@ func TestAPathIsBackedUpWhenEveryFilterKeepsItAndUnchangedDirectoriesAreTakenAsT
 		write(name, name)
 	}
 
+	var mtx sync.Mutex
+	asked := map[string]int{}
+
 	filters := []job.Filter{
+		func(rel string) bool {
+			mtx.Lock()
+			asked[rel]++
+			mtx.Unlock()
+			return true
+		},
 		func(rel string) bool { return rel != "cache" },
 		func(rel string) bool { return !strings.HasSuffix(rel, "node_modules") },
 		job.Globs(nil, nil, []string{"/**/*.log"}),
@@ -53,6 +63,11 @@ func TestAPathIsBackedUpWhenEveryFilterKeepsItAndUnchangedDirectoriesAreTakenAsT
 	}
 
 	backup(nil)
+
+	for rel, n := range asked {
+		require.Equal(t, 1, n, "a filter is asked once per path: %s", rel)
+	}
+	require.Contains(t, asked, "cache", "kept-out paths included")
 
 	for name, want := range map[string]bool{"docs/a.txt": true, "e.txt": true, "docs/b.log": false, "cache/c.txt": false, "node_modules/d.js": false} {
 		require.Equal(t, want, held(name), name)
