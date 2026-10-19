@@ -25,6 +25,7 @@ type Status struct {
 const (
 	AgentStarting = "starting"
 	AgentRunning  = "running"
+	AgentPaused   = "paused"
 	AgentStopping = "stopping"
 	AgentStopped  = "stopped"
 )

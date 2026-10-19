@@ -57,12 +57,19 @@ type Agent struct {
 	reloads   chan []*Task
 	abort     chan struct{}
 	abortOnce sync.Once
+
+	controlMu sync.Mutex
+	paused    bool
+	runNow    map[string]bool
+	wake      chan struct{}
 }
 
 func (a *Agent) init() {
 	a.once.Do(func() {
 		a.reloads = make(chan []*Task, 1)
 		a.abort = make(chan struct{})
+		a.runNow = map[string]bool{}
+		a.wake = make(chan struct{}, 1)
 
 		if a.Open == nil {
 			a.Open = a.openSettings
@@ -148,6 +155,58 @@ func (a *Agent) Reload(tasks []*Task) {
 func (a *Agent) Abort() {
 	a.init()
 	a.abortOnce.Do(func() { close(a.abort) })
+}
+
+// Pause keeps Run from starting scheduled runs until Resume. Runs already
+// going finish, tasks that run all the time go on, and RunNow still starts
+// a run.
+func (a *Agent) Pause() {
+	a.control(func() { a.paused = true })
+}
+
+// Resume undoes Pause; a run that fell due meanwhile starts at once.
+func (a *Agent) Resume() {
+	a.control(func() { a.paused = false })
+}
+
+// RunNow starts a run of the named task at once, or as soon as the run
+// already going ends. It does nothing for a task that runs all the time or
+// that Run does not have.
+func (a *Agent) RunNow(name string) {
+	a.control(func() { a.runNow[name] = true })
+}
+
+func (a *Agent) control(change func()) {
+	a.init()
+
+	a.controlMu.Lock()
+	change()
+	a.controlMu.Unlock()
+
+	select {
+	case a.wake <- struct{}{}:
+	default:
+	}
+}
+
+// controls returns whether the agent is paused and the tasks asked to run
+// now.
+func (a *Agent) controls() (bool, map[string]bool) {
+	a.controlMu.Lock()
+	defer a.controlMu.Unlock()
+
+	asked := make(map[string]bool, len(a.runNow))
+	for name := range a.runNow {
+		asked[name] = true
+	}
+
+	return a.paused, asked
+}
+
+func (a *Agent) ranNow(name string) {
+	a.controlMu.Lock()
+	delete(a.runNow, name)
+	a.controlMu.Unlock()
 }
 
 // Run schedules the tasks until ctx ends, then starts nothing new, gives
@@ -327,6 +386,8 @@ func (l *loop) run(ctx context.Context) error {
 			l.finish(f)
 		case c := <-l.events:
 			l.committed(c)
+		case <-l.a.wake:
+			l.dirty = true
 		case tasks := <-l.a.reloads:
 			if !l.stopping {
 				l.reload(tasks)
@@ -476,8 +537,12 @@ func (l *loop) start(now time.Time) {
 
 	var due []*entry
 
+	paused, asked := l.a.controls()
+
 	for _, e := range l.entries {
 		e.waiting, e.blocked = false, false
+		wanted := asked[e.task.Name] && e.task.Serve == nil
+		delete(asked, e.task.Name)
 
 		if !e.known || e.running || l.overlaps(e) {
 			continue
@@ -488,7 +553,7 @@ func (l *loop) start(now time.Time) {
 			continue
 		}
 
-		if e.due.After(now) {
+		if !wanted && (e.due.After(now) || paused && e.task.Serve == nil) {
 			continue
 		}
 
@@ -500,6 +565,10 @@ func (l *loop) start(now time.Time) {
 		due = append(due, e)
 	}
 
+	for name := range asked {
+		l.a.ranNow(name)
+	}
+
 	sort.SliceStable(due, func(i, j int) bool { return due[i].due.Before(due[j].due) })
 
 	for _, e := range due {
@@ -509,6 +578,7 @@ func (l *loop) start(now time.Time) {
 		}
 
 		l.launch(e, now)
+		l.a.ranNow(e.task.Name)
 	}
 }
 
@@ -916,6 +986,10 @@ func (l *loop) state() string {
 		return AgentStopping
 	case l.env == nil:
 		return AgentStarting
+	}
+
+	if paused, _ := l.a.controls(); paused {
+		return AgentPaused
 	}
 
 	for _, e := range l.entries {

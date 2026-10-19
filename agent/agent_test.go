@@ -611,3 +611,40 @@ func TestProblems(t *testing.T) {
 	never.StartedAt = now.Add(-time.Minute)
 	require.Empty(t, never.Problems(now))
 }
+
+func TestAPausedAgentStartsNothingScheduledAndCatchesUpOnResume(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.run(h.fake("files", Every(10*time.Minute), time.Minute, nil))
+
+		time.Sleep(2 * time.Minute)
+		h.a.Pause()
+		time.Sleep(13 * time.Minute)
+		h.a.Resume()
+		time.Sleep(time.Second)
+		h.stop()
+
+		require.Equal(t, minutes(0, 15), h.startsOf("files"))
+	})
+}
+
+func TestRunNowStartsARunAtOnceOrRightAfterTheOneGoing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.run(h.fake("files", Every(time.Hour), 2*time.Minute, nil))
+
+		time.Sleep(5 * time.Minute)
+		h.a.RunNow("files")
+		time.Sleep(30 * time.Second)
+		h.a.RunNow("files")
+		h.a.RunNow("unknown")
+
+		time.Sleep(5 * time.Minute)
+		h.a.Pause()
+		h.a.RunNow("files")
+		time.Sleep(time.Second)
+		h.stop()
+
+		require.Equal(t, minutes(0, 5, 7, 10.5), h.startsOf("files"))
+	})
+}
