@@ -195,20 +195,22 @@ type NodeView struct {
 
 // WalkView is what a backup run did, as JSON output shows it.
 type WalkView struct {
-	Commit       string `json:"commit"`
-	Base         string `json:"base,omitempty"`
-	Files        int64  `json:"files"`
-	Bytes        int64  `json:"bytes"`
-	Uploaded     int64  `json:"uploaded"`
-	Reused       int64  `json:"reused"`
-	Read         int64  `json:"read"`
-	Torn         int64  `json:"torn"`
-	Unreadable   int64  `json:"unreadable"`
-	Skipped      int64  `json:"skipped"`
-	Placeholders int64  `json:"placeholders"`
-	Checkpoints  int64  `json:"checkpoints"`
-	Assumed      int64  `json:"assumed"`
-	Repaired     int64  `json:"repaired"`
+	Commit        string `json:"commit"`
+	Base          string `json:"base,omitempty"`
+	Files         int64  `json:"files"`
+	Bytes         int64  `json:"bytes"`
+	Uploaded      int64  `json:"uploaded"`
+	Reused        int64  `json:"reused"`
+	Read          int64  `json:"read"`
+	Torn          int64  `json:"torn"`
+	Unreadable    int64  `json:"unreadable"`
+	Skipped       int64  `json:"skipped"`
+	Placeholders  int64  `json:"placeholders"`
+	Excluded      int64  `json:"excluded"`
+	ExcludedBytes int64  `json:"excluded_bytes"`
+	Checkpoints   int64  `json:"checkpoints"`
+	Assumed       int64  `json:"assumed"`
+	Repaired      int64  `json:"repaired"`
 }
 
 // ReportView is a collection report as JSON output shows it; the per-set

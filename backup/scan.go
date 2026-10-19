@@ -24,6 +24,8 @@ type scanEntry struct {
 	name string
 	info os.FileInfo
 	err  error
+	// excludedSize is the listed size of a regular file the walk excludes.
+	excludedSize int64
 }
 
 // scanned is one directory's entries, or the error listing it produced.
@@ -256,6 +258,11 @@ func (s *scanner) list(job scanJob) *scanned {
 		found.entries[i].name = name
 
 		if !s.walker.included(path.Join(job.rel, name)) {
+			if !entry.IsDir() {
+				if info, err := entry.Info(); err == nil && info.Mode().IsRegular() {
+					found.entries[i].excludedSize = info.Size()
+				}
+			}
 			continue
 		}
 

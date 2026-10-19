@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
@@ -84,6 +85,10 @@ func runNew(c *cli.Context) error {
 
 		if result.Torn > 0 || result.Unreadable > 0 || result.Skipped > 0 {
 			log.Printf("%d files changed while being read, %d could not be read, %d irregular entries skipped", result.Torn, result.Unreadable, result.Skipped)
+		}
+
+		if result.Excluded > 0 {
+			log.Printf("%d entries excluded (%s in excluded files)", result.Excluded, humanize.Bytes(uint64(result.ExcludedBytes)))
 		}
 
 		if result.Placeholders > 0 {

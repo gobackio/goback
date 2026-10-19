@@ -266,20 +266,22 @@ func (m MapperImpl) Walk(in *backup.WalkResult) views.WalkView {
 	}
 
 	return views.WalkView{
-		Commit:       views.Hex(in.Ref),
-		Base:         views.Hex(in.Base),
-		Files:        in.Files,
-		Bytes:        in.Bytes,
-		Uploaded:     in.Uploaded,
-		Reused:       in.Reused,
-		Read:         in.Read,
-		Torn:         in.Torn,
-		Unreadable:   in.Unreadable,
-		Skipped:      in.Skipped,
-		Placeholders: in.Placeholders,
-		Checkpoints:  in.Checkpoints,
-		Assumed:      in.Assumed,
-		Repaired:     in.Repaired,
+		Commit:        views.Hex(in.Ref),
+		Base:          views.Hex(in.Base),
+		Files:         in.Files,
+		Bytes:         in.Bytes,
+		Uploaded:      in.Uploaded,
+		Reused:        in.Reused,
+		Read:          in.Read,
+		Torn:          in.Torn,
+		Unreadable:    in.Unreadable,
+		Skipped:       in.Skipped,
+		Placeholders:  in.Placeholders,
+		Excluded:      in.Excluded,
+		ExcludedBytes: in.ExcludedBytes,
+		Checkpoints:   in.Checkpoints,
+		Assumed:       in.Assumed,
+		Repaired:      in.Repaired,
 	}
 }
 

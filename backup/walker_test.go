@@ -708,14 +708,18 @@ func TestWalkerRefusesAStreamEntryOutsideItsRoot(t *testing.T) {
 func TestWalkerIncludeFilter(t *testing.T) {
 	f := newWalkerFixture(t)
 	f.write("logs/x.log", []byte("log"))
+	f.write("logs/y.log", []byte("log"))
 	f.write("world/level.dat", []byte("level"))
+	f.write("world/session.lock", []byte("locked"))
 
-	f.walker.Include = func(rel string) bool { return rel != "logs" }
+	f.walker.Include = func(rel string) bool { return rel != "logs" && rel != "world/session.lock" }
 
 	result := f.run()
 	root := f.tree(result.Commit.Tree)
 	require.Len(t, root, 1)
 	require.Contains(t, root, "world")
+	require.EqualValues(t, 2, result.Excluded, "an excluded directory counts once")
+	require.EqualValues(t, len("locked"), result.ExcludedBytes)
 }
 
 func TestWalkerSymlinkIsRecordedNotFollowed(t *testing.T) {

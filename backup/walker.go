@@ -237,7 +237,12 @@ type WalkResult struct {
 	// Placeholders counts the files recorded without content because it
 	// was only in the cloud; Files and Bytes leave them out.
 	Placeholders int64
-	Checkpoints  int64
+	// Excluded counts the entries Include rejected, an excluded directory
+	// as one; ExcludedBytes is the listed size of the excluded files.
+	// Directories taken whole through Unchanged aren't counted.
+	Excluded      int64
+	ExcludedBytes int64
+	Checkpoints   int64
 	// Assumed counts parts skipped because a filter or the previous version
 	// held them; Repaired counts those the store then turned out to lack.
 	Assumed  int64
@@ -260,18 +265,20 @@ const DefaultProgressInterval = 15 * time.Second
 // reports are left out, because they are only written once it is over.
 func (w *Walker) snapshot() WalkResult {
 	return WalkResult{
-		Files:        atomic.LoadInt64(&w.result.Files),
-		Bytes:        atomic.LoadInt64(&w.result.Bytes),
-		Uploaded:     atomic.LoadInt64(&w.result.Uploaded),
-		Reused:       atomic.LoadInt64(&w.result.Reused),
-		Read:         atomic.LoadInt64(&w.result.Read),
-		Torn:         atomic.LoadInt64(&w.result.Torn),
-		Unreadable:   atomic.LoadInt64(&w.result.Unreadable),
-		Skipped:      atomic.LoadInt64(&w.result.Skipped),
-		Placeholders: atomic.LoadInt64(&w.result.Placeholders),
-		Checkpoints:  atomic.LoadInt64(&w.result.Checkpoints),
-		Assumed:      atomic.LoadInt64(&w.result.Assumed),
-		Repaired:     atomic.LoadInt64(&w.result.Repaired),
+		Files:         atomic.LoadInt64(&w.result.Files),
+		Bytes:         atomic.LoadInt64(&w.result.Bytes),
+		Uploaded:      atomic.LoadInt64(&w.result.Uploaded),
+		Reused:        atomic.LoadInt64(&w.result.Reused),
+		Read:          atomic.LoadInt64(&w.result.Read),
+		Torn:          atomic.LoadInt64(&w.result.Torn),
+		Unreadable:    atomic.LoadInt64(&w.result.Unreadable),
+		Skipped:       atomic.LoadInt64(&w.result.Skipped),
+		Placeholders:  atomic.LoadInt64(&w.result.Placeholders),
+		Excluded:      atomic.LoadInt64(&w.result.Excluded),
+		ExcludedBytes: atomic.LoadInt64(&w.result.ExcludedBytes),
+		Checkpoints:   atomic.LoadInt64(&w.result.Checkpoints),
+		Assumed:       atomic.LoadInt64(&w.result.Assumed),
+		Repaired:      atomic.LoadInt64(&w.result.Repaired),
 	}
 }
 
@@ -731,6 +738,8 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 		baseNode := baseByName[name]
 
 		if !w.included(childRel) {
+			atomic.AddInt64(&w.result.Excluded, 1)
+			atomic.AddInt64(&w.result.ExcludedBytes, entry.excludedSize)
 			if baseNode != nil {
 				markChanged()
 			}
