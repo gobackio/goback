@@ -34,6 +34,7 @@ func (m MapperImpl) Commit(in *proto.Commit) views.CommitView {
 		Time:       views.Unix(in.Timestamp),
 		Consistent: in.Consistent,
 		Partial:    in.Partial,
+		Incomplete: in.Incomplete,
 		Metadata:   in.Metadata,
 	}
 }

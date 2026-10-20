@@ -29,6 +29,10 @@ func (c *commit) list() {
 				note = " consistent"
 			}
 
+			if commit.Incomplete {
+				note += " incomplete"
+			}
+
 			log.Printf("%s %s%s", time.Unix(commit.Timestamp, 0), out[i].Ref, note)
 		}
 	})

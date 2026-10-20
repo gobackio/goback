@@ -161,6 +161,7 @@ type CommitView struct {
 	Time       time.Time         `json:"time"`
 	Consistent bool              `json:"consistent"`
 	Partial    bool              `json:"partial,omitempty"`
+	Incomplete bool              `json:"incomplete,omitempty"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
