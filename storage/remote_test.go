@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -267,6 +268,7 @@ func serveRemote(t *testing.T, remote *Server, as proto.StoreServer, register ..
 			grpc.WithTransportCredentials(credentials.NewTLS(clientTLS)),
 			grpc.WithPerRPCCredentials(auth.Credentials{Secret: secret, AgentID: agent}),
 			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }),
+			replies,
 		)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = con.Close() })
@@ -646,6 +648,21 @@ func TestARemoteCommitMissingObjectsNamesThem(t *testing.T) {
 	require.Len(t, missing.Refs, 2)
 	require.Equal(t, gone[0].Hash, missing.Refs[0].Hash)
 	require.Equal(t, gone[1].Hash, missing.Refs[1].Hash)
+}
+
+func TestARemoteCommitMissingHundredsOfThousandsOfObjectsNamesEachOfThem(t *testing.T) {
+	gone := make([]*proto.Ref, 200_000)
+	for i := range gone {
+		gone[i] = proto.HashPayload(proto.ObjectType_FILE, []byte(strconv.Itoa(i)))
+	}
+
+	client := startServerWith(t, &missingIndex{memIndex: newMemIndex(), gone: gone}, nil)("node-1")
+
+	err := client.Put(context.Background(), proto.NewObject(&proto.Commit{Timestamp: 1, Tree: gone[0], AgentId: "node-1", BackupSet: "world"}))
+
+	var missing *backup.MissingError
+	require.ErrorAs(t, err, &missing)
+	require.Len(t, missing.Refs, len(gone))
 }
 
 // Presence implements backup.PresenceIndex with whatever filters the test

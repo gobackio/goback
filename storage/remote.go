@@ -64,6 +64,10 @@ var downloadWindows = []grpc.DialOption{
 	grpc.WithInitialConnWindowSize(64 << 20),
 }
 
+// replies lets a client take answers of up to 256 MiB, such as a commit's
+// that names hundreds of thousands of refs the store lacks.
+var replies = grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(256 << 20))
+
 func dialStore(addr string, creds auth.Credentials, transport credentials.TransportCredentials, secure bool) (*Client, error) {
 	jar := newCookies(addr, secure)
 	received := &downloads{}
@@ -73,6 +77,7 @@ func dialStore(addr string, creds auth.Credentials, transport credentials.Transp
 		grpc.WithUnaryInterceptor(jar.unary()),
 		grpc.WithStreamInterceptor(jar.stream()),
 		grpc.WithStatsHandler(received),
+		replies,
 	}, downloadWindows...)...)
 	if err != nil {
 		return nil, err
