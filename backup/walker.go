@@ -203,6 +203,9 @@ type Walker struct {
 	descriptors *descriptors
 	// emptyFile stores the empty file once a run, for placeholders
 	emptyFile func() (*proto.Ref, error)
+	// outside is the run's context outside any session, and session the
+	// context of the session it writes in now, which a checkpoint renews
+	outside, session context.Context
 	// clock stands in for time.Now in tests; the Windows monotonic clock
 	// ticks too coarsely for a short run to see any time pass
 	clock func() time.Time
@@ -375,16 +378,17 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 	}
 	w.rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	outside := ctx
+	w.outside, w.session = ctx, ctx
 	if w.Sessions != nil {
-		sctx, err := w.beginSession(outside)
+		sctx, err := w.beginSession(ctx)
 		if err != nil {
 			return nil, err
 		}
 
+		w.session = sctx
 		ctx = sctx
 
-		defer func() { w.endSession(ctx) }()
+		defer func() { w.endSession(w.session) }()
 	}
 
 	// inside the session, so a set the gate creates starts with the
@@ -410,7 +414,7 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 	}
 
 	for retry := 0; ; retry++ {
-		result, err := w.walk(ctx)
+		result, err := w.walk(w.session)
 		if !errors.Is(err, ErrSessionLost) || retry >= w.LostRetries || w.Stream != nil {
 			return result, err
 		}
@@ -420,13 +424,13 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 		// a store may end the session that lost objects, and it takes the
 		// session's uploads with it
 		if w.Sessions != nil {
-			sctx, err := w.beginSession(outside)
+			sctx, err := w.beginSession(w.outside)
 			if err != nil {
 				return nil, err
 			}
 
-			w.endSession(ctx)
-			ctx = sctx
+			w.endSession(w.session)
+			w.session = sctx
 		}
 	}
 }
@@ -458,7 +462,7 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 	w.sent = newSentSet()
 	w.descriptors = &descriptors{}
 	w.emptyFile = sync.OnceValues(func() (*proto.Ref, error) {
-		return w.putContent(ctx, 0, bytes.NewReader(nil))
+		return w.putContent(w.session, 0, bytes.NewReader(nil))
 	})
 	w.traits = w.fs().Traits()
 
@@ -507,6 +511,8 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		ctx = w.session
 	}
 
 	if len(w.Growing) > 0 && w.Subdir == "" {
@@ -951,12 +957,13 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 				return nil, false, err
 			}
 
-			group, groupCtx = errgroup.WithContext(ctx)
-
 			err = w.checkpoint(ctx, results[:i+1], base, []byte(name))
 			if err != nil {
 				return nil, false, err
 			}
+
+			ctx = w.session
+			group, groupCtx = errgroup.WithContext(ctx)
 		}
 	}
 
@@ -1403,7 +1410,8 @@ func (w *Walker) checkpointDue() bool {
 }
 
 // checkpoint writes a partial commit from the finished root entries plus the
-// base's nodes for the rest.
+// base's nodes for the rest. A commit ends its session, so with Sessions
+// the rest of the run goes on in a new one.
 func (w *Walker) checkpoint(ctx context.Context, done []*proto.TreeNode, base []*proto.TreeNode, lastName []byte) error {
 	nodes := make([]*proto.TreeNode, 0, len(done)+len(base))
 	for _, node := range done {
@@ -1429,6 +1437,16 @@ func (w *Walker) checkpoint(ctx context.Context, done []*proto.TreeNode, base []
 	}
 
 	w.logger().Info("wrote checkpoint commit", "ref", fmt.Sprintf("%x", ref.Hash))
+
+	if w.Sessions != nil {
+		sctx, err := w.beginSession(w.outside)
+		if err != nil {
+			return err
+		}
+
+		w.endSession(ctx)
+		w.session = sctx
+	}
 	atomic.AddInt64(&w.result.Checkpoints, 1)
 	w.last = w.now()
 

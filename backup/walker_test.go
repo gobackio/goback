@@ -1021,6 +1021,65 @@ func TestWalkerRetriesALostSessionInANewOne(t *testing.T) {
 	require.Equal(t, sessions.began, sessions.ended)
 }
 
+// endingStore ends a session when a commit is put in it, as a store with
+// sessions does, and refuses anything put in a session that has ended.
+type endingStore struct {
+	ObjectStore
+	sessions *memSessions
+}
+
+func (e *endingStore) Put(ctx context.Context, obj *proto.Object) error {
+	s, _ := SessionFromContext(ctx)
+
+	e.sessions.mtx.Lock()
+	ended := slices.Contains(e.sessions.ended, s)
+	e.sessions.mtx.Unlock()
+
+	if ended {
+		return ErrNoSession
+	}
+
+	if err := e.ObjectStore.Put(ctx, obj); err != nil {
+		return err
+	}
+
+	if obj.GetCommit() != nil {
+		return e.sessions.EndSession(ctx)
+	}
+
+	return nil
+}
+
+// endingIndex is an index whose Put is an endingStore's.
+type endingIndex struct {
+	Index
+	puts *endingStore
+}
+
+func (e *endingIndex) Put(ctx context.Context, obj *proto.Object) error {
+	return e.puts.Put(ctx, obj)
+}
+
+func TestWalkerGoesOnInANewSessionAfterACheckpoint(t *testing.T) {
+	f := newWalkerFixture(t)
+	for i := 0; i < 5; i++ {
+		f.write(fmt.Sprintf("dir-%d/file.txt", i), []byte(fmt.Sprint(i)))
+	}
+
+	sessions := &memSessions{}
+	f.walker.Sessions = sessions
+	f.walker.Objects = &endingStore{ObjectStore: f.objects, sessions: sessions}
+	f.walker.Index = &endingIndex{Index: f.index, puts: &endingStore{ObjectStore: f.index, sessions: sessions}}
+	f.walker.CheckpointInterval = time.Nanosecond
+
+	result := f.run()
+	require.Greater(t, result.Checkpoints, int64(0))
+	require.False(t, result.Commit.Partial)
+
+	require.Len(t, sessions.began, int(result.Checkpoints)+1, "one session per commit")
+	require.ElementsMatch(t, sessions.began, sessions.ended)
+}
+
 // TestWalkerCheckpointKeepsTheBaseRunsRacyWindow interrupts a run right
 // after its first checkpoint, which carries a base node the run has not
 // verified, and expects the next run to still re-read that file.
