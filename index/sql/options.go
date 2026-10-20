@@ -32,10 +32,11 @@ func WithoutMigrations() Option {
 	}
 }
 
-// WithBehind puts the index's store in front of behind: where the store
-// holds nothing itself, a Put's references are checked against behind and
-// the trees and files a commit names are read from it. Everything else,
-// collection and retention among it, sees the store alone.
+// WithBehind puts the index's store in front of behind, which checks what
+// the store holds when it gets there: a Put's references are left
+// unchecked, and where the store holds nothing itself the trees and files
+// a commit names are read from behind. Everything else, collection and
+// retention among it, sees the store alone.
 func WithBehind(behind backup.ObjectStore) Option {
 	return func(x *Index) {
 		x.behind = behind
@@ -52,8 +53,7 @@ func (e *externalDB) locking() bool {
 	return e.dialect == dialect.Postgres
 }
 
-// reads is the store a Put's references are checked against and a
-// commit's trees are read from.
+// reads is the store a commit's trees are read from.
 func (x *Index) reads() backup.ObjectStore {
 	if x.behind == nil {
 		return x.ObjectStore

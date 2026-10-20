@@ -97,9 +97,12 @@ func (x *Index) seedStamp(ctx context.Context) error {
 
 // Put stores an object and indexes a commit or pin.
 func (x *Index) Put(ctx context.Context, object *proto.Object) error {
-	err := backup.CheckReferences(ctx, x.reads(), object)
-	if err != nil {
-		return err
+	var err error
+
+	if x.behind == nil {
+		if err = backup.CheckReferences(ctx, x.ObjectStore, object); err != nil {
+			return err
+		}
 	}
 
 	if p := object.GetPin(); p != nil {

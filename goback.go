@@ -50,9 +50,10 @@ type Settings struct {
 	// encrypts its archives with.
 	AtRestKey string
 	// Behind is a store that a directory or bucket store stands in front
-	// of: where it holds nothing itself, its index checks a Put's
-	// references against Behind and reads the trees a commit names from
-	// it, so its commits may refer to what only Behind holds.
+	// of and publishes to, which checks references when what it holds
+	// gets there: its index leaves a Put's references unchecked, and
+	// reads the trees a commit names from Behind where it holds nothing
+	// itself, so its commits may refer to what only Behind holds.
 	Behind backup.ObjectStore
 	// CacheDir holds every cache, apart per store; empty caches nothing.
 	CacheDir string

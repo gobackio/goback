@@ -141,3 +141,27 @@ func (w warnCounter) Handle(_ context.Context, r slog.Record) error {
 
 	return nil
 }
+
+func TestAStoreInFrontOfAnotherLeavesReferencesToIt(t *testing.T) {
+	ctx := context.Background()
+
+	open := func(s goback.Settings) *goback.Repo {
+		repo, err := goback.Open(ctx, s)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = repo.Close() })
+		return repo
+	}
+
+	missing := &proto.Ref{Hash: make([]byte, 32)}
+	missing.Hash[0] = 1
+	nodes := []*proto.TreeNode{{Stat: &proto.FileInfo{Name: []byte("gone.txt"), Type: proto.NodeType_NODE_FILE}, Ref: missing}}
+
+	alone := open(goback.Settings{Storage: t.TempDir(), Index: t.TempDir(), AgentID: "pc"})
+	_, err := backup.PutTree(ctx, alone.Index, nodes, nil, nil)
+	require.ErrorIs(t, err, backup.ErrDanglingRef)
+
+	back := open(goback.Settings{Storage: t.TempDir(), Index: t.TempDir(), AgentID: "pc"})
+	front := open(goback.Settings{Storage: t.TempDir(), Index: t.TempDir(), AgentID: "pc", Behind: back.Index})
+	_, err = backup.PutTree(ctx, front.Index, nodes, nil, nil)
+	require.NoError(t, err, "the store behind checks references when what the front holds gets there")
+}
