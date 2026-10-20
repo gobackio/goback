@@ -53,7 +53,9 @@ type Settings struct {
 	// of and publishes to, which checks references when what it holds
 	// gets there: its index leaves a Put's references unchecked, and
 	// reads the trees a commit names from Behind where it holds nothing
-	// itself, so its commits may refer to what only Behind holds.
+	// itself, so its commits may refer to what only Behind holds. A Put
+	// doesn't wait for its index row either, so nothing else may serve the
+	// store.
 	Behind backup.ObjectStore
 	// CacheDir holds every cache, apart per store; empty caches nothing.
 	CacheDir string

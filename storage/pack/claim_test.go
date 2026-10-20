@@ -1,6 +1,7 @@
 package pack
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -294,4 +295,67 @@ func TestRowsOfConcurrentWritesAreIndexedBeforeEachWriteReturns(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// rowInserts counts the inserts of rows, failing each with fail when set.
+type rowInserts struct {
+	*InMemoryIndex
+	mtx   sync.Mutex
+	calls int
+	fail  error
+}
+
+func (r *rowInserts) AddObjects(archive string, records []IndexRecord) error {
+	r.mtx.Lock()
+	r.calls++
+	fail := r.fail
+	r.mtx.Unlock()
+
+	if fail != nil {
+		return fail
+	}
+
+	return r.InMemoryIndex.AddObjects(archive, records)
+}
+
+func (r *rowInserts) inserts() int {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
+	return r.calls
+}
+
+func TestAStoreWithLocalSessionsIndexesRowsInBatchesBeforeItsArchiveIsFinalized(t *testing.T) {
+	index := &rowInserts{InMemoryIndex: NewInMemoryIndex()}
+	store := closing(t, newTestStore(t, t.TempDir(), WithArchiveIndex(index), WithMaxSize(1<<30), WithClaims(time.Hour, time.Hour), WithLocalSessions()))
+
+	ctx, _ := beginSession(t, store, "agent")
+	objects := makeTestData(t, 4*rowBatch)
+
+	for _, obj := range objects {
+		require.NoError(t, store.Put(ctx, obj))
+	}
+
+	require.NoError(t, store.Put(ctx, commitObject()))
+	require.Less(t, index.inserts(), len(objects)/10, "the writes shared their inserts")
+
+	for _, obj := range objects {
+		requireVisible(t, store, t.Context(), obj, true)
+	}
+}
+
+func TestAStoreWithLocalSessionsRefusesACommitWhoseRowsFailed(t *testing.T) {
+	index := &rowInserts{InMemoryIndex: NewInMemoryIndex(), fail: errors.New("disk full")}
+	store := closing(t, newTestStore(t, t.TempDir(), WithArchiveIndex(index), WithClaims(time.Hour, time.Hour), WithLocalSessions()))
+
+	ctx, _ := beginSession(t, store, "agent")
+	blob := makeTestData(t, 1)[0]
+	require.NoError(t, store.Put(ctx, blob), "its row is only queued")
+	require.Error(t, store.Flush(), "the archive lacks a row of what it holds")
+
+	commit := commitObject()
+	require.Error(t, store.Put(ctx, commit))
+
+	requireVisible(t, store, t.Context(), blob, false)
+	requireVisible(t, store, t.Context(), commit, false)
 }

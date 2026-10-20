@@ -91,7 +91,8 @@ func NewPackStorage(options ...PackOption) (*PackStorage, error) {
 		claims:           claims,
 		claimOpen:        opts.claimOpen,
 		claimGrace:       opts.claimGrace,
-		archives:         make([]*archive, 0),
+		localSessions:    opts.localSessions,
+		archives:        make([]*archive, 0),
 		retired:          make(map[string]bool),
 		sessions:         make(map[string]*writeSession),
 		archiveSemaphore: semaphore.NewWeighted(int64(opts.maxParallel)),
@@ -132,6 +133,8 @@ type PackStorage struct {
 	claims     ClaimIndex
 	claimOpen  time.Duration
 	claimGrace time.Duration
+	// localSessions leaves a Put's index row for finalize to wait for
+	localSessions bool
 
 	observer ArchiveObserver
 
@@ -995,11 +998,13 @@ func (ps *PackStorage) finalizeLocked(ws *writeSession) error {
 
 	ws.archive = nil
 
+	var rowsErr error
+
 	if a.rows != nil {
 		a.closing.Stop()
 
 		if err := a.rows.drain(); err != nil && !lapsed(err) {
-			ws.fail(err)
+			rowsErr = err
 		}
 	}
 
@@ -1009,6 +1014,11 @@ func (ps *PackStorage) finalizeLocked(ws *writeSession) error {
 	if index == nil {
 		ws.fail(err)
 		return err
+	}
+
+	// an archive missing rows of what it holds is not one to finalize
+	if err == nil {
+		err = rowsErr
 	}
 
 	if err == nil {

@@ -21,6 +21,7 @@ type packOptions struct {
 	sessionLease    time.Duration
 	claimOpen       time.Duration
 	claimGrace      time.Duration
+	localSessions   bool
 	atRestKey       *AtRestKey
 	observer        ArchiveObserver
 	logger          *slog.Logger
@@ -148,6 +149,16 @@ func WithMaxSize(max uint64) PackOption {
 func WithArchiveStorage(storage ArchiveStorage) PackOption {
 	return func(p *packOptions) {
 		p.storage = storage
+	}
+}
+
+// WithLocalSessions says only this process writes the store's sessions, so
+// a Put under one returns once its index row is queued rather than
+// written. Every row is in before the archive is finalized. A store that
+// several processes serve must not use it.
+func WithLocalSessions() PackOption {
+	return func(p *packOptions) {
+		p.localSessions = true
 	}
 }
 

@@ -26,32 +26,59 @@ const (
 // rowWriter indexes the objects of an open archive as they are written.
 // Whoever writes rows while none are being written writes everything
 // queued, so writers that arrive meanwhile share the next insert rather
-// than each making their own.
+// than each making their own. A deferred writer's writers don't wait for
+// their rows: the queue is written in the background a batch at a time,
+// and drain writes the rest.
 type rowWriter struct {
-	insert func([]IndexRecord) error
+	insert   func([]IndexRecord) error
+	deferred bool
 
 	mtx     sync.Mutex
 	idle    *sync.Cond
 	busy    bool
 	queue   []IndexRecord
 	waiting []chan error
+	failed  error
 }
 
-func newRowWriter(insert func([]IndexRecord) error) *rowWriter {
-	w := &rowWriter{insert: insert}
+// rowBatch is how many rows a deferred writer gathers before writing them.
+const rowBatch = 256
+
+func newRowWriter(insert func([]IndexRecord) error, deferred bool) *rowWriter {
+	w := &rowWriter{insert: insert, deferred: deferred}
 	w.idle = sync.NewCond(&w.mtx)
 
 	return w
 }
 
-// enqueue adds a record; the returned channel says whether its row went in.
+// enqueue adds a record; the returned channel says whether its row went
+// in, or for a deferred writer whether an earlier row failed.
 func (w *rowWriter) enqueue(record IndexRecord) chan error {
 	done := make(chan error, 1)
 
 	w.mtx.Lock()
+	defer w.mtx.Unlock()
+
 	w.queue = append(w.queue, record)
-	w.waiting = append(w.waiting, done)
-	w.mtx.Unlock()
+
+	if !w.deferred {
+		w.waiting = append(w.waiting, done)
+
+		return done
+	}
+
+	done <- w.failed
+
+	if !w.busy && len(w.queue) >= rowBatch {
+		w.busy = true
+
+		go func() {
+			w.mtx.Lock()
+			defer w.mtx.Unlock()
+
+			w.writeLocked()
+		}()
+	}
 
 	return done
 }
@@ -60,7 +87,7 @@ func (w *rowWriter) enqueue(record IndexRecord) chan error {
 // itself when nobody else is.
 func (w *rowWriter) wait(done chan error) error {
 	w.mtx.Lock()
-	if !w.busy {
+	if !w.busy && !w.deferred {
 		w.writeLocked()
 	}
 	w.mtx.Unlock()
@@ -68,8 +95,8 @@ func (w *rowWriter) wait(done chan error) error {
 	return <-done
 }
 
-// drain returns once everything queued is indexed, and the first error it
-// met.
+// drain returns once everything queued is indexed, and the first error any
+// write met.
 func (w *rowWriter) drain() error {
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
@@ -84,8 +111,6 @@ func (w *rowWriter) drain() error {
 // writeLocked writes the queue until it is empty; the caller holds mtx and
 // holds it again on return.
 func (w *rowWriter) writeLocked() error {
-	var first error
-
 	w.busy = true
 
 	for len(w.queue) > 0 {
@@ -100,15 +125,15 @@ func (w *rowWriter) writeLocked() error {
 			done <- err
 		}
 
-		if first == nil {
-			first = err
+		if w.failed == nil {
+			w.failed = err
 		}
 	}
 
 	w.busy = false
 	w.idle.Broadcast()
 
-	return first
+	return w.failed
 }
 
 // claim takes the claim on a new archive of a session and arranges for the
@@ -120,7 +145,7 @@ func (ps *PackStorage) claim(a *archive) error {
 
 	a.rows = newRowWriter(func(records []IndexRecord) error {
 		return ps.claims.AddObjects(a.name, records)
-	})
+	}, ps.localSessions)
 	a.opened = time.Now()
 	a.closing = time.AfterFunc(ps.claimOpen, func() {
 		if err := ps.finalizeArchive(a); err != nil {

@@ -70,7 +70,7 @@ func openDirectory(_ context.Context, u *url.URL, s Settings) (backup.ObjectStor
 		return nil, nil, err
 	}
 
-	options, err := s.atRest()
+	options, err := s.packOptions()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -137,7 +137,7 @@ func openBucket(scheme string) driver {
 			return nil, nil, err
 		}
 
-		options, err := s.atRest()
+		options, err := s.packOptions()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -202,10 +202,16 @@ func (s Settings) withIndex(build func(*sql.Index) (*pack.PackStorage, error)) (
 	return packs, x, nil
 }
 
-// atRest is the pack options for Settings.AtRestKey, none without it.
-func (s Settings) atRest() ([]pack.PackOption, error) {
+// packOptions is the pack options for Settings.AtRestKey and
+// Settings.Behind: a store in front of another is served by nothing else.
+func (s Settings) packOptions() ([]pack.PackOption, error) {
+	var options []pack.PackOption
+	if s.Behind != nil {
+		options = append(options, pack.WithLocalSessions())
+	}
+
 	if s.AtRestKey == "" {
-		return nil, nil
+		return options, nil
 	}
 
 	key, err := pack.LoadAtRestKey(s.AtRestKey)
@@ -213,7 +219,7 @@ func (s Settings) atRest() ([]pack.PackOption, error) {
 		return nil, fmt.Errorf("loading the at-rest key: %w", err)
 	}
 
-	return []pack.PackOption{pack.WithAtRestKey(key)}, nil
+	return append(options, pack.WithAtRestKey(key)), nil
 }
 
 // insecureScheme names a store server reached without TLS, which puts the
