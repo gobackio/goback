@@ -141,6 +141,185 @@ func (x *PutRequest) GetAssumedRefs() []*Ref {
 	return nil
 }
 
+type MissingRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Refs          []*Ref                 `protobuf:"bytes,1,rep,name=refs,proto3" json:"refs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MissingRequest) Reset() {
+	*x = MissingRequest{}
+	mi := &file_api_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MissingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MissingRequest) ProtoMessage() {}
+
+func (x *MissingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MissingRequest.ProtoReflect.Descriptor instead.
+func (*MissingRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *MissingRequest) GetRefs() []*Ref {
+	if x != nil {
+		return x.Refs
+	}
+	return nil
+}
+
+type MissingResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// the refs asked about that the store does not hold, in the order asked
+	Missing       []*Ref `protobuf:"bytes,1,rep,name=missing,proto3" json:"missing,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MissingResponse) Reset() {
+	*x = MissingResponse{}
+	mi := &file_api_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MissingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MissingResponse) ProtoMessage() {}
+
+func (x *MissingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MissingResponse.ProtoReflect.Descriptor instead.
+func (*MissingResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *MissingResponse) GetMissing() []*Ref {
+	if x != nil {
+		return x.Missing
+	}
+	return nil
+}
+
+type PutObjectsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// objects to store as Put stores them, neither commits nor pins; an
+	// object may refer to objects of its own message and earlier ones
+	Objects       []*Object `protobuf:"bytes,1,rep,name=objects,proto3" json:"objects,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutObjectsRequest) Reset() {
+	*x = PutObjectsRequest{}
+	mi := &file_api_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutObjectsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutObjectsRequest) ProtoMessage() {}
+
+func (x *PutObjectsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutObjectsRequest.ProtoReflect.Descriptor instead.
+func (*PutObjectsRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *PutObjectsRequest) GetObjects() []*Object {
+	if x != nil {
+		return x.Objects
+	}
+	return nil
+}
+
+type PutObjectsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Stored        int64                  `protobuf:"varint,1,opt,name=stored,proto3" json:"stored,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutObjectsResponse) Reset() {
+	*x = PutObjectsResponse{}
+	mi := &file_api_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutObjectsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutObjectsResponse) ProtoMessage() {}
+
+func (x *PutObjectsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutObjectsResponse.ProtoReflect.Descriptor instead.
+func (*PutObjectsResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *PutObjectsResponse) GetStored() int64 {
+	if x != nil {
+		return x.Stored
+	}
+	return 0
+}
+
 type PutResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// the ref the object was stored under
@@ -157,7 +336,7 @@ type PutResponse struct {
 
 func (x *PutResponse) Reset() {
 	*x = PutResponse{}
-	mi := &file_api_proto_msgTypes[1]
+	mi := &file_api_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -169,7 +348,7 @@ func (x *PutResponse) String() string {
 func (*PutResponse) ProtoMessage() {}
 
 func (x *PutResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[1]
+	mi := &file_api_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -182,7 +361,7 @@ func (x *PutResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutResponse.ProtoReflect.Descriptor instead.
 func (*PutResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{1}
+	return file_api_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PutResponse) GetRef() *Ref {
@@ -215,7 +394,7 @@ type GetRequest struct {
 
 func (x *GetRequest) Reset() {
 	*x = GetRequest{}
-	mi := &file_api_proto_msgTypes[2]
+	mi := &file_api_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -227,7 +406,7 @@ func (x *GetRequest) String() string {
 func (*GetRequest) ProtoMessage() {}
 
 func (x *GetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[2]
+	mi := &file_api_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -240,7 +419,7 @@ func (x *GetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRequest.ProtoReflect.Descriptor instead.
 func (*GetRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{2}
+	return file_api_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GetRequest) GetRef() *Ref {
@@ -266,7 +445,7 @@ type GetResponse struct {
 
 func (x *GetResponse) Reset() {
 	*x = GetResponse{}
-	mi := &file_api_proto_msgTypes[3]
+	mi := &file_api_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -278,7 +457,7 @@ func (x *GetResponse) String() string {
 func (*GetResponse) ProtoMessage() {}
 
 func (x *GetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[3]
+	mi := &file_api_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -291,7 +470,7 @@ func (x *GetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetResponse.ProtoReflect.Descriptor instead.
 func (*GetResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{3}
+	return file_api_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetResponse) GetBody() isGetResponse_Body {
@@ -353,7 +532,7 @@ type Location struct {
 
 func (x *Location) Reset() {
 	*x = Location{}
-	mi := &file_api_proto_msgTypes[4]
+	mi := &file_api_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -365,7 +544,7 @@ func (x *Location) String() string {
 func (*Location) ProtoMessage() {}
 
 func (x *Location) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[4]
+	mi := &file_api_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -378,7 +557,7 @@ func (x *Location) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Location.ProtoReflect.Descriptor instead.
 func (*Location) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{4}
+	return file_api_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Location) GetUrl() string {
@@ -428,7 +607,7 @@ type ReadFileRequest struct {
 
 func (x *ReadFileRequest) Reset() {
 	*x = ReadFileRequest{}
-	mi := &file_api_proto_msgTypes[5]
+	mi := &file_api_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -440,7 +619,7 @@ func (x *ReadFileRequest) String() string {
 func (*ReadFileRequest) ProtoMessage() {}
 
 func (x *ReadFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[5]
+	mi := &file_api_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -453,7 +632,7 @@ func (x *ReadFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFileRequest.ProtoReflect.Descriptor instead.
 func (*ReadFileRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{5}
+	return file_api_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ReadFileRequest) GetRef() *Ref {
@@ -485,7 +664,7 @@ type ReadFileResponse struct {
 
 func (x *ReadFileResponse) Reset() {
 	*x = ReadFileResponse{}
-	mi := &file_api_proto_msgTypes[6]
+	mi := &file_api_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -497,7 +676,7 @@ func (x *ReadFileResponse) String() string {
 func (*ReadFileResponse) ProtoMessage() {}
 
 func (x *ReadFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[6]
+	mi := &file_api_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -510,7 +689,7 @@ func (x *ReadFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFileResponse.ProtoReflect.Descriptor instead.
 func (*ReadFileResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{6}
+	return file_api_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ReadFileResponse) GetIndex() uint32 {
@@ -546,7 +725,7 @@ type LocatedRun struct {
 
 func (x *LocatedRun) Reset() {
 	*x = LocatedRun{}
-	mi := &file_api_proto_msgTypes[7]
+	mi := &file_api_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -558,7 +737,7 @@ func (x *LocatedRun) String() string {
 func (*LocatedRun) ProtoMessage() {}
 
 func (x *LocatedRun) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[7]
+	mi := &file_api_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -571,7 +750,7 @@ func (x *LocatedRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LocatedRun.ProtoReflect.Descriptor instead.
 func (*LocatedRun) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{7}
+	return file_api_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *LocatedRun) GetLocation() *Location {
@@ -603,7 +782,7 @@ type LocatedRecord struct {
 
 func (x *LocatedRecord) Reset() {
 	*x = LocatedRecord{}
-	mi := &file_api_proto_msgTypes[8]
+	mi := &file_api_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -615,7 +794,7 @@ func (x *LocatedRecord) String() string {
 func (*LocatedRecord) ProtoMessage() {}
 
 func (x *LocatedRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[8]
+	mi := &file_api_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -628,7 +807,7 @@ func (x *LocatedRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LocatedRecord.ProtoReflect.Descriptor instead.
 func (*LocatedRecord) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{8}
+	return file_api_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *LocatedRecord) GetIndex() uint32 {
@@ -673,7 +852,7 @@ type ReadFilesRequest struct {
 
 func (x *ReadFilesRequest) Reset() {
 	*x = ReadFilesRequest{}
-	mi := &file_api_proto_msgTypes[9]
+	mi := &file_api_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -685,7 +864,7 @@ func (x *ReadFilesRequest) String() string {
 func (*ReadFilesRequest) ProtoMessage() {}
 
 func (x *ReadFilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[9]
+	mi := &file_api_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -698,7 +877,7 @@ func (x *ReadFilesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFilesRequest.ProtoReflect.Descriptor instead.
 func (*ReadFilesRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{9}
+	return file_api_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ReadFilesRequest) GetFiles() []*ReadFilesEntry {
@@ -725,7 +904,7 @@ type ReadFilesEntry struct {
 
 func (x *ReadFilesEntry) Reset() {
 	*x = ReadFilesEntry{}
-	mi := &file_api_proto_msgTypes[10]
+	mi := &file_api_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -737,7 +916,7 @@ func (x *ReadFilesEntry) String() string {
 func (*ReadFilesEntry) ProtoMessage() {}
 
 func (x *ReadFilesEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[10]
+	mi := &file_api_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -750,7 +929,7 @@ func (x *ReadFilesEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFilesEntry.ProtoReflect.Descriptor instead.
 func (*ReadFilesEntry) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{10}
+	return file_api_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ReadFilesEntry) GetRef() *Ref {
@@ -783,7 +962,7 @@ type ReadFilesResponse struct {
 
 func (x *ReadFilesResponse) Reset() {
 	*x = ReadFilesResponse{}
-	mi := &file_api_proto_msgTypes[11]
+	mi := &file_api_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -795,7 +974,7 @@ func (x *ReadFilesResponse) String() string {
 func (*ReadFilesResponse) ProtoMessage() {}
 
 func (x *ReadFilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[11]
+	mi := &file_api_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -808,7 +987,7 @@ func (x *ReadFilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFilesResponse.ProtoReflect.Descriptor instead.
 func (*ReadFilesResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{11}
+	return file_api_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ReadFilesResponse) GetFile() uint32 {
@@ -858,7 +1037,7 @@ type FileInfoRequest struct {
 
 func (x *FileInfoRequest) Reset() {
 	*x = FileInfoRequest{}
-	mi := &file_api_proto_msgTypes[12]
+	mi := &file_api_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -870,7 +1049,7 @@ func (x *FileInfoRequest) String() string {
 func (*FileInfoRequest) ProtoMessage() {}
 
 func (x *FileInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[12]
+	mi := &file_api_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -883,7 +1062,7 @@ func (x *FileInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileInfoRequest.ProtoReflect.Descriptor instead.
 func (*FileInfoRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{12}
+	return file_api_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *FileInfoRequest) GetBackupSet() string {
@@ -923,7 +1102,7 @@ type FileInfoResponse struct {
 
 func (x *FileInfoResponse) Reset() {
 	*x = FileInfoResponse{}
-	mi := &file_api_proto_msgTypes[13]
+	mi := &file_api_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -935,7 +1114,7 @@ func (x *FileInfoResponse) String() string {
 func (*FileInfoResponse) ProtoMessage() {}
 
 func (x *FileInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[13]
+	mi := &file_api_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -948,7 +1127,7 @@ func (x *FileInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileInfoResponse.ProtoReflect.Descriptor instead.
 func (*FileInfoResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{13}
+	return file_api_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *FileInfoResponse) GetFiles() []*TreeNode {
@@ -969,7 +1148,7 @@ type ReadDirRequest struct {
 
 func (x *ReadDirRequest) Reset() {
 	*x = ReadDirRequest{}
-	mi := &file_api_proto_msgTypes[14]
+	mi := &file_api_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -981,7 +1160,7 @@ func (x *ReadDirRequest) String() string {
 func (*ReadDirRequest) ProtoMessage() {}
 
 func (x *ReadDirRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[14]
+	mi := &file_api_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -994,7 +1173,7 @@ func (x *ReadDirRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadDirRequest.ProtoReflect.Descriptor instead.
 func (*ReadDirRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{14}
+	return file_api_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ReadDirRequest) GetBackupSet() string {
@@ -1027,7 +1206,7 @@ type ReadDirResponse struct {
 
 func (x *ReadDirResponse) Reset() {
 	*x = ReadDirResponse{}
-	mi := &file_api_proto_msgTypes[15]
+	mi := &file_api_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1039,7 +1218,7 @@ func (x *ReadDirResponse) String() string {
 func (*ReadDirResponse) ProtoMessage() {}
 
 func (x *ReadDirResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[15]
+	mi := &file_api_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1052,7 +1231,7 @@ func (x *ReadDirResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadDirResponse.ProtoReflect.Descriptor instead.
 func (*ReadDirResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{15}
+	return file_api_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ReadDirResponse) GetEntries() []*TreeNode {
@@ -1073,7 +1252,7 @@ type CommitInfoRequest struct {
 
 func (x *CommitInfoRequest) Reset() {
 	*x = CommitInfoRequest{}
-	mi := &file_api_proto_msgTypes[16]
+	mi := &file_api_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1085,7 +1264,7 @@ func (x *CommitInfoRequest) String() string {
 func (*CommitInfoRequest) ProtoMessage() {}
 
 func (x *CommitInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[16]
+	mi := &file_api_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1098,7 +1277,7 @@ func (x *CommitInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommitInfoRequest.ProtoReflect.Descriptor instead.
 func (*CommitInfoRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{16}
+	return file_api_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *CommitInfoRequest) GetBackupSet() string {
@@ -1134,7 +1313,7 @@ type CommitInfoResponse struct {
 
 func (x *CommitInfoResponse) Reset() {
 	*x = CommitInfoResponse{}
-	mi := &file_api_proto_msgTypes[17]
+	mi := &file_api_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1146,7 +1325,7 @@ func (x *CommitInfoResponse) String() string {
 func (*CommitInfoResponse) ProtoMessage() {}
 
 func (x *CommitInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[17]
+	mi := &file_api_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1159,7 +1338,7 @@ func (x *CommitInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommitInfoResponse.ProtoReflect.Descriptor instead.
 func (*CommitInfoResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{17}
+	return file_api_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *CommitInfoResponse) GetCommits() []*Commit {
@@ -1190,7 +1369,7 @@ type CommitSize struct {
 
 func (x *CommitSize) Reset() {
 	*x = CommitSize{}
-	mi := &file_api_proto_msgTypes[18]
+	mi := &file_api_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1202,7 +1381,7 @@ func (x *CommitSize) String() string {
 func (*CommitSize) ProtoMessage() {}
 
 func (x *CommitSize) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[18]
+	mi := &file_api_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1215,7 +1394,7 @@ func (x *CommitSize) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommitSize.ProtoReflect.Descriptor instead.
 func (*CommitSize) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{18}
+	return file_api_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *CommitSize) GetLogicalBytes() int64 {
@@ -1241,7 +1420,7 @@ type LatestCommitRequest struct {
 
 func (x *LatestCommitRequest) Reset() {
 	*x = LatestCommitRequest{}
-	mi := &file_api_proto_msgTypes[19]
+	mi := &file_api_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1253,7 +1432,7 @@ func (x *LatestCommitRequest) String() string {
 func (*LatestCommitRequest) ProtoMessage() {}
 
 func (x *LatestCommitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[19]
+	mi := &file_api_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1266,7 +1445,7 @@ func (x *LatestCommitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LatestCommitRequest.ProtoReflect.Descriptor instead.
 func (*LatestCommitRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{19}
+	return file_api_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *LatestCommitRequest) GetBackupSet() string {
@@ -1286,7 +1465,7 @@ type LatestCommitResponse struct {
 
 func (x *LatestCommitResponse) Reset() {
 	*x = LatestCommitResponse{}
-	mi := &file_api_proto_msgTypes[20]
+	mi := &file_api_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1298,7 +1477,7 @@ func (x *LatestCommitResponse) String() string {
 func (*LatestCommitResponse) ProtoMessage() {}
 
 func (x *LatestCommitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[20]
+	mi := &file_api_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1311,7 +1490,7 @@ func (x *LatestCommitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LatestCommitResponse.ProtoReflect.Descriptor instead.
 func (*LatestCommitResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{20}
+	return file_api_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *LatestCommitResponse) GetRef() *Ref {
@@ -1332,7 +1511,7 @@ type BeginCommitRequest struct {
 
 func (x *BeginCommitRequest) Reset() {
 	*x = BeginCommitRequest{}
-	mi := &file_api_proto_msgTypes[21]
+	mi := &file_api_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1344,7 +1523,7 @@ func (x *BeginCommitRequest) String() string {
 func (*BeginCommitRequest) ProtoMessage() {}
 
 func (x *BeginCommitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[21]
+	mi := &file_api_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1357,7 +1536,7 @@ func (x *BeginCommitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginCommitRequest.ProtoReflect.Descriptor instead.
 func (*BeginCommitRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{21}
+	return file_api_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *BeginCommitRequest) GetBackupSet() string {
@@ -1389,7 +1568,7 @@ type BeginCommitResponse struct {
 
 func (x *BeginCommitResponse) Reset() {
 	*x = BeginCommitResponse{}
-	mi := &file_api_proto_msgTypes[22]
+	mi := &file_api_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1401,7 +1580,7 @@ func (x *BeginCommitResponse) String() string {
 func (*BeginCommitResponse) ProtoMessage() {}
 
 func (x *BeginCommitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[22]
+	mi := &file_api_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1414,7 +1593,7 @@ func (x *BeginCommitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginCommitResponse.ProtoReflect.Descriptor instead.
 func (*BeginCommitResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{22}
+	return file_api_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *BeginCommitResponse) GetAllowed() bool {
@@ -1472,7 +1651,7 @@ type StorePolicy struct {
 
 func (x *StorePolicy) Reset() {
 	*x = StorePolicy{}
-	mi := &file_api_proto_msgTypes[23]
+	mi := &file_api_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1484,7 +1663,7 @@ func (x *StorePolicy) String() string {
 func (*StorePolicy) ProtoMessage() {}
 
 func (x *StorePolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[23]
+	mi := &file_api_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1497,7 +1676,7 @@ func (x *StorePolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StorePolicy.ProtoReflect.Descriptor instead.
 func (*StorePolicy) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{23}
+	return file_api_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *StorePolicy) GetVersion() uint32 {
@@ -1536,7 +1715,7 @@ type BeginSessionRequest struct {
 
 func (x *BeginSessionRequest) Reset() {
 	*x = BeginSessionRequest{}
-	mi := &file_api_proto_msgTypes[24]
+	mi := &file_api_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1548,7 +1727,7 @@ func (x *BeginSessionRequest) String() string {
 func (*BeginSessionRequest) ProtoMessage() {}
 
 func (x *BeginSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[24]
+	mi := &file_api_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1561,7 +1740,7 @@ func (x *BeginSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginSessionRequest.ProtoReflect.Descriptor instead.
 func (*BeginSessionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{24}
+	return file_api_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *BeginSessionRequest) GetBackupSet() string {
@@ -1598,7 +1777,7 @@ type BeginSessionResponse struct {
 
 func (x *BeginSessionResponse) Reset() {
 	*x = BeginSessionResponse{}
-	mi := &file_api_proto_msgTypes[25]
+	mi := &file_api_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1610,7 +1789,7 @@ func (x *BeginSessionResponse) String() string {
 func (*BeginSessionResponse) ProtoMessage() {}
 
 func (x *BeginSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[25]
+	mi := &file_api_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1623,7 +1802,7 @@ func (x *BeginSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginSessionResponse.ProtoReflect.Descriptor instead.
 func (*BeginSessionResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{25}
+	return file_api_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *BeginSessionResponse) GetSessionId() string {
@@ -1650,7 +1829,7 @@ type EndSessionRequest struct {
 
 func (x *EndSessionRequest) Reset() {
 	*x = EndSessionRequest{}
-	mi := &file_api_proto_msgTypes[26]
+	mi := &file_api_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1662,7 +1841,7 @@ func (x *EndSessionRequest) String() string {
 func (*EndSessionRequest) ProtoMessage() {}
 
 func (x *EndSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[26]
+	mi := &file_api_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1675,7 +1854,7 @@ func (x *EndSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EndSessionRequest.ProtoReflect.Descriptor instead.
 func (*EndSessionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{26}
+	return file_api_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *EndSessionRequest) GetSessionId() string {
@@ -1693,7 +1872,7 @@ type EndSessionResponse struct {
 
 func (x *EndSessionResponse) Reset() {
 	*x = EndSessionResponse{}
-	mi := &file_api_proto_msgTypes[27]
+	mi := &file_api_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1705,7 +1884,7 @@ func (x *EndSessionResponse) String() string {
 func (*EndSessionResponse) ProtoMessage() {}
 
 func (x *EndSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[27]
+	mi := &file_api_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1718,7 +1897,7 @@ func (x *EndSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EndSessionResponse.ProtoReflect.Descriptor instead.
 func (*EndSessionResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{27}
+	return file_api_proto_rawDescGZIP(), []int{31}
 }
 
 // TouchSessionRequest renews a live session's lease without writing
@@ -1731,7 +1910,7 @@ type TouchSessionRequest struct {
 
 func (x *TouchSessionRequest) Reset() {
 	*x = TouchSessionRequest{}
-	mi := &file_api_proto_msgTypes[28]
+	mi := &file_api_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1743,7 +1922,7 @@ func (x *TouchSessionRequest) String() string {
 func (*TouchSessionRequest) ProtoMessage() {}
 
 func (x *TouchSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[28]
+	mi := &file_api_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1756,7 +1935,7 @@ func (x *TouchSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TouchSessionRequest.ProtoReflect.Descriptor instead.
 func (*TouchSessionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{28}
+	return file_api_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *TouchSessionRequest) GetSessionId() string {
@@ -1774,7 +1953,7 @@ type TouchSessionResponse struct {
 
 func (x *TouchSessionResponse) Reset() {
 	*x = TouchSessionResponse{}
-	mi := &file_api_proto_msgTypes[29]
+	mi := &file_api_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1786,7 +1965,7 @@ func (x *TouchSessionResponse) String() string {
 func (*TouchSessionResponse) ProtoMessage() {}
 
 func (x *TouchSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[29]
+	mi := &file_api_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1799,7 +1978,7 @@ func (x *TouchSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TouchSessionResponse.ProtoReflect.Descriptor instead.
 func (*TouchSessionResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{29}
+	return file_api_proto_rawDescGZIP(), []int{33}
 }
 
 type GetPresenceRequest struct {
@@ -1812,7 +1991,7 @@ type GetPresenceRequest struct {
 
 func (x *GetPresenceRequest) Reset() {
 	*x = GetPresenceRequest{}
-	mi := &file_api_proto_msgTypes[30]
+	mi := &file_api_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1824,7 +2003,7 @@ func (x *GetPresenceRequest) String() string {
 func (*GetPresenceRequest) ProtoMessage() {}
 
 func (x *GetPresenceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[30]
+	mi := &file_api_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1837,7 +2016,7 @@ func (x *GetPresenceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPresenceRequest.ProtoReflect.Descriptor instead.
 func (*GetPresenceRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{30}
+	return file_api_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *GetPresenceRequest) GetBackupSet() string {
@@ -1859,7 +2038,7 @@ type GetPresenceResponse struct {
 
 func (x *GetPresenceResponse) Reset() {
 	*x = GetPresenceResponse{}
-	mi := &file_api_proto_msgTypes[31]
+	mi := &file_api_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1871,7 +2050,7 @@ func (x *GetPresenceResponse) String() string {
 func (*GetPresenceResponse) ProtoMessage() {}
 
 func (x *GetPresenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[31]
+	mi := &file_api_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1884,7 +2063,7 @@ func (x *GetPresenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPresenceResponse.ProtoReflect.Descriptor instead.
 func (*GetPresenceResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{31}
+	return file_api_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *GetPresenceResponse) GetIndex() uint32 {
@@ -1910,7 +2089,7 @@ type DeleteCommitRequest struct {
 
 func (x *DeleteCommitRequest) Reset() {
 	*x = DeleteCommitRequest{}
-	mi := &file_api_proto_msgTypes[32]
+	mi := &file_api_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1922,7 +2101,7 @@ func (x *DeleteCommitRequest) String() string {
 func (*DeleteCommitRequest) ProtoMessage() {}
 
 func (x *DeleteCommitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[32]
+	mi := &file_api_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1935,7 +2114,7 @@ func (x *DeleteCommitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteCommitRequest.ProtoReflect.Descriptor instead.
 func (*DeleteCommitRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{32}
+	return file_api_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *DeleteCommitRequest) GetRef() *Ref {
@@ -1953,7 +2132,7 @@ type DeleteCommitResponse struct {
 
 func (x *DeleteCommitResponse) Reset() {
 	*x = DeleteCommitResponse{}
-	mi := &file_api_proto_msgTypes[33]
+	mi := &file_api_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1965,7 +2144,7 @@ func (x *DeleteCommitResponse) String() string {
 func (*DeleteCommitResponse) ProtoMessage() {}
 
 func (x *DeleteCommitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[33]
+	mi := &file_api_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1978,7 +2157,7 @@ func (x *DeleteCommitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteCommitResponse.ProtoReflect.Descriptor instead.
 func (*DeleteCommitResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{33}
+	return file_api_proto_rawDescGZIP(), []int{37}
 }
 
 type UndeleteCommitRequest struct {
@@ -1990,7 +2169,7 @@ type UndeleteCommitRequest struct {
 
 func (x *UndeleteCommitRequest) Reset() {
 	*x = UndeleteCommitRequest{}
-	mi := &file_api_proto_msgTypes[34]
+	mi := &file_api_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2002,7 +2181,7 @@ func (x *UndeleteCommitRequest) String() string {
 func (*UndeleteCommitRequest) ProtoMessage() {}
 
 func (x *UndeleteCommitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[34]
+	mi := &file_api_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2015,7 +2194,7 @@ func (x *UndeleteCommitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UndeleteCommitRequest.ProtoReflect.Descriptor instead.
 func (*UndeleteCommitRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{34}
+	return file_api_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *UndeleteCommitRequest) GetRef() *Ref {
@@ -2033,7 +2212,7 @@ type UndeleteCommitResponse struct {
 
 func (x *UndeleteCommitResponse) Reset() {
 	*x = UndeleteCommitResponse{}
-	mi := &file_api_proto_msgTypes[35]
+	mi := &file_api_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2045,7 +2224,7 @@ func (x *UndeleteCommitResponse) String() string {
 func (*UndeleteCommitResponse) ProtoMessage() {}
 
 func (x *UndeleteCommitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[35]
+	mi := &file_api_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2058,7 +2237,7 @@ func (x *UndeleteCommitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UndeleteCommitResponse.ProtoReflect.Descriptor instead.
 func (*UndeleteCommitResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{35}
+	return file_api_proto_rawDescGZIP(), []int{39}
 }
 
 type ListTrashRequest struct {
@@ -2075,7 +2254,7 @@ type ListTrashRequest struct {
 
 func (x *ListTrashRequest) Reset() {
 	*x = ListTrashRequest{}
-	mi := &file_api_proto_msgTypes[36]
+	mi := &file_api_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2087,7 +2266,7 @@ func (x *ListTrashRequest) String() string {
 func (*ListTrashRequest) ProtoMessage() {}
 
 func (x *ListTrashRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[36]
+	mi := &file_api_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2100,7 +2279,7 @@ func (x *ListTrashRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTrashRequest.ProtoReflect.Descriptor instead.
 func (*ListTrashRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{36}
+	return file_api_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ListTrashRequest) GetBackupSet() string {
@@ -2140,7 +2319,7 @@ type TrashedCommit struct {
 
 func (x *TrashedCommit) Reset() {
 	*x = TrashedCommit{}
-	mi := &file_api_proto_msgTypes[37]
+	mi := &file_api_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2152,7 +2331,7 @@ func (x *TrashedCommit) String() string {
 func (*TrashedCommit) ProtoMessage() {}
 
 func (x *TrashedCommit) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[37]
+	mi := &file_api_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2165,7 +2344,7 @@ func (x *TrashedCommit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrashedCommit.ProtoReflect.Descriptor instead.
 func (*TrashedCommit) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{37}
+	return file_api_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *TrashedCommit) GetRef() *Ref {
@@ -2213,7 +2392,7 @@ type ListTrashResponse struct {
 
 func (x *ListTrashResponse) Reset() {
 	*x = ListTrashResponse{}
-	mi := &file_api_proto_msgTypes[38]
+	mi := &file_api_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2225,7 +2404,7 @@ func (x *ListTrashResponse) String() string {
 func (*ListTrashResponse) ProtoMessage() {}
 
 func (x *ListTrashResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[38]
+	mi := &file_api_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2238,7 +2417,7 @@ func (x *ListTrashResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTrashResponse.ProtoReflect.Descriptor instead.
 func (*ListTrashResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{38}
+	return file_api_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ListTrashResponse) GetCommits() []*TrashedCommit {
@@ -2266,7 +2445,7 @@ type CountCommitsRequest struct {
 
 func (x *CountCommitsRequest) Reset() {
 	*x = CountCommitsRequest{}
-	mi := &file_api_proto_msgTypes[39]
+	mi := &file_api_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2278,7 +2457,7 @@ func (x *CountCommitsRequest) String() string {
 func (*CountCommitsRequest) ProtoMessage() {}
 
 func (x *CountCommitsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[39]
+	mi := &file_api_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2291,7 +2470,7 @@ func (x *CountCommitsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CountCommitsRequest.ProtoReflect.Descriptor instead.
 func (*CountCommitsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{39}
+	return file_api_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *CountCommitsRequest) GetBackupSet() string {
@@ -2348,7 +2527,7 @@ type CommitCount struct {
 
 func (x *CommitCount) Reset() {
 	*x = CommitCount{}
-	mi := &file_api_proto_msgTypes[40]
+	mi := &file_api_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2360,7 +2539,7 @@ func (x *CommitCount) String() string {
 func (*CommitCount) ProtoMessage() {}
 
 func (x *CommitCount) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[40]
+	mi := &file_api_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2373,7 +2552,7 @@ func (x *CommitCount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommitCount.ProtoReflect.Descriptor instead.
 func (*CommitCount) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{40}
+	return file_api_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *CommitCount) GetStartNs() int64 {
@@ -2400,7 +2579,7 @@ type CountCommitsResponse struct {
 
 func (x *CountCommitsResponse) Reset() {
 	*x = CountCommitsResponse{}
-	mi := &file_api_proto_msgTypes[41]
+	mi := &file_api_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2412,7 +2591,7 @@ func (x *CountCommitsResponse) String() string {
 func (*CountCommitsResponse) ProtoMessage() {}
 
 func (x *CountCommitsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[41]
+	mi := &file_api_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2425,7 +2604,7 @@ func (x *CountCommitsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CountCommitsResponse.ProtoReflect.Descriptor instead.
 func (*CountCommitsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{41}
+	return file_api_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *CountCommitsResponse) GetCounts() []*CommitCount {
@@ -2444,7 +2623,7 @@ type GetRetentionRequest struct {
 
 func (x *GetRetentionRequest) Reset() {
 	*x = GetRetentionRequest{}
-	mi := &file_api_proto_msgTypes[42]
+	mi := &file_api_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2456,7 +2635,7 @@ func (x *GetRetentionRequest) String() string {
 func (*GetRetentionRequest) ProtoMessage() {}
 
 func (x *GetRetentionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[42]
+	mi := &file_api_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2469,7 +2648,7 @@ func (x *GetRetentionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRetentionRequest.ProtoReflect.Descriptor instead.
 func (*GetRetentionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{42}
+	return file_api_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *GetRetentionRequest) GetBackupSet() string {
@@ -2493,7 +2672,7 @@ type GetRetentionResponse struct {
 
 func (x *GetRetentionResponse) Reset() {
 	*x = GetRetentionResponse{}
-	mi := &file_api_proto_msgTypes[43]
+	mi := &file_api_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2505,7 +2684,7 @@ func (x *GetRetentionResponse) String() string {
 func (*GetRetentionResponse) ProtoMessage() {}
 
 func (x *GetRetentionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[43]
+	mi := &file_api_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2518,7 +2697,7 @@ func (x *GetRetentionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRetentionResponse.ProtoReflect.Descriptor instead.
 func (*GetRetentionResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{43}
+	return file_api_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *GetRetentionResponse) GetPolicy() *RetentionPolicy {
@@ -2553,7 +2732,7 @@ type SetRetentionRequest struct {
 
 func (x *SetRetentionRequest) Reset() {
 	*x = SetRetentionRequest{}
-	mi := &file_api_proto_msgTypes[44]
+	mi := &file_api_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2565,7 +2744,7 @@ func (x *SetRetentionRequest) String() string {
 func (*SetRetentionRequest) ProtoMessage() {}
 
 func (x *SetRetentionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[44]
+	mi := &file_api_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2578,7 +2757,7 @@ func (x *SetRetentionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetRetentionRequest.ProtoReflect.Descriptor instead.
 func (*SetRetentionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{44}
+	return file_api_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *SetRetentionRequest) GetBackupSet() string {
@@ -2605,7 +2784,7 @@ type SetRetentionResponse struct {
 
 func (x *SetRetentionResponse) Reset() {
 	*x = SetRetentionResponse{}
-	mi := &file_api_proto_msgTypes[45]
+	mi := &file_api_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2617,7 +2796,7 @@ func (x *SetRetentionResponse) String() string {
 func (*SetRetentionResponse) ProtoMessage() {}
 
 func (x *SetRetentionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[45]
+	mi := &file_api_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2630,7 +2809,7 @@ func (x *SetRetentionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetRetentionResponse.ProtoReflect.Descriptor instead.
 func (*SetRetentionResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{45}
+	return file_api_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *SetRetentionResponse) GetPending() bool {
@@ -2652,7 +2831,7 @@ type DeleteSetRequest struct {
 
 func (x *DeleteSetRequest) Reset() {
 	*x = DeleteSetRequest{}
-	mi := &file_api_proto_msgTypes[46]
+	mi := &file_api_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2664,7 +2843,7 @@ func (x *DeleteSetRequest) String() string {
 func (*DeleteSetRequest) ProtoMessage() {}
 
 func (x *DeleteSetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[46]
+	mi := &file_api_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2677,7 +2856,7 @@ func (x *DeleteSetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteSetRequest.ProtoReflect.Descriptor instead.
 func (*DeleteSetRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{46}
+	return file_api_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *DeleteSetRequest) GetBackupSet() string {
@@ -2702,7 +2881,7 @@ type DeleteSetResponse struct {
 
 func (x *DeleteSetResponse) Reset() {
 	*x = DeleteSetResponse{}
-	mi := &file_api_proto_msgTypes[47]
+	mi := &file_api_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2714,7 +2893,7 @@ func (x *DeleteSetResponse) String() string {
 func (*DeleteSetResponse) ProtoMessage() {}
 
 func (x *DeleteSetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[47]
+	mi := &file_api_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2727,7 +2906,7 @@ func (x *DeleteSetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteSetResponse.ProtoReflect.Descriptor instead.
 func (*DeleteSetResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{47}
+	return file_api_proto_rawDescGZIP(), []int{51}
 }
 
 type UndeleteSetRequest struct {
@@ -2739,7 +2918,7 @@ type UndeleteSetRequest struct {
 
 func (x *UndeleteSetRequest) Reset() {
 	*x = UndeleteSetRequest{}
-	mi := &file_api_proto_msgTypes[48]
+	mi := &file_api_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2751,7 +2930,7 @@ func (x *UndeleteSetRequest) String() string {
 func (*UndeleteSetRequest) ProtoMessage() {}
 
 func (x *UndeleteSetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[48]
+	mi := &file_api_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2764,7 +2943,7 @@ func (x *UndeleteSetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UndeleteSetRequest.ProtoReflect.Descriptor instead.
 func (*UndeleteSetRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{48}
+	return file_api_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *UndeleteSetRequest) GetBackupSet() string {
@@ -2782,7 +2961,7 @@ type UndeleteSetResponse struct {
 
 func (x *UndeleteSetResponse) Reset() {
 	*x = UndeleteSetResponse{}
-	mi := &file_api_proto_msgTypes[49]
+	mi := &file_api_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2794,7 +2973,7 @@ func (x *UndeleteSetResponse) String() string {
 func (*UndeleteSetResponse) ProtoMessage() {}
 
 func (x *UndeleteSetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[49]
+	mi := &file_api_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2807,7 +2986,7 @@ func (x *UndeleteSetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UndeleteSetResponse.ProtoReflect.Descriptor instead.
 func (*UndeleteSetResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{49}
+	return file_api_proto_rawDescGZIP(), []int{53}
 }
 
 type UnpinRequest struct {
@@ -2819,7 +2998,7 @@ type UnpinRequest struct {
 
 func (x *UnpinRequest) Reset() {
 	*x = UnpinRequest{}
-	mi := &file_api_proto_msgTypes[50]
+	mi := &file_api_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2831,7 +3010,7 @@ func (x *UnpinRequest) String() string {
 func (*UnpinRequest) ProtoMessage() {}
 
 func (x *UnpinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[50]
+	mi := &file_api_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2844,7 +3023,7 @@ func (x *UnpinRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnpinRequest.ProtoReflect.Descriptor instead.
 func (*UnpinRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{50}
+	return file_api_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *UnpinRequest) GetPin() *Ref {
@@ -2862,7 +3041,7 @@ type UnpinResponse struct {
 
 func (x *UnpinResponse) Reset() {
 	*x = UnpinResponse{}
-	mi := &file_api_proto_msgTypes[51]
+	mi := &file_api_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2874,7 +3053,7 @@ func (x *UnpinResponse) String() string {
 func (*UnpinResponse) ProtoMessage() {}
 
 func (x *UnpinResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[51]
+	mi := &file_api_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2887,7 +3066,7 @@ func (x *UnpinResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnpinResponse.ProtoReflect.Descriptor instead.
 func (*UnpinResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{51}
+	return file_api_proto_rawDescGZIP(), []int{55}
 }
 
 // EscrowedKey is the store key escrowed under a passphrase, as goback key
@@ -2902,7 +3081,7 @@ type EscrowedKey struct {
 
 func (x *EscrowedKey) Reset() {
 	*x = EscrowedKey{}
-	mi := &file_api_proto_msgTypes[52]
+	mi := &file_api_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2914,7 +3093,7 @@ func (x *EscrowedKey) String() string {
 func (*EscrowedKey) ProtoMessage() {}
 
 func (x *EscrowedKey) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[52]
+	mi := &file_api_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2927,7 +3106,7 @@ func (x *EscrowedKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EscrowedKey.ProtoReflect.Descriptor instead.
 func (*EscrowedKey) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{52}
+	return file_api_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *EscrowedKey) GetKeyId() string {
@@ -2952,7 +3131,7 @@ type EscrowedKeysRequest struct {
 
 func (x *EscrowedKeysRequest) Reset() {
 	*x = EscrowedKeysRequest{}
-	mi := &file_api_proto_msgTypes[53]
+	mi := &file_api_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2964,7 +3143,7 @@ func (x *EscrowedKeysRequest) String() string {
 func (*EscrowedKeysRequest) ProtoMessage() {}
 
 func (x *EscrowedKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[53]
+	mi := &file_api_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2977,7 +3156,7 @@ func (x *EscrowedKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EscrowedKeysRequest.ProtoReflect.Descriptor instead.
 func (*EscrowedKeysRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{53}
+	return file_api_proto_rawDescGZIP(), []int{57}
 }
 
 type EscrowedKeysResponse struct {
@@ -2989,7 +3168,7 @@ type EscrowedKeysResponse struct {
 
 func (x *EscrowedKeysResponse) Reset() {
 	*x = EscrowedKeysResponse{}
-	mi := &file_api_proto_msgTypes[54]
+	mi := &file_api_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3001,7 +3180,7 @@ func (x *EscrowedKeysResponse) String() string {
 func (*EscrowedKeysResponse) ProtoMessage() {}
 
 func (x *EscrowedKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[54]
+	mi := &file_api_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3014,7 +3193,7 @@ func (x *EscrowedKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EscrowedKeysResponse.ProtoReflect.Descriptor instead.
 func (*EscrowedKeysResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{54}
+	return file_api_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *EscrowedKeysResponse) GetKeys() []*EscrowedKey {
@@ -3032,7 +3211,7 @@ type ListPinsRequest struct {
 
 func (x *ListPinsRequest) Reset() {
 	*x = ListPinsRequest{}
-	mi := &file_api_proto_msgTypes[55]
+	mi := &file_api_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3044,7 +3223,7 @@ func (x *ListPinsRequest) String() string {
 func (*ListPinsRequest) ProtoMessage() {}
 
 func (x *ListPinsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[55]
+	mi := &file_api_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3057,7 +3236,7 @@ func (x *ListPinsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPinsRequest.ProtoReflect.Descriptor instead.
 func (*ListPinsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{55}
+	return file_api_proto_rawDescGZIP(), []int{59}
 }
 
 type PinInfo struct {
@@ -3074,7 +3253,7 @@ type PinInfo struct {
 
 func (x *PinInfo) Reset() {
 	*x = PinInfo{}
-	mi := &file_api_proto_msgTypes[56]
+	mi := &file_api_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3086,7 +3265,7 @@ func (x *PinInfo) String() string {
 func (*PinInfo) ProtoMessage() {}
 
 func (x *PinInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[56]
+	mi := &file_api_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3099,7 +3278,7 @@ func (x *PinInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PinInfo.ProtoReflect.Descriptor instead.
 func (*PinInfo) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{56}
+	return file_api_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *PinInfo) GetRef() *Ref {
@@ -3139,7 +3318,7 @@ type ListPinsResponse struct {
 
 func (x *ListPinsResponse) Reset() {
 	*x = ListPinsResponse{}
-	mi := &file_api_proto_msgTypes[57]
+	mi := &file_api_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3151,7 +3330,7 @@ func (x *ListPinsResponse) String() string {
 func (*ListPinsResponse) ProtoMessage() {}
 
 func (x *ListPinsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[57]
+	mi := &file_api_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3164,7 +3343,7 @@ func (x *ListPinsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPinsResponse.ProtoReflect.Descriptor instead.
 func (*ListPinsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{57}
+	return file_api_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *ListPinsResponse) GetPins() []*PinInfo {
@@ -3185,7 +3364,7 @@ type GetTreeRequest struct {
 
 func (x *GetTreeRequest) Reset() {
 	*x = GetTreeRequest{}
-	mi := &file_api_proto_msgTypes[58]
+	mi := &file_api_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3197,7 +3376,7 @@ func (x *GetTreeRequest) String() string {
 func (*GetTreeRequest) ProtoMessage() {}
 
 func (x *GetTreeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[58]
+	mi := &file_api_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3210,7 +3389,7 @@ func (x *GetTreeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTreeRequest.ProtoReflect.Descriptor instead.
 func (*GetTreeRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{58}
+	return file_api_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *GetTreeRequest) GetRef() *Ref {
@@ -3241,7 +3420,7 @@ type GetTreeResponse struct {
 
 func (x *GetTreeResponse) Reset() {
 	*x = GetTreeResponse{}
-	mi := &file_api_proto_msgTypes[59]
+	mi := &file_api_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3253,7 +3432,7 @@ func (x *GetTreeResponse) String() string {
 func (*GetTreeResponse) ProtoMessage() {}
 
 func (x *GetTreeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_msgTypes[59]
+	mi := &file_api_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3266,7 +3445,7 @@ func (x *GetTreeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTreeResponse.ProtoReflect.Descriptor instead.
 func (*GetTreeResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rawDescGZIP(), []int{59}
+	return file_api_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *GetTreeResponse) GetRef() *Ref {
@@ -3302,7 +3481,17 @@ const file_api_proto_rawDesc = "" +
 	"\x03ref\x18\x02 \x01(\v2\n" +
 	".proto.RefR\x03ref\x12-\n" +
 	"\fassumed_refs\x18\x03 \x03(\v2\n" +
-	".proto.RefR\vassumedRefs\"x\n" +
+	".proto.RefR\vassumedRefs\"0\n" +
+	"\x0eMissingRequest\x12\x1e\n" +
+	"\x04refs\x18\x01 \x03(\v2\n" +
+	".proto.RefR\x04refs\"7\n" +
+	"\x0fMissingResponse\x12$\n" +
+	"\amissing\x18\x01 \x03(\v2\n" +
+	".proto.RefR\amissing\"<\n" +
+	"\x11PutObjectsRequest\x12'\n" +
+	"\aobjects\x18\x01 \x03(\v2\r.proto.ObjectR\aobjects\",\n" +
+	"\x12PutObjectsResponse\x12\x16\n" +
+	"\x06stored\x18\x01 \x01(\x03R\x06stored\"x\n" +
 	"\vPutResponse\x12\x1c\n" +
 	"\x03ref\x18\x01 \x01(\v2\n" +
 	".proto.RefR\x03ref\x12%\n" +
@@ -3526,9 +3715,12 @@ const file_api_proto_rawDesc = "" +
 	"\fPERIOD_MONTH\x10\x02\x12\x0e\n" +
 	"\n" +
 	"PERIOD_DAY\x10\x03\x12\x0f\n" +
-	"\vPERIOD_HOUR\x10\x042\xab\r\n" +
+	"\vPERIOD_HOUR\x10\x042\xae\x0e\n" +
 	"\x05Store\x12.\n" +
-	"\x03Put\x12\x11.proto.PutRequest\x1a\x12.proto.PutResponse\"\x00\x12.\n" +
+	"\x03Put\x12\x11.proto.PutRequest\x1a\x12.proto.PutResponse\"\x00\x12:\n" +
+	"\aMissing\x12\x15.proto.MissingRequest\x1a\x16.proto.MissingResponse\"\x00\x12E\n" +
+	"\n" +
+	"PutObjects\x12\x18.proto.PutObjectsRequest\x1a\x19.proto.PutObjectsResponse\"\x00(\x01\x12.\n" +
 	"\x03Get\x12\x11.proto.GetRequest\x1a\x12.proto.GetResponse\"\x00\x12?\n" +
 	"\bReadFile\x12\x16.proto.ReadFileRequest\x1a\x17.proto.ReadFileResponse\"\x000\x01\x12B\n" +
 	"\tReadFiles\x12\x17.proto.ReadFilesRequest\x1a\x18.proto.ReadFilesResponse\"\x000\x01\x12=\n" +
@@ -3569,188 +3761,199 @@ func file_api_proto_rawDescGZIP() []byte {
 }
 
 var file_api_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_api_proto_msgTypes = make([]protoimpl.MessageInfo, 62)
+var file_api_proto_msgTypes = make([]protoimpl.MessageInfo, 66)
 var file_api_proto_goTypes = []any{
 	(Period)(0),                    // 0: proto.Period
 	(*PutRequest)(nil),             // 1: proto.PutRequest
-	(*PutResponse)(nil),            // 2: proto.PutResponse
-	(*GetRequest)(nil),             // 3: proto.GetRequest
-	(*GetResponse)(nil),            // 4: proto.GetResponse
-	(*Location)(nil),               // 5: proto.Location
-	(*ReadFileRequest)(nil),        // 6: proto.ReadFileRequest
-	(*ReadFileResponse)(nil),       // 7: proto.ReadFileResponse
-	(*LocatedRun)(nil),             // 8: proto.LocatedRun
-	(*LocatedRecord)(nil),          // 9: proto.LocatedRecord
-	(*ReadFilesRequest)(nil),       // 10: proto.ReadFilesRequest
-	(*ReadFilesEntry)(nil),         // 11: proto.ReadFilesEntry
-	(*ReadFilesResponse)(nil),      // 12: proto.ReadFilesResponse
-	(*FileInfoRequest)(nil),        // 13: proto.FileInfoRequest
-	(*FileInfoResponse)(nil),       // 14: proto.FileInfoResponse
-	(*ReadDirRequest)(nil),         // 15: proto.ReadDirRequest
-	(*ReadDirResponse)(nil),        // 16: proto.ReadDirResponse
-	(*CommitInfoRequest)(nil),      // 17: proto.CommitInfoRequest
-	(*CommitInfoResponse)(nil),     // 18: proto.CommitInfoResponse
-	(*CommitSize)(nil),             // 19: proto.CommitSize
-	(*LatestCommitRequest)(nil),    // 20: proto.LatestCommitRequest
-	(*LatestCommitResponse)(nil),   // 21: proto.LatestCommitResponse
-	(*BeginCommitRequest)(nil),     // 22: proto.BeginCommitRequest
-	(*BeginCommitResponse)(nil),    // 23: proto.BeginCommitResponse
-	(*StorePolicy)(nil),            // 24: proto.StorePolicy
-	(*BeginSessionRequest)(nil),    // 25: proto.BeginSessionRequest
-	(*BeginSessionResponse)(nil),   // 26: proto.BeginSessionResponse
-	(*EndSessionRequest)(nil),      // 27: proto.EndSessionRequest
-	(*EndSessionResponse)(nil),     // 28: proto.EndSessionResponse
-	(*TouchSessionRequest)(nil),    // 29: proto.TouchSessionRequest
-	(*TouchSessionResponse)(nil),   // 30: proto.TouchSessionResponse
-	(*GetPresenceRequest)(nil),     // 31: proto.GetPresenceRequest
-	(*GetPresenceResponse)(nil),    // 32: proto.GetPresenceResponse
-	(*DeleteCommitRequest)(nil),    // 33: proto.DeleteCommitRequest
-	(*DeleteCommitResponse)(nil),   // 34: proto.DeleteCommitResponse
-	(*UndeleteCommitRequest)(nil),  // 35: proto.UndeleteCommitRequest
-	(*UndeleteCommitResponse)(nil), // 36: proto.UndeleteCommitResponse
-	(*ListTrashRequest)(nil),       // 37: proto.ListTrashRequest
-	(*TrashedCommit)(nil),          // 38: proto.TrashedCommit
-	(*ListTrashResponse)(nil),      // 39: proto.ListTrashResponse
-	(*CountCommitsRequest)(nil),    // 40: proto.CountCommitsRequest
-	(*CommitCount)(nil),            // 41: proto.CommitCount
-	(*CountCommitsResponse)(nil),   // 42: proto.CountCommitsResponse
-	(*GetRetentionRequest)(nil),    // 43: proto.GetRetentionRequest
-	(*GetRetentionResponse)(nil),   // 44: proto.GetRetentionResponse
-	(*SetRetentionRequest)(nil),    // 45: proto.SetRetentionRequest
-	(*SetRetentionResponse)(nil),   // 46: proto.SetRetentionResponse
-	(*DeleteSetRequest)(nil),       // 47: proto.DeleteSetRequest
-	(*DeleteSetResponse)(nil),      // 48: proto.DeleteSetResponse
-	(*UndeleteSetRequest)(nil),     // 49: proto.UndeleteSetRequest
-	(*UndeleteSetResponse)(nil),    // 50: proto.UndeleteSetResponse
-	(*UnpinRequest)(nil),           // 51: proto.UnpinRequest
-	(*UnpinResponse)(nil),          // 52: proto.UnpinResponse
-	(*EscrowedKey)(nil),            // 53: proto.EscrowedKey
-	(*EscrowedKeysRequest)(nil),    // 54: proto.EscrowedKeysRequest
-	(*EscrowedKeysResponse)(nil),   // 55: proto.EscrowedKeysResponse
-	(*ListPinsRequest)(nil),        // 56: proto.ListPinsRequest
-	(*PinInfo)(nil),                // 57: proto.PinInfo
-	(*ListPinsResponse)(nil),       // 58: proto.ListPinsResponse
-	(*GetTreeRequest)(nil),         // 59: proto.GetTreeRequest
-	(*GetTreeResponse)(nil),        // 60: proto.GetTreeResponse
-	nil,                            // 61: proto.Location.HeaderEntry
-	nil,                            // 62: proto.PinInfo.MetadataEntry
-	(*Object)(nil),                 // 63: proto.Object
-	(*Ref)(nil),                    // 64: proto.Ref
-	(*timestamppb.Timestamp)(nil),  // 65: google.protobuf.Timestamp
-	(*TreeNode)(nil),               // 66: proto.TreeNode
-	(*Commit)(nil),                 // 67: proto.Commit
-	(*RetentionPolicy)(nil),        // 68: proto.RetentionPolicy
-	(*PresenceFilter)(nil),         // 69: proto.PresenceFilter
+	(*MissingRequest)(nil),         // 2: proto.MissingRequest
+	(*MissingResponse)(nil),        // 3: proto.MissingResponse
+	(*PutObjectsRequest)(nil),      // 4: proto.PutObjectsRequest
+	(*PutObjectsResponse)(nil),     // 5: proto.PutObjectsResponse
+	(*PutResponse)(nil),            // 6: proto.PutResponse
+	(*GetRequest)(nil),             // 7: proto.GetRequest
+	(*GetResponse)(nil),            // 8: proto.GetResponse
+	(*Location)(nil),               // 9: proto.Location
+	(*ReadFileRequest)(nil),        // 10: proto.ReadFileRequest
+	(*ReadFileResponse)(nil),       // 11: proto.ReadFileResponse
+	(*LocatedRun)(nil),             // 12: proto.LocatedRun
+	(*LocatedRecord)(nil),          // 13: proto.LocatedRecord
+	(*ReadFilesRequest)(nil),       // 14: proto.ReadFilesRequest
+	(*ReadFilesEntry)(nil),         // 15: proto.ReadFilesEntry
+	(*ReadFilesResponse)(nil),      // 16: proto.ReadFilesResponse
+	(*FileInfoRequest)(nil),        // 17: proto.FileInfoRequest
+	(*FileInfoResponse)(nil),       // 18: proto.FileInfoResponse
+	(*ReadDirRequest)(nil),         // 19: proto.ReadDirRequest
+	(*ReadDirResponse)(nil),        // 20: proto.ReadDirResponse
+	(*CommitInfoRequest)(nil),      // 21: proto.CommitInfoRequest
+	(*CommitInfoResponse)(nil),     // 22: proto.CommitInfoResponse
+	(*CommitSize)(nil),             // 23: proto.CommitSize
+	(*LatestCommitRequest)(nil),    // 24: proto.LatestCommitRequest
+	(*LatestCommitResponse)(nil),   // 25: proto.LatestCommitResponse
+	(*BeginCommitRequest)(nil),     // 26: proto.BeginCommitRequest
+	(*BeginCommitResponse)(nil),    // 27: proto.BeginCommitResponse
+	(*StorePolicy)(nil),            // 28: proto.StorePolicy
+	(*BeginSessionRequest)(nil),    // 29: proto.BeginSessionRequest
+	(*BeginSessionResponse)(nil),   // 30: proto.BeginSessionResponse
+	(*EndSessionRequest)(nil),      // 31: proto.EndSessionRequest
+	(*EndSessionResponse)(nil),     // 32: proto.EndSessionResponse
+	(*TouchSessionRequest)(nil),    // 33: proto.TouchSessionRequest
+	(*TouchSessionResponse)(nil),   // 34: proto.TouchSessionResponse
+	(*GetPresenceRequest)(nil),     // 35: proto.GetPresenceRequest
+	(*GetPresenceResponse)(nil),    // 36: proto.GetPresenceResponse
+	(*DeleteCommitRequest)(nil),    // 37: proto.DeleteCommitRequest
+	(*DeleteCommitResponse)(nil),   // 38: proto.DeleteCommitResponse
+	(*UndeleteCommitRequest)(nil),  // 39: proto.UndeleteCommitRequest
+	(*UndeleteCommitResponse)(nil), // 40: proto.UndeleteCommitResponse
+	(*ListTrashRequest)(nil),       // 41: proto.ListTrashRequest
+	(*TrashedCommit)(nil),          // 42: proto.TrashedCommit
+	(*ListTrashResponse)(nil),      // 43: proto.ListTrashResponse
+	(*CountCommitsRequest)(nil),    // 44: proto.CountCommitsRequest
+	(*CommitCount)(nil),            // 45: proto.CommitCount
+	(*CountCommitsResponse)(nil),   // 46: proto.CountCommitsResponse
+	(*GetRetentionRequest)(nil),    // 47: proto.GetRetentionRequest
+	(*GetRetentionResponse)(nil),   // 48: proto.GetRetentionResponse
+	(*SetRetentionRequest)(nil),    // 49: proto.SetRetentionRequest
+	(*SetRetentionResponse)(nil),   // 50: proto.SetRetentionResponse
+	(*DeleteSetRequest)(nil),       // 51: proto.DeleteSetRequest
+	(*DeleteSetResponse)(nil),      // 52: proto.DeleteSetResponse
+	(*UndeleteSetRequest)(nil),     // 53: proto.UndeleteSetRequest
+	(*UndeleteSetResponse)(nil),    // 54: proto.UndeleteSetResponse
+	(*UnpinRequest)(nil),           // 55: proto.UnpinRequest
+	(*UnpinResponse)(nil),          // 56: proto.UnpinResponse
+	(*EscrowedKey)(nil),            // 57: proto.EscrowedKey
+	(*EscrowedKeysRequest)(nil),    // 58: proto.EscrowedKeysRequest
+	(*EscrowedKeysResponse)(nil),   // 59: proto.EscrowedKeysResponse
+	(*ListPinsRequest)(nil),        // 60: proto.ListPinsRequest
+	(*PinInfo)(nil),                // 61: proto.PinInfo
+	(*ListPinsResponse)(nil),       // 62: proto.ListPinsResponse
+	(*GetTreeRequest)(nil),         // 63: proto.GetTreeRequest
+	(*GetTreeResponse)(nil),        // 64: proto.GetTreeResponse
+	nil,                            // 65: proto.Location.HeaderEntry
+	nil,                            // 66: proto.PinInfo.MetadataEntry
+	(*Object)(nil),                 // 67: proto.Object
+	(*Ref)(nil),                    // 68: proto.Ref
+	(*timestamppb.Timestamp)(nil),  // 69: google.protobuf.Timestamp
+	(*TreeNode)(nil),               // 70: proto.TreeNode
+	(*Commit)(nil),                 // 71: proto.Commit
+	(*RetentionPolicy)(nil),        // 72: proto.RetentionPolicy
+	(*PresenceFilter)(nil),         // 73: proto.PresenceFilter
 }
 var file_api_proto_depIdxs = []int32{
-	63, // 0: proto.PutRequest.object:type_name -> proto.Object
-	64, // 1: proto.PutRequest.ref:type_name -> proto.Ref
-	64, // 2: proto.PutRequest.assumed_refs:type_name -> proto.Ref
-	64, // 3: proto.PutResponse.ref:type_name -> proto.Ref
-	63, // 4: proto.PutResponse.object:type_name -> proto.Object
-	64, // 5: proto.PutResponse.missing:type_name -> proto.Ref
-	64, // 6: proto.GetRequest.ref:type_name -> proto.Ref
-	63, // 7: proto.GetResponse.object:type_name -> proto.Object
-	5,  // 8: proto.GetResponse.location:type_name -> proto.Location
-	61, // 9: proto.Location.header:type_name -> proto.Location.HeaderEntry
-	65, // 10: proto.Location.expires:type_name -> google.protobuf.Timestamp
-	64, // 11: proto.ReadFileRequest.ref:type_name -> proto.Ref
-	63, // 12: proto.ReadFileResponse.object:type_name -> proto.Object
-	8,  // 13: proto.ReadFileResponse.runs:type_name -> proto.LocatedRun
-	5,  // 14: proto.LocatedRun.location:type_name -> proto.Location
-	9,  // 15: proto.LocatedRun.records:type_name -> proto.LocatedRecord
-	11, // 16: proto.ReadFilesRequest.files:type_name -> proto.ReadFilesEntry
-	64, // 17: proto.ReadFilesEntry.ref:type_name -> proto.Ref
-	63, // 18: proto.ReadFilesResponse.object:type_name -> proto.Object
-	8,  // 19: proto.ReadFilesResponse.runs:type_name -> proto.LocatedRun
-	65, // 20: proto.FileInfoRequest.notAfter:type_name -> google.protobuf.Timestamp
-	66, // 21: proto.FileInfoResponse.files:type_name -> proto.TreeNode
-	65, // 22: proto.ReadDirRequest.notAfter:type_name -> google.protobuf.Timestamp
-	66, // 23: proto.ReadDirResponse.entries:type_name -> proto.TreeNode
-	65, // 24: proto.CommitInfoRequest.notAfter:type_name -> google.protobuf.Timestamp
-	67, // 25: proto.CommitInfoResponse.commits:type_name -> proto.Commit
-	19, // 26: proto.CommitInfoResponse.sizes:type_name -> proto.CommitSize
-	64, // 27: proto.LatestCommitResponse.ref:type_name -> proto.Ref
-	24, // 28: proto.BeginCommitResponse.policy:type_name -> proto.StorePolicy
-	64, // 29: proto.BeginSessionRequest.restore:type_name -> proto.Ref
-	68, // 30: proto.BeginSessionRequest.initial_retention:type_name -> proto.RetentionPolicy
-	69, // 31: proto.GetPresenceResponse.filter:type_name -> proto.PresenceFilter
-	64, // 32: proto.DeleteCommitRequest.ref:type_name -> proto.Ref
-	64, // 33: proto.UndeleteCommitRequest.ref:type_name -> proto.Ref
-	64, // 34: proto.TrashedCommit.ref:type_name -> proto.Ref
-	67, // 35: proto.TrashedCommit.commit:type_name -> proto.Commit
-	19, // 36: proto.TrashedCommit.size:type_name -> proto.CommitSize
-	38, // 37: proto.ListTrashResponse.commits:type_name -> proto.TrashedCommit
-	0,  // 38: proto.CountCommitsRequest.period:type_name -> proto.Period
-	41, // 39: proto.CountCommitsResponse.counts:type_name -> proto.CommitCount
-	68, // 40: proto.GetRetentionResponse.policy:type_name -> proto.RetentionPolicy
-	68, // 41: proto.GetRetentionResponse.effective:type_name -> proto.RetentionPolicy
-	68, // 42: proto.SetRetentionRequest.policy:type_name -> proto.RetentionPolicy
-	64, // 43: proto.UnpinRequest.pin:type_name -> proto.Ref
-	53, // 44: proto.EscrowedKeysResponse.keys:type_name -> proto.EscrowedKey
-	64, // 45: proto.PinInfo.ref:type_name -> proto.Ref
-	64, // 46: proto.PinInfo.target:type_name -> proto.Ref
-	62, // 47: proto.PinInfo.metadata:type_name -> proto.PinInfo.MetadataEntry
-	57, // 48: proto.ListPinsResponse.pins:type_name -> proto.PinInfo
-	64, // 49: proto.GetTreeRequest.ref:type_name -> proto.Ref
-	64, // 50: proto.GetTreeResponse.ref:type_name -> proto.Ref
-	63, // 51: proto.GetTreeResponse.object:type_name -> proto.Object
-	8,  // 52: proto.GetTreeResponse.runs:type_name -> proto.LocatedRun
-	1,  // 53: proto.Store.Put:input_type -> proto.PutRequest
-	3,  // 54: proto.Store.Get:input_type -> proto.GetRequest
-	6,  // 55: proto.Store.ReadFile:input_type -> proto.ReadFileRequest
-	10, // 56: proto.Store.ReadFiles:input_type -> proto.ReadFilesRequest
-	13, // 57: proto.Store.FileInfo:input_type -> proto.FileInfoRequest
-	15, // 58: proto.Store.ReadDir:input_type -> proto.ReadDirRequest
-	17, // 59: proto.Store.CommitInfo:input_type -> proto.CommitInfoRequest
-	20, // 60: proto.Store.LatestCommit:input_type -> proto.LatestCommitRequest
-	59, // 61: proto.Store.GetTree:input_type -> proto.GetTreeRequest
-	22, // 62: proto.Store.BeginCommit:input_type -> proto.BeginCommitRequest
-	25, // 63: proto.Store.BeginSession:input_type -> proto.BeginSessionRequest
-	27, // 64: proto.Store.EndSession:input_type -> proto.EndSessionRequest
-	29, // 65: proto.Store.TouchSession:input_type -> proto.TouchSessionRequest
-	31, // 66: proto.Store.GetPresence:input_type -> proto.GetPresenceRequest
-	33, // 67: proto.Store.DeleteCommit:input_type -> proto.DeleteCommitRequest
-	35, // 68: proto.Store.UndeleteCommit:input_type -> proto.UndeleteCommitRequest
-	37, // 69: proto.Store.ListTrash:input_type -> proto.ListTrashRequest
-	40, // 70: proto.Store.CountCommits:input_type -> proto.CountCommitsRequest
-	43, // 71: proto.Store.GetRetention:input_type -> proto.GetRetentionRequest
-	45, // 72: proto.Store.SetRetention:input_type -> proto.SetRetentionRequest
-	47, // 73: proto.Store.DeleteSet:input_type -> proto.DeleteSetRequest
-	49, // 74: proto.Store.UndeleteSet:input_type -> proto.UndeleteSetRequest
-	51, // 75: proto.Store.Unpin:input_type -> proto.UnpinRequest
-	56, // 76: proto.Store.ListPins:input_type -> proto.ListPinsRequest
-	54, // 77: proto.Store.EscrowedKeys:input_type -> proto.EscrowedKeysRequest
-	2,  // 78: proto.Store.Put:output_type -> proto.PutResponse
-	4,  // 79: proto.Store.Get:output_type -> proto.GetResponse
-	7,  // 80: proto.Store.ReadFile:output_type -> proto.ReadFileResponse
-	12, // 81: proto.Store.ReadFiles:output_type -> proto.ReadFilesResponse
-	14, // 82: proto.Store.FileInfo:output_type -> proto.FileInfoResponse
-	16, // 83: proto.Store.ReadDir:output_type -> proto.ReadDirResponse
-	18, // 84: proto.Store.CommitInfo:output_type -> proto.CommitInfoResponse
-	21, // 85: proto.Store.LatestCommit:output_type -> proto.LatestCommitResponse
-	60, // 86: proto.Store.GetTree:output_type -> proto.GetTreeResponse
-	23, // 87: proto.Store.BeginCommit:output_type -> proto.BeginCommitResponse
-	26, // 88: proto.Store.BeginSession:output_type -> proto.BeginSessionResponse
-	28, // 89: proto.Store.EndSession:output_type -> proto.EndSessionResponse
-	30, // 90: proto.Store.TouchSession:output_type -> proto.TouchSessionResponse
-	32, // 91: proto.Store.GetPresence:output_type -> proto.GetPresenceResponse
-	34, // 92: proto.Store.DeleteCommit:output_type -> proto.DeleteCommitResponse
-	36, // 93: proto.Store.UndeleteCommit:output_type -> proto.UndeleteCommitResponse
-	39, // 94: proto.Store.ListTrash:output_type -> proto.ListTrashResponse
-	42, // 95: proto.Store.CountCommits:output_type -> proto.CountCommitsResponse
-	44, // 96: proto.Store.GetRetention:output_type -> proto.GetRetentionResponse
-	46, // 97: proto.Store.SetRetention:output_type -> proto.SetRetentionResponse
-	48, // 98: proto.Store.DeleteSet:output_type -> proto.DeleteSetResponse
-	50, // 99: proto.Store.UndeleteSet:output_type -> proto.UndeleteSetResponse
-	52, // 100: proto.Store.Unpin:output_type -> proto.UnpinResponse
-	58, // 101: proto.Store.ListPins:output_type -> proto.ListPinsResponse
-	55, // 102: proto.Store.EscrowedKeys:output_type -> proto.EscrowedKeysResponse
-	78, // [78:103] is the sub-list for method output_type
-	53, // [53:78] is the sub-list for method input_type
-	53, // [53:53] is the sub-list for extension type_name
-	53, // [53:53] is the sub-list for extension extendee
-	0,  // [0:53] is the sub-list for field type_name
+	67, // 0: proto.PutRequest.object:type_name -> proto.Object
+	68, // 1: proto.PutRequest.ref:type_name -> proto.Ref
+	68, // 2: proto.PutRequest.assumed_refs:type_name -> proto.Ref
+	68, // 3: proto.MissingRequest.refs:type_name -> proto.Ref
+	68, // 4: proto.MissingResponse.missing:type_name -> proto.Ref
+	67, // 5: proto.PutObjectsRequest.objects:type_name -> proto.Object
+	68, // 6: proto.PutResponse.ref:type_name -> proto.Ref
+	67, // 7: proto.PutResponse.object:type_name -> proto.Object
+	68, // 8: proto.PutResponse.missing:type_name -> proto.Ref
+	68, // 9: proto.GetRequest.ref:type_name -> proto.Ref
+	67, // 10: proto.GetResponse.object:type_name -> proto.Object
+	9,  // 11: proto.GetResponse.location:type_name -> proto.Location
+	65, // 12: proto.Location.header:type_name -> proto.Location.HeaderEntry
+	69, // 13: proto.Location.expires:type_name -> google.protobuf.Timestamp
+	68, // 14: proto.ReadFileRequest.ref:type_name -> proto.Ref
+	67, // 15: proto.ReadFileResponse.object:type_name -> proto.Object
+	12, // 16: proto.ReadFileResponse.runs:type_name -> proto.LocatedRun
+	9,  // 17: proto.LocatedRun.location:type_name -> proto.Location
+	13, // 18: proto.LocatedRun.records:type_name -> proto.LocatedRecord
+	15, // 19: proto.ReadFilesRequest.files:type_name -> proto.ReadFilesEntry
+	68, // 20: proto.ReadFilesEntry.ref:type_name -> proto.Ref
+	67, // 21: proto.ReadFilesResponse.object:type_name -> proto.Object
+	12, // 22: proto.ReadFilesResponse.runs:type_name -> proto.LocatedRun
+	69, // 23: proto.FileInfoRequest.notAfter:type_name -> google.protobuf.Timestamp
+	70, // 24: proto.FileInfoResponse.files:type_name -> proto.TreeNode
+	69, // 25: proto.ReadDirRequest.notAfter:type_name -> google.protobuf.Timestamp
+	70, // 26: proto.ReadDirResponse.entries:type_name -> proto.TreeNode
+	69, // 27: proto.CommitInfoRequest.notAfter:type_name -> google.protobuf.Timestamp
+	71, // 28: proto.CommitInfoResponse.commits:type_name -> proto.Commit
+	23, // 29: proto.CommitInfoResponse.sizes:type_name -> proto.CommitSize
+	68, // 30: proto.LatestCommitResponse.ref:type_name -> proto.Ref
+	28, // 31: proto.BeginCommitResponse.policy:type_name -> proto.StorePolicy
+	68, // 32: proto.BeginSessionRequest.restore:type_name -> proto.Ref
+	72, // 33: proto.BeginSessionRequest.initial_retention:type_name -> proto.RetentionPolicy
+	73, // 34: proto.GetPresenceResponse.filter:type_name -> proto.PresenceFilter
+	68, // 35: proto.DeleteCommitRequest.ref:type_name -> proto.Ref
+	68, // 36: proto.UndeleteCommitRequest.ref:type_name -> proto.Ref
+	68, // 37: proto.TrashedCommit.ref:type_name -> proto.Ref
+	71, // 38: proto.TrashedCommit.commit:type_name -> proto.Commit
+	23, // 39: proto.TrashedCommit.size:type_name -> proto.CommitSize
+	42, // 40: proto.ListTrashResponse.commits:type_name -> proto.TrashedCommit
+	0,  // 41: proto.CountCommitsRequest.period:type_name -> proto.Period
+	45, // 42: proto.CountCommitsResponse.counts:type_name -> proto.CommitCount
+	72, // 43: proto.GetRetentionResponse.policy:type_name -> proto.RetentionPolicy
+	72, // 44: proto.GetRetentionResponse.effective:type_name -> proto.RetentionPolicy
+	72, // 45: proto.SetRetentionRequest.policy:type_name -> proto.RetentionPolicy
+	68, // 46: proto.UnpinRequest.pin:type_name -> proto.Ref
+	57, // 47: proto.EscrowedKeysResponse.keys:type_name -> proto.EscrowedKey
+	68, // 48: proto.PinInfo.ref:type_name -> proto.Ref
+	68, // 49: proto.PinInfo.target:type_name -> proto.Ref
+	66, // 50: proto.PinInfo.metadata:type_name -> proto.PinInfo.MetadataEntry
+	61, // 51: proto.ListPinsResponse.pins:type_name -> proto.PinInfo
+	68, // 52: proto.GetTreeRequest.ref:type_name -> proto.Ref
+	68, // 53: proto.GetTreeResponse.ref:type_name -> proto.Ref
+	67, // 54: proto.GetTreeResponse.object:type_name -> proto.Object
+	12, // 55: proto.GetTreeResponse.runs:type_name -> proto.LocatedRun
+	1,  // 56: proto.Store.Put:input_type -> proto.PutRequest
+	2,  // 57: proto.Store.Missing:input_type -> proto.MissingRequest
+	4,  // 58: proto.Store.PutObjects:input_type -> proto.PutObjectsRequest
+	7,  // 59: proto.Store.Get:input_type -> proto.GetRequest
+	10, // 60: proto.Store.ReadFile:input_type -> proto.ReadFileRequest
+	14, // 61: proto.Store.ReadFiles:input_type -> proto.ReadFilesRequest
+	17, // 62: proto.Store.FileInfo:input_type -> proto.FileInfoRequest
+	19, // 63: proto.Store.ReadDir:input_type -> proto.ReadDirRequest
+	21, // 64: proto.Store.CommitInfo:input_type -> proto.CommitInfoRequest
+	24, // 65: proto.Store.LatestCommit:input_type -> proto.LatestCommitRequest
+	63, // 66: proto.Store.GetTree:input_type -> proto.GetTreeRequest
+	26, // 67: proto.Store.BeginCommit:input_type -> proto.BeginCommitRequest
+	29, // 68: proto.Store.BeginSession:input_type -> proto.BeginSessionRequest
+	31, // 69: proto.Store.EndSession:input_type -> proto.EndSessionRequest
+	33, // 70: proto.Store.TouchSession:input_type -> proto.TouchSessionRequest
+	35, // 71: proto.Store.GetPresence:input_type -> proto.GetPresenceRequest
+	37, // 72: proto.Store.DeleteCommit:input_type -> proto.DeleteCommitRequest
+	39, // 73: proto.Store.UndeleteCommit:input_type -> proto.UndeleteCommitRequest
+	41, // 74: proto.Store.ListTrash:input_type -> proto.ListTrashRequest
+	44, // 75: proto.Store.CountCommits:input_type -> proto.CountCommitsRequest
+	47, // 76: proto.Store.GetRetention:input_type -> proto.GetRetentionRequest
+	49, // 77: proto.Store.SetRetention:input_type -> proto.SetRetentionRequest
+	51, // 78: proto.Store.DeleteSet:input_type -> proto.DeleteSetRequest
+	53, // 79: proto.Store.UndeleteSet:input_type -> proto.UndeleteSetRequest
+	55, // 80: proto.Store.Unpin:input_type -> proto.UnpinRequest
+	60, // 81: proto.Store.ListPins:input_type -> proto.ListPinsRequest
+	58, // 82: proto.Store.EscrowedKeys:input_type -> proto.EscrowedKeysRequest
+	6,  // 83: proto.Store.Put:output_type -> proto.PutResponse
+	3,  // 84: proto.Store.Missing:output_type -> proto.MissingResponse
+	5,  // 85: proto.Store.PutObjects:output_type -> proto.PutObjectsResponse
+	8,  // 86: proto.Store.Get:output_type -> proto.GetResponse
+	11, // 87: proto.Store.ReadFile:output_type -> proto.ReadFileResponse
+	16, // 88: proto.Store.ReadFiles:output_type -> proto.ReadFilesResponse
+	18, // 89: proto.Store.FileInfo:output_type -> proto.FileInfoResponse
+	20, // 90: proto.Store.ReadDir:output_type -> proto.ReadDirResponse
+	22, // 91: proto.Store.CommitInfo:output_type -> proto.CommitInfoResponse
+	25, // 92: proto.Store.LatestCommit:output_type -> proto.LatestCommitResponse
+	64, // 93: proto.Store.GetTree:output_type -> proto.GetTreeResponse
+	27, // 94: proto.Store.BeginCommit:output_type -> proto.BeginCommitResponse
+	30, // 95: proto.Store.BeginSession:output_type -> proto.BeginSessionResponse
+	32, // 96: proto.Store.EndSession:output_type -> proto.EndSessionResponse
+	34, // 97: proto.Store.TouchSession:output_type -> proto.TouchSessionResponse
+	36, // 98: proto.Store.GetPresence:output_type -> proto.GetPresenceResponse
+	38, // 99: proto.Store.DeleteCommit:output_type -> proto.DeleteCommitResponse
+	40, // 100: proto.Store.UndeleteCommit:output_type -> proto.UndeleteCommitResponse
+	43, // 101: proto.Store.ListTrash:output_type -> proto.ListTrashResponse
+	46, // 102: proto.Store.CountCommits:output_type -> proto.CountCommitsResponse
+	48, // 103: proto.Store.GetRetention:output_type -> proto.GetRetentionResponse
+	50, // 104: proto.Store.SetRetention:output_type -> proto.SetRetentionResponse
+	52, // 105: proto.Store.DeleteSet:output_type -> proto.DeleteSetResponse
+	54, // 106: proto.Store.UndeleteSet:output_type -> proto.UndeleteSetResponse
+	56, // 107: proto.Store.Unpin:output_type -> proto.UnpinResponse
+	62, // 108: proto.Store.ListPins:output_type -> proto.ListPinsResponse
+	59, // 109: proto.Store.EscrowedKeys:output_type -> proto.EscrowedKeysResponse
+	83, // [83:110] is the sub-list for method output_type
+	56, // [56:83] is the sub-list for method input_type
+	56, // [56:56] is the sub-list for extension type_name
+	56, // [56:56] is the sub-list for extension extendee
+	0,  // [0:56] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_init() }
@@ -3764,18 +3967,18 @@ func file_api_proto_init() {
 	file_commit_proto_init()
 	file_presence_proto_init()
 	file_retention_proto_init()
-	file_api_proto_msgTypes[3].OneofWrappers = []any{
+	file_api_proto_msgTypes[7].OneofWrappers = []any{
 		(*GetResponse_Object)(nil),
 		(*GetResponse_Location)(nil),
 	}
-	file_api_proto_msgTypes[18].OneofWrappers = []any{}
+	file_api_proto_msgTypes[22].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_rawDesc), len(file_api_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   62,
+			NumMessages:   66,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -157,6 +157,108 @@ func (s *Store) Put(ctx context.Context, up Upload) (*Receipt, error) {
 	return receipt, nil
 }
 
+// MaxMissingRefs is the most refs one Missing call asks about.
+const MaxMissingRefs = 4096
+
+// Missing returns the refs the store does not hold, in the order given; at
+// most MaxMissingRefs at once.
+func (s *Store) Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error) {
+	if len(refs) > MaxMissingRefs {
+		return nil, fmt.Errorf("%w: %d refs in one call, at most %d", ErrInvalidRequest, len(refs), MaxMissingRefs)
+	}
+
+	for _, ref := range refs {
+		if !ref.Valid() {
+			return nil, fmt.Errorf("%w: malformed ref", ErrInvalidRequest)
+		}
+	}
+
+	return backup.Missing(ctx, s.Index, refs)
+}
+
+// putObjectsWorkers bounds the objects one PutObjects call stores at once.
+const putObjectsWorkers = 32
+
+// PutObjects stores objects as Put stores each without assumed refs, each
+// after the ones among them it references. A commit or pin is
+// ErrInvalidRequest: Put stamps those.
+func (s *Store) PutObjects(ctx context.Context, objects []*proto.Object) error {
+	for _, object := range objects {
+		if err := object.Validate(); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+		}
+
+		switch object.Type() {
+		case proto.ObjectType_POLICY, proto.ObjectType_COMMIT, proto.ObjectType_PIN:
+			return fmt.Errorf("%w: a %s goes through Put", ErrInvalidRequest, object.Type())
+		}
+	}
+
+	if s.Sessions != nil {
+		if _, ok := backup.SessionFromContext(ctx); !ok {
+			return fmt.Errorf("%w: writes need a session", backup.ErrNoSession)
+		}
+	}
+
+	for _, level := range byReference(objects) {
+		grp, gctx := errgroup.WithContext(ctx)
+		grp.SetLimit(putObjectsWorkers)
+
+		for _, object := range level {
+			grp.Go(func() error { return s.Index.Put(gctx, object) })
+		}
+
+		if err := grp.Wait(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// byReference groups objects so that each group comes after every group
+// holding an object it references.
+func byReference(objects []*proto.Object) [][]*proto.Object {
+	at := make(map[string]int, len(objects))
+	for i, object := range objects {
+		at[string(object.Ref().GetHash())] = i
+	}
+
+	depth := make([]int, len(objects))
+	for i := range depth {
+		depth[i] = -1
+	}
+
+	var levelOf func(i int) int
+	levelOf = func(i int) int {
+		if depth[i] >= 0 {
+			return depth[i]
+		}
+
+		depth[i] = 0
+		for _, ref := range backup.References(objects[i]) {
+			if j, ok := at[string(ref.GetHash())]; ok && j != i {
+				depth[i] = max(depth[i], levelOf(j)+1)
+			}
+		}
+
+		return depth[i]
+	}
+
+	var levels [][]*proto.Object
+
+	for i, object := range objects {
+		level := levelOf(i)
+		for len(levels) <= level {
+			levels = append(levels, nil)
+		}
+
+		levels[level] = append(levels[level], object)
+	}
+
+	return levels
+}
+
 // clearStamp removes a client-supplied set id, and a pin's receipt time,
 // so the index assigns its own. A commit's receipt time is the index's to
 // keep or replace.

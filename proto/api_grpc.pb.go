@@ -20,6 +20,8 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	Store_Put_FullMethodName            = "/proto.Store/Put"
+	Store_Missing_FullMethodName        = "/proto.Store/Missing"
+	Store_PutObjects_FullMethodName     = "/proto.Store/PutObjects"
 	Store_Get_FullMethodName            = "/proto.Store/Get"
 	Store_ReadFile_FullMethodName       = "/proto.Store/ReadFile"
 	Store_ReadFiles_FullMethodName      = "/proto.Store/ReadFiles"
@@ -51,6 +53,11 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type StoreClient interface {
 	Put(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error)
+	// Missing answers which of many refs the store does not hold
+	Missing(ctx context.Context, in *MissingRequest, opts ...grpc.CallOption) (*MissingResponse, error)
+	// PutObjects stores the objects of every message of the stream; a
+	// refused object fails the call, with what came before it stored
+	PutObjects(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[PutObjectsRequest, PutObjectsResponse], error)
 	// Get serves a commit, tree or file object the store references; blobs
 	// are read through ReadFile
 	Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error)
@@ -115,6 +122,29 @@ func (c *storeClient) Put(ctx context.Context, in *PutRequest, opts ...grpc.Call
 	return out, nil
 }
 
+func (c *storeClient) Missing(ctx context.Context, in *MissingRequest, opts ...grpc.CallOption) (*MissingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MissingResponse)
+	err := c.cc.Invoke(ctx, Store_Missing_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeClient) PutObjects(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[PutObjectsRequest, PutObjectsResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[0], Store_PutObjects_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[PutObjectsRequest, PutObjectsResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Store_PutObjectsClient = grpc.ClientStreamingClient[PutObjectsRequest, PutObjectsResponse]
+
 func (c *storeClient) Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetResponse)
@@ -127,7 +157,7 @@ func (c *storeClient) Get(ctx context.Context, in *GetRequest, opts ...grpc.Call
 
 func (c *storeClient) ReadFile(ctx context.Context, in *ReadFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadFileResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[0], Store_ReadFile_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[1], Store_ReadFile_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +176,7 @@ type Store_ReadFileClient = grpc.ServerStreamingClient[ReadFileResponse]
 
 func (c *storeClient) ReadFiles(ctx context.Context, in *ReadFilesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadFilesResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[1], Store_ReadFiles_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[2], Store_ReadFiles_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +235,7 @@ func (c *storeClient) LatestCommit(ctx context.Context, in *LatestCommitRequest,
 
 func (c *storeClient) GetTree(ctx context.Context, in *GetTreeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetTreeResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[2], Store_GetTree_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[3], Store_GetTree_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +294,7 @@ func (c *storeClient) TouchSession(ctx context.Context, in *TouchSessionRequest,
 
 func (c *storeClient) GetPresence(ctx context.Context, in *GetPresenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetPresenceResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[3], Store_GetPresence_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[4], Store_GetPresence_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -396,6 +426,11 @@ func (c *storeClient) EscrowedKeys(ctx context.Context, in *EscrowedKeysRequest,
 // for forward compatibility.
 type StoreServer interface {
 	Put(context.Context, *PutRequest) (*PutResponse, error)
+	// Missing answers which of many refs the store does not hold
+	Missing(context.Context, *MissingRequest) (*MissingResponse, error)
+	// PutObjects stores the objects of every message of the stream; a
+	// refused object fails the call, with what came before it stored
+	PutObjects(grpc.ClientStreamingServer[PutObjectsRequest, PutObjectsResponse]) error
 	// Get serves a commit, tree or file object the store references; blobs
 	// are read through ReadFile
 	Get(context.Context, *GetRequest) (*GetResponse, error)
@@ -452,6 +487,12 @@ type UnimplementedStoreServer struct{}
 
 func (UnimplementedStoreServer) Put(context.Context, *PutRequest) (*PutResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Put not implemented")
+}
+func (UnimplementedStoreServer) Missing(context.Context, *MissingRequest) (*MissingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Missing not implemented")
+}
+func (UnimplementedStoreServer) PutObjects(grpc.ClientStreamingServer[PutObjectsRequest, PutObjectsResponse]) error {
+	return status.Error(codes.Unimplemented, "method PutObjects not implemented")
 }
 func (UnimplementedStoreServer) Get(context.Context, *GetRequest) (*GetResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Get not implemented")
@@ -563,6 +604,31 @@ func _Store_Put_Handler(srv interface{}, ctx context.Context, dec func(interface
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _Store_Missing_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MissingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServer).Missing(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Store_Missing_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServer).Missing(ctx, req.(*MissingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Store_PutObjects_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(StoreServer).PutObjects(&grpc.GenericServerStream[PutObjectsRequest, PutObjectsResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Store_PutObjectsServer = grpc.ClientStreamingServer[PutObjectsRequest, PutObjectsResponse]
 
 func _Store_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetRequest)
@@ -980,6 +1046,10 @@ var Store_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Store_Put_Handler,
 		},
 		{
+			MethodName: "Missing",
+			Handler:    _Store_Missing_Handler,
+		},
+		{
 			MethodName: "Get",
 			Handler:    _Store_Get_Handler,
 		},
@@ -1061,6 +1131,11 @@ var Store_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "PutObjects",
+			Handler:       _Store_PutObjects_Handler,
+			ClientStreams: true,
+		},
 		{
 			StreamName:    "ReadFile",
 			Handler:       _Store_ReadFile_Handler,

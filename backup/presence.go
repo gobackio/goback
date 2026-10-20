@@ -65,6 +65,16 @@ type Confirmer interface {
 	PutFile(ctx context.Context, obj *proto.Object, assumed []*proto.Ref) (missing []*proto.Ref, err error)
 }
 
+// Batcher is a store that answers about many refs, and takes many objects,
+// in one call.
+type Batcher interface {
+	// Missing returns the refs the store does not hold, in the order given.
+	Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error)
+	// PutObjects stores objects, none of them a commit or pin, each after
+	// the ones it references; a refusal can leave some of them stored.
+	PutObjects(ctx context.Context, objects []*proto.Object) error
+}
+
 // PresenceIndex serves the filters of a scope.
 type PresenceIndex interface {
 	// Presence returns the filters of scope; set matters for PresenceSet.

@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -233,4 +235,98 @@ func TestRemoteWritesNeedASession(t *testing.T) {
 	sctx, err := client.BeginSession(context.Background(), &backup.Session{Set: "world"})
 	require.NoError(t, err)
 	require.NoError(t, client.Put(sctx, proto.NewObject(&proto.Tree{})))
+}
+
+func TestRemotePutObjectsStoresWhatMissingNames(t *testing.T) {
+	_, dial := startPackServer(t)
+	ctx := context.Background()
+	client := dial("node-1")
+
+	sctx, err := client.BeginSession(ctx, &backup.Session{Set: "world"})
+	require.NoError(t, err)
+
+	var objects []*proto.Object
+
+	nodes := make([]*proto.TreeNode, 0, 300)
+	for i := range 300 {
+		part := proto.NewObject(&proto.Blob{Data: bytes.Repeat([]byte{byte(i)}, 16<<10)})
+		file := proto.NewObject(&proto.File{Parts: []*proto.FilePart{{Ref: part.Ref(), Length: 16 << 10}}})
+		objects = append(objects, part, file)
+		nodes = append(nodes, &proto.TreeNode{Stat: &proto.FileInfo{Name: []byte(fmt.Sprintf("%03d", i)), Type: proto.NodeType_NODE_FILE}, Ref: file.Ref()})
+	}
+
+	tree := proto.NewObject(&proto.Tree{Nodes: nodes})
+	objects = append(objects, tree)
+
+	refs := make([]*proto.Ref, len(objects))
+	for i, obj := range objects {
+		refs[i] = obj.Ref()
+	}
+
+	missing, err := client.Missing(sctx, refs)
+	require.NoError(t, err)
+	require.Len(t, missing, len(refs))
+
+	require.NoError(t, client.PutObjects(sctx, objects), "over several messages")
+
+	missing, err = client.Missing(sctx, refs)
+	require.NoError(t, err)
+	require.Empty(t, missing)
+
+	commit := proto.NewObject(&proto.Commit{Timestamp: 1, Tree: tree.Ref(), AgentId: "node-1", BackupSet: "world"})
+	require.NoError(t, client.Put(sctx, commit))
+
+	missing, err = client.Missing(ctx, refs)
+	require.NoError(t, err)
+	require.Empty(t, missing)
+}
+
+func TestRemotePutObjectsLeavesCommitsToPut(t *testing.T) {
+	_, dial := startPackServer(t)
+	client := dial("node-1")
+
+	sctx, err := client.BeginSession(context.Background(), &backup.Session{Set: "world"})
+	require.NoError(t, err)
+
+	tree := proto.NewObject(&proto.Tree{})
+	commit := proto.NewObject(&proto.Commit{Timestamp: 1, Tree: tree.Ref(), AgentId: "node-1", BackupSet: "world"})
+
+	err = client.PutObjects(sctx, []*proto.Object{tree, commit})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	err = client.PutObjects(context.Background(), []*proto.Object{tree})
+	require.ErrorIs(t, err, backup.ErrNoSession)
+}
+
+func TestRemotePutObjectsStoresAMessageInTheOrderItsObjectsNeed(t *testing.T) {
+	_, dial := startPackServer(t)
+	client := dial("node-1")
+
+	sctx, err := client.BeginSession(context.Background(), &backup.Session{Set: "world"})
+	require.NoError(t, err)
+
+	var objects []*proto.Object
+
+	for i := range 50 {
+		part := proto.NewObject(&proto.Blob{Data: []byte(fmt.Sprint(i))})
+		file := proto.NewObject(&proto.File{Parts: []*proto.FilePart{{Ref: part.Ref(), Length: uint64(len(fmt.Sprint(i)))}}})
+		tree := proto.NewObject(&proto.Tree{Nodes: []*proto.TreeNode{{Stat: &proto.FileInfo{Name: []byte("f"), Type: proto.NodeType_NODE_FILE}, Ref: file.Ref()}}})
+		objects = append(objects, tree, file, part)
+	}
+
+	require.NoError(t, client.PutObjects(sctx, objects))
+}
+
+func TestRemoteMissingAsksAboutAnyNumberOfRefs(t *testing.T) {
+	_, dial := startPackServer(t)
+
+	refs := make([]*proto.Ref, MaxMissingRefs+10)
+	for i := range refs {
+		refs[i] = proto.NewObject(&proto.Blob{Data: []byte(fmt.Sprint(i))}).Ref()
+	}
+
+	missing, err := dial("node-1").Missing(context.Background(), refs)
+	require.NoError(t, err)
+	require.Len(t, missing, len(refs))
+	require.True(t, missing[len(refs)-1].Equal(refs[len(refs)-1]))
 }

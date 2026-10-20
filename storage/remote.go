@@ -388,24 +388,107 @@ func (r *Client) put(ctx context.Context, object *proto.Object, assumed []*proto
 		pb.Merge(object, resp.Object)
 	}
 
-	if status.Code(err) == codes.FailedPrecondition {
-		msg := status.Convert(err).Message()
-		if strings.Contains(msg, backup.ErrNoSession.Error()) {
-			return nil, fmt.Errorf("%w: %s", backup.ErrNoSession, msg)
-		}
-
-		return nil, fmt.Errorf("%w: %s", backup.ErrDanglingRef, msg)
-	}
-
-	if status.Code(err) == codes.Aborted {
-		return nil, fmt.Errorf("%w: %s", backup.ErrSessionLost, status.Convert(err).Message())
-	}
-
-	if err != nil {
+	if err := fromWriteStatus(err); err != nil {
 		return nil, err
 	}
 
 	return resp.Missing, nil
+}
+
+// fromWriteStatus maps the codes a write answers with back to the store's
+// sentinel errors, keeping the server's message.
+func fromWriteStatus(err error) error {
+	msg := status.Convert(err).Message()
+
+	switch status.Code(err) {
+	case codes.FailedPrecondition:
+		if strings.Contains(msg, backup.ErrNoSession.Error()) {
+			return fmt.Errorf("%w: %s", backup.ErrNoSession, msg)
+		}
+
+		return fmt.Errorf("%w: %s", backup.ErrDanglingRef, msg)
+	case codes.Aborted:
+		return fmt.Errorf("%w: %s", backup.ErrSessionLost, msg)
+	case codes.Unimplemented:
+		return fmt.Errorf("%w: %s", backup.ErrNotImplemented, msg)
+	}
+
+	return err
+}
+
+var _ backup.Batcher = (*Client)(nil)
+
+// Missing implements backup.Batcher, asking MaxMissingRefs at a time.
+func (r *Client) Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error) {
+	ctx = r.outgoing(ctx)
+
+	var missing []*proto.Ref
+
+	for start := 0; start < len(refs); start += MaxMissingRefs {
+		resp, err := r.store.Missing(ctx, &proto.MissingRequest{Refs: refs[start:min(start+MaxMissingRefs, len(refs))]})
+		if err != nil {
+			return nil, fromWriteStatus(err)
+		}
+
+		missing = append(missing, resp.GetMissing()...)
+	}
+
+	return missing, nil
+}
+
+// putObjectsMessage is about how many bytes of objects one PutObjects
+// message carries, well below what a server receives by default.
+const putObjectsMessage = 2 << 20
+
+// PutObjects implements backup.Batcher in one stream.
+func (r *Client) PutObjects(ctx context.Context, objects []*proto.Object) error {
+	for _, object := range objects {
+		if err := object.Validate(); err != nil {
+			return err
+		}
+	}
+
+	ctx, cancel := context.WithCancel(r.outgoing(ctx))
+	defer cancel()
+
+	stream, err := r.store.PutObjects(ctx)
+	if err != nil {
+		return fromWriteStatus(err)
+	}
+
+	var (
+		batch []*proto.Object
+		size  int
+	)
+
+	send := func() error {
+		err := stream.Send(&proto.PutObjectsRequest{Objects: batch})
+		batch, size = nil, 0
+
+		return err
+	}
+
+	for _, object := range objects {
+		n := pb.Size(object)
+		if size > 0 && size+n > putObjectsMessage {
+			// the server's answer, which CloseAndRecv reads, says why a
+			// send ended the stream
+			if err := send(); err != nil {
+				break
+			}
+		}
+
+		batch = append(batch, object)
+		size += n
+	}
+
+	if len(batch) > 0 {
+		_ = send()
+	}
+
+	_, err = stream.CloseAndRecv()
+
+	return fromWriteStatus(err)
 }
 
 // Presence implements backup.PresenceSource.
@@ -1015,6 +1098,39 @@ func (r *Server) Put(ctx context.Context, request *proto.PutRequest) (*proto.Put
 	}
 
 	return &proto.PutResponse{Ref: receipt.Ref, Object: receipt.Object, Missing: receipt.Missing}, nil
+}
+
+// Missing implements proto.StoreServer.
+func (r *Server) Missing(ctx context.Context, request *proto.MissingRequest) (*proto.MissingResponse, error) {
+	missing, err := r.store.Missing(ctx, request.GetRefs())
+	if err != nil {
+		return nil, ToStatus(err)
+	}
+
+	return &proto.MissingResponse{Missing: missing}, nil
+}
+
+// PutObjects implements proto.StoreServer, storing each message's objects
+// before it reads the next.
+func (r *Server) PutObjects(stream proto.Store_PutObjectsServer) error {
+	var stored int64
+
+	for {
+		request, err := stream.Recv()
+		if err == io.EOF {
+			return stream.SendAndClose(&proto.PutObjectsResponse{Stored: stored})
+		}
+
+		if err != nil {
+			return err
+		}
+
+		if err := r.store.PutObjects(stream.Context(), request.GetObjects()); err != nil {
+			return ToStatus(err)
+		}
+
+		stored += int64(len(request.GetObjects()))
+	}
 }
 
 // LatestCommit answers with an empty ref when the set has no commit.

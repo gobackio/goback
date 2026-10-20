@@ -22,6 +22,25 @@ message PutRequest {
     repeated Ref assumed_refs = 3;
 }
 
+message MissingRequest {
+    repeated Ref refs = 1;
+}
+
+message MissingResponse {
+    // the refs asked about that the store does not hold, in the order asked
+    repeated Ref missing = 1;
+}
+
+message PutObjectsRequest {
+    // objects to store as Put stores them, neither commits nor pins; an
+    // object may refer to objects of its own message and earlier ones
+    repeated Object objects = 1;
+}
+
+message PutObjectsResponse {
+    int64 stored = 1;
+}
+
 message PutResponse {
     // the ref the object was stored under
     Ref ref = 1;
@@ -409,6 +428,11 @@ message GetTreeResponse {
 
 service Store {
     rpc Put (PutRequest) returns (PutResponse) {}
+    // Missing answers which of many refs the store does not hold
+    rpc Missing (MissingRequest) returns (MissingResponse) {}
+    // PutObjects stores the objects of every message of the stream; a
+    // refused object fails the call, with what came before it stored
+    rpc PutObjects (stream PutObjectsRequest) returns (PutObjectsResponse) {}
     // Get serves a commit, tree or file object the store references; blobs
     // are read through ReadFile
     rpc Get (GetRequest) returns (GetResponse) {}
