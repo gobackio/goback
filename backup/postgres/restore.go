@@ -202,6 +202,10 @@ func (r *Restore) chooseBase(ctx context.Context, wal *walCommit) (*proto.Ref, *
 }
 
 func (r *Restore) unusable(base *proto.Commit, wal *walCommit) string {
+	if base.GetIncomplete() {
+		return "lost content"
+	}
+
 	if !r.At.IsZero() && time.Unix(base.GetTimestamp()+1, 0).After(r.At) {
 		return "ended after the moment asked for"
 	}

@@ -149,7 +149,7 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 
 	for i := len(l.entries) - 1; i >= 0; i-- {
 		e := l.entries[i]
-		if !e.info.IsDir() {
+		if !e.info.IsDir() || e.stat.GetLost() {
 			continue
 		}
 
@@ -253,7 +253,7 @@ func (l *treeList) addPaths(ctx context.Context, root *proto.Ref, dir string, to
 			return err
 		}
 
-		if node.GetStat().IsDir() {
+		if node.GetStat().IsDir() && !node.GetStat().GetLost() {
 			if err := l.add(ctx, node.GetRef(), NameToken(l.reader.key, token, node.GetStat().GetName()), path, top); err != nil {
 				return err
 			}
@@ -356,6 +356,14 @@ func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts
 
 	for _, e := range entries {
 		switch {
+		case e.stat.GetLost() && e.stat.GetType() != proto.NodeType_NODE_FILE:
+			atomic.AddInt64(&r.stats.Lost, 1)
+
+			if opts.Done != nil {
+				if err := opts.Done(RestoredFile{Path: e.path, Outcome: OutcomeLost}); err != nil {
+					return err
+				}
+			}
 		case e.info.IsDir():
 			if r.DryRun {
 				continue

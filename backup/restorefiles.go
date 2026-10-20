@@ -64,6 +64,16 @@ func (r *Restorer) RestoreFiles(ctx context.Context, files []FileToRestore, done
 			break
 		}
 
+		if file.Stat.GetLost() {
+			r.countFile(gctx, OutcomeLost)
+			if err := done(i, OutcomeLost, nil); err != nil {
+				_ = grp.Wait()
+				return err
+			}
+
+			continue
+		}
+
 		if cloudOnly(file.Stat) {
 			atomic.AddInt64(&r.stats.CloudOnly, 1)
 			if err := done(i, OutcomeCloudOnly, nil); err != nil {

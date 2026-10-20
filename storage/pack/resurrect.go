@@ -9,6 +9,7 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/progress"
 	"github.com/gobackio/goback/proto"
+	pb "google.golang.org/protobuf/proto"
 )
 
 // commitAfterResurrect, when set, runs between a commit's resurrection
@@ -92,8 +93,9 @@ const checkChunk = 10_000
 // session's own and returns the refs it reaches outside them: what the
 // session deduplicated. It fails with a backup.MissingError naming the refs
 // it reaches that no archive the session sees holds. It reports the refs
-// it walked as progress.PhaseCheck.
-func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit *proto.Object) ([]*proto.Ref, error) {
+// it walked as progress.PhaseCheck. A non-nil parents gets, for every ref
+// it reaches below the commit, the objects that reference it.
+func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit *proto.Object, parents map[string][]*proto.Ref) ([]*proto.Ref, error) {
 	pending, err := ps.index.PendingArchives(ws.id)
 	if err != nil {
 		return nil, err
@@ -126,8 +128,14 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 			var below []*proto.Ref
 
 			for _, ref := range chunk {
+				// the commit is at hand, stored or not
+				if ref.Equal(root) {
+					below = append(below, ref)
+					continue
+				}
+
 				copies := found[string(ref.Hash)]
-				if len(copies) == 0 && !ref.Equal(root) && !ps.foreignRefs {
+				if len(copies) == 0 && !ps.foreignRefs {
 					missing = append(missing, ref)
 					continue
 				}
@@ -149,7 +157,16 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 			}
 
 			for _, obj := range objects {
+				var ref *proto.Ref
+				if parents != nil {
+					ref = obj.Ref()
+				}
+
 				for _, child := range backup.References(obj) {
+					if parents != nil {
+						parents[string(child.Hash)] = append(parents[string(child.Hash)], ref)
+					}
+
 					if !seen[string(child.Hash)] {
 						seen[string(child.Hash)] = true
 						next = append(next, child)
@@ -329,4 +346,57 @@ func (ps *PackStorage) sealedTombstones(refs []*proto.Ref, sealed map[int64]bool
 	}
 
 	return condemned, nil
+}
+
+// markLost returns a commit that asks to be stored incomplete as it is to
+// be stored: rewritten past what the session's view lacks, or with the
+// flag cleared when it lacks nothing.
+func (ps *PackStorage) markLost(ctx context.Context, commit *proto.Object) (*proto.Object, error) {
+	ws, err := ps.writeSessionFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	parents := map[string][]*proto.Ref{}
+
+	var missing *backup.MissingError
+
+	if ws.session != nil {
+		if err := ps.flushSession(ws); err != nil && !lapsed(err) {
+			return nil, err
+		}
+
+		_, err = ps.skippedRefs(ctx, ws, commit, parents)
+		if err != nil && !errors.As(err, &missing) {
+			return nil, err
+		}
+	}
+
+	if missing == nil {
+		whole := pb.Clone(commit.GetCommit()).(*proto.Commit)
+		whole.Incomplete = false
+
+		return proto.NewObject(whole), nil
+	}
+
+	above := map[string]bool{}
+
+	for frontier := missing.Refs; len(frontier) > 0; {
+		var next []*proto.Ref
+
+		for _, ref := range frontier {
+			for _, parent := range parents[string(ref.Hash)] {
+				if !above[string(parent.Hash)] {
+					above[string(parent.Hash)] = true
+					next = append(next, parent)
+				}
+			}
+		}
+
+		frontier = next
+	}
+
+	ps.logger.Info("a commit marks what its session lacks as lost", "session", ws.id, "lost", len(missing.Refs))
+
+	return backup.MarkLost(ctx, ps, commit, missing.Refs, func(ref *proto.Ref) bool { return above[string(ref.Hash)] })
 }

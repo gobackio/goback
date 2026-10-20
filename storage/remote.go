@@ -349,7 +349,7 @@ func reachedTrees(ref *proto.Ref, received map[string]*proto.Object) ([]*proto.O
 		queue = append(queue, tree.Splits...)
 
 		for _, node := range tree.Nodes {
-			if node.GetStat().IsDir() {
+			if node.GetStat().IsDir() && node.Ref != nil {
 				queue = append(queue, node.Ref)
 			}
 		}

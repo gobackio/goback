@@ -78,6 +78,8 @@ const (
 	// OutcomeCloudOnly means the file was left out: its content was only in
 	// a cloud sync service when it was backed up, and was not read.
 	OutcomeCloudOnly
+	// OutcomeLost means the entry was left out: the store lost its content.
+	OutcomeLost
 )
 
 // A Hole is a range of a salvaged file that no source could fill; the
@@ -105,6 +107,8 @@ func (o Outcome) String() string {
 		return "salvaged"
 	case OutcomeCloudOnly:
 		return "cloud only"
+	case OutcomeLost:
+		return "lost"
 	}
 
 	return "unknown"
@@ -131,6 +135,8 @@ type RestoreStats struct {
 	// CloudOnly counts the files left out because their content was only
 	// in a cloud sync service when they were backed up.
 	CloudOnly int64 `json:"cloud_only"`
+	// Lost counts the entries left out because the store lost them.
+	Lost int64 `json:"lost"`
 
 	BytesFromDestination int64 `json:"bytes_from_destination"`
 	BytesFromSeeds       int64 `json:"bytes_from_seeds"`
@@ -226,6 +232,7 @@ func (r *Restorer) Stats() RestoreStats {
 		SecurityLeftOut:      atomic.LoadInt64(&r.stats.SecurityLeftOut),
 		StreamsLeftOut:       atomic.LoadInt64(&r.stats.StreamsLeftOut),
 		CloudOnly:            atomic.LoadInt64(&r.stats.CloudOnly),
+		Lost:                 atomic.LoadInt64(&r.stats.Lost),
 		BytesFromDestination: atomic.LoadInt64(&r.stats.BytesFromDestination),
 		BytesFromSeeds:       atomic.LoadInt64(&r.stats.BytesFromSeeds),
 		BytesFromCache:       atomic.LoadInt64(&r.stats.BytesFromCache),
@@ -261,6 +268,8 @@ func (r *Restorer) countFile(ctx context.Context, outcome Outcome) {
 		atomic.AddInt64(&r.stats.Unchanged, 1)
 	case OutcomeSkipped:
 		atomic.AddInt64(&r.stats.Skipped, 1)
+	case OutcomeLost:
+		atomic.AddInt64(&r.stats.Lost, 1)
 	}
 
 	restoreFiles.Add(ctx, 1, metric.WithAttributes(keyOutcome.String(outcome.String())))
@@ -313,6 +322,11 @@ func (r *Restorer) readBudget() (*semaphore.Weighted, int64) {
 func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.FileInfo, ref *proto.Ref) (Outcome, error) {
 	if err := r.checkVerify(); err != nil {
 		return 0, err
+	}
+
+	if stat.GetLost() {
+		r.countFile(ctx, OutcomeLost)
+		return OutcomeLost, nil
 	}
 
 	fsys := r.fs()

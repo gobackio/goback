@@ -13,6 +13,10 @@ message Tree {
   // an ordered list of tree objects whose nodes, concatenated, form this
   // tree; set instead of nodes for directories above the fan-out limit
   repeated Ref splits = 2;
+
+  // entries under this tree are lost: marked lost below it, or gone with a
+  // split so that not even their names are left
+  bool incomplete = 3;
 }
 
 message TreeNode {

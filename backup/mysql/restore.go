@@ -172,6 +172,10 @@ func (r *Restore) chooseDump(ctx context.Context, binlogs *binlogCommit) (*proto
 // unusable says why dump can't be restored to At with binlogs, or returns
 // the binlogs to replay after it.
 func (r *Restore) unusable(dump *proto.Commit, binlogs *binlogCommit) ([]*proto.TreeNode, string) {
+	if dump.GetIncomplete() {
+		return nil, "lost content"
+	}
+
 	if !r.At.IsZero() && time.Unix(dump.GetTimestamp()+1, 0).After(r.At) {
 		return nil, "ended after the moment asked for"
 	}
@@ -362,7 +366,12 @@ func (r *Restore) replay(ctx context.Context, dump *proto.Commit, plan replayPla
 		}
 
 		path := fsys.Join(dir, name)
-		if _, err := restorer.RestoreFile(ctx, path, node.Stat, node.Ref); err != nil {
+		outcome, err := restorer.RestoreFile(ctx, path, node.Stat, node.Ref)
+		if err == nil && outcome == backup.OutcomeLost {
+			err = backup.ErrLost
+		}
+
+		if err != nil {
 			return fmt.Errorf("fetching %s: %w", name, err)
 		}
 

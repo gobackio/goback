@@ -45,4 +45,10 @@ message Commit {
   // when the commit was written plain; absent on a commit written before
   // it was recorded
   optional bytes key_id = 14;
+
+  // entries of the tree are lost. A client sets it on a commit whose content
+  // the store may lack: the store marks what it lacks lost and stores the
+  // commit with the trees rewritten, or with the flag cleared when it lacks
+  // nothing
+  bool incomplete = 15;
 }

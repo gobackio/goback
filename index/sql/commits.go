@@ -463,7 +463,7 @@ func (x *Index) applyCommit(ctx context.Context, commit *proto.Commit, ref *prot
 			SetTree(commit.Tree.Hash).SetParent(commit.GetParent().GetHash()).SetAgentID(commit.GetAgentId()).
 			SetScanStartNs(commit.GetScanStartNs()).SetPolicyVersion(commit.GetPolicyVersion()).SetConsistent(commit.GetConsistent()).
 			SetSetID(setID).SetPartial(commit.Partial).SetMetadata(commit.GetMetadata()).SetLogicalSize(size).SetFileCount(files).
-			SetIncomplete(len(diff.holes)+len(diff.gaps) > 0)
+			SetIncomplete(commit.GetIncomplete() || len(diff.holes)+len(diff.gaps) > 0)
 		if commit.KeyId != nil {
 			row.SetKeyID(hex.EncodeToString(commit.KeyId))
 		}
@@ -923,6 +923,12 @@ func (d *treeDiff) dir(l level, trees map[string][]byte, files map[string]*ent.F
 		info := node.GetStat()
 
 		child := proto.JoinPath(l.dir, info.GetName())
+
+		// a lost directory lists nothing, so what it held vanished
+		if info.GetLost() && info.IsDir() {
+			continue
+		}
+
 		seen[child] = true
 
 		for _, ref := range info.MetadataRefs() {
@@ -962,7 +968,7 @@ func (d *treeDiff) dir(l level, trees map[string][]byte, files map[string]*ent.F
 
 		d.files = append(d.files, fileRow{path: child, dir: l.dir, node: node})
 
-		if info.GetType() == proto.NodeType_NODE_SYMLINK {
+		if info.GetType() == proto.NodeType_NODE_SYMLINK || info.GetLost() {
 			continue
 		}
 

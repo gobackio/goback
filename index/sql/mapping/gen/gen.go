@@ -57,6 +57,7 @@ func (m MapperImpl) Commit(in *ent.CommitRow) *proto.Commit {
 		Consistent:    in.Consistent,
 		Metadata:      in.Metadata,
 		KeyId:         mapping.KeyID(in.KeyID),
+		Incomplete:    in.Incomplete,
 	}
 }
 

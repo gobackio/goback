@@ -82,6 +82,10 @@ func (c *concurrentTreeTraverser) traverseTree(ctx context.Context, t *concurren
 			return err
 		}
 
+		if info.Lost {
+			continue
+		}
+
 		subTree, err := LoadTree(ctx, c.store, node.Ref)
 		if err != nil {
 			return errors.Wrapf(err, "Sub tree %x could not be retrieved", node.Ref.Hash)

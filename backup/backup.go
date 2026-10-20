@@ -91,7 +91,7 @@ func (br *BackupReader) walk(ctx context.Context, trees Getter, path string, par
 			return errors.Wrap(err, "WalkFn returned error")
 		}
 
-		if info.IsDir() {
+		if info.IsDir() && !info.Lost {
 			token := NameToken(br.key, parent, info.Name)
 
 			subTree, err := OpenTree(ctx, trees, node.Ref, br.key, token)
@@ -128,6 +128,10 @@ func (br *BackupReader) getTree(ctx context.Context, ref *proto.Ref, parent []by
 	name := parts[0]
 	for _, node := range tree.Nodes {
 		if node.Stat.IsDir() && string(node.Stat.Name) == name {
+			if node.Stat.Lost {
+				return nil, nil, errors.Wrap(ErrLost, name)
+			}
+
 			return br.getTree(ctx, node.Ref, NameToken(br.key, parent, node.Stat.Name), parts[1:])
 		}
 	}

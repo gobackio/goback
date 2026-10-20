@@ -359,7 +359,7 @@ func (s *Store) Tree(ctx context.Context, ref *proto.Ref, maxDepth uint32, fn fu
 			}
 
 			for _, node := range tree.Nodes {
-				if node.GetStat().IsDir() {
+				if node.GetStat().IsDir() && node.Ref != nil {
 					queue = append(queue, &pending{ref: node.Ref, depth: next.depth + 1})
 				}
 			}

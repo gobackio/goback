@@ -77,7 +77,11 @@ func (r *Restore) copyWAL(ctx context.Context, dir string, base *proto.Commit, w
 
 	restorer := &backup.Restorer{Store: wal.files.objects, Key: wal.files.key, FS: fsys, Workers: r.Workers}
 
-	err = restorer.RestoreFiles(ctx, files, func(k int, _ backup.Outcome, err error) error {
+	err = restorer.RestoreFiles(ctx, files, func(k int, outcome backup.Outcome, err error) error {
+		if err == nil && outcome == backup.OutcomeLost {
+			err = backup.ErrLost
+		}
+
 		if err == nil && pads[k] {
 			err = padSegment(ctx, random, files[k].Path)
 		}
@@ -158,7 +162,12 @@ func (t *commitFiles) restoreWAL(ctx context.Context, fsys backup.WriteFS, path 
 		restorer.FS = padFS{WriteFS: fsys, size: node.Stat.GetSize()}
 	}
 
-	if _, err := restorer.RestoreFile(ctx, path, node.Stat, node.Ref); err != nil {
+	outcome, err := restorer.RestoreFile(ctx, path, node.Stat, node.Ref)
+	if err == nil && outcome == backup.OutcomeLost {
+		err = fmt.Errorf("%s: %w", path, backup.ErrLost)
+	}
+
+	if err != nil {
 		return err
 	}
 

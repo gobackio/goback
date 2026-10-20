@@ -51,6 +51,10 @@ message FileInfo {
 	// the tag of a reparse point that is not a symlink, such as a cloud
 	// placeholder
 	uint32 reparse_tag = 16;
+
+	// the entry's content, or a directory's listing, is gone from the store;
+	// its refs are cleared and a restore leaves it out
+	bool lost = 17;
 }
 
 // Stream is one alternate data stream of a file or directory.

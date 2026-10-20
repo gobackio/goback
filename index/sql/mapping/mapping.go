@@ -36,6 +36,13 @@ type Mapper interface {
 	// field:User using:"Owner"
 	// field:Group using:"Owner"
 	// field:Type using:"NodeType"
+	// field:CtimeNs from:"-"
+	// field:BirthtimeNs from:"-"
+	// field:Attributes from:"-"
+	// field:Security from:"-"
+	// field:Streams from:"-"
+	// field:ReparseTag from:"-"
+	// field:Lost from:"-"
 	FileInfo(in *ent.File) *proto.FileInfo
 
 	// field:Ref using:"Ref"

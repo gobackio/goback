@@ -242,6 +242,10 @@ func logStats(stats backup.RestoreStats) {
 		log.Printf("%d files left out: their content was only in the cloud when they were backed up", stats.CloudOnly)
 	}
 
+	if stats.Lost > 0 {
+		log.Printf("%d entries left out: the store lost them", stats.Lost)
+	}
+
 	if stats.StreamsLeftOut > 0 {
 		log.Printf("%d alternate data streams left out: the destination cannot hold them", stats.StreamsLeftOut)
 	}

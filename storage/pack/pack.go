@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
+	pb "google.golang.org/protobuf/proto"
 )
 
 const (
@@ -468,6 +469,18 @@ func (ps *PackStorage) Put(ctx context.Context, object *proto.Object) error {
 	ctx, span := tracer.Start(ctx, "PackStorage.Put")
 	defer span.End()
 
+	// rewritten in place, so whoever indexes or answers for the commit
+	// after the put has the one stored
+	if object.Type() == proto.ObjectType_COMMIT && object.GetCommit().GetIncomplete() {
+		stored, err := ps.markLost(ctx, object)
+		if err != nil {
+			return err
+		}
+
+		pb.Reset(object)
+		pb.Merge(object, stored)
+	}
+
 	return ps.putWriteCache(ctx, object, ps.put(ctx, object))
 }
 
@@ -600,7 +613,7 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 
 	// a commit missing anything is refused before it takes anything back,
 	// so its session may store what is missing and commit again
-	skipped, err := ps.skippedRefs(ctx, ws, commit)
+	skipped, err := ps.skippedRefs(ctx, ws, commit, nil)
 	if err != nil {
 		return err
 	}

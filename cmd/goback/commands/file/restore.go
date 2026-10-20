@@ -39,6 +39,10 @@ func (f *file) restore() error {
 			log.Print("left out: its content was only in the cloud when it was backed up")
 		}
 
+		if stats.Lost > 0 {
+			log.Print("left out: the store lost it")
+		}
+
 		if stats.StreamsLeftOut > 0 {
 			log.Printf("%d alternate data streams left out: the destination cannot hold them", stats.StreamsLeftOut)
 		}

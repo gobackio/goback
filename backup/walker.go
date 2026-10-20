@@ -1034,7 +1034,7 @@ func (w *Walker) walkSubdir(ctx context.Context, base []*proto.TreeNode) ([]*pro
 	token := NameToken(w.Key, nil, []byte(w.Subdir))
 
 	var inner []*proto.TreeNode
-	if prev != nil && prev.Stat.IsDir() {
+	if prev != nil && prev.Stat.IsDir() && prev.Ref != nil {
 		tree, err := w.trees.load(ctx, prev.Ref, token)
 		if err != nil {
 			return nil, false, fmt.Errorf("loading the base tree of %s: %w", w.Subdir, err)
@@ -1079,7 +1079,7 @@ func (w *Walker) walkSubdir(ctx context.Context, base []*proto.TreeNode) ([]*pro
 
 func (w *Walker) walkChildDir(ctx context.Context, dir, rel string, token []byte, info os.FileInfo, baseNode *proto.TreeNode) (*proto.TreeNode, bool, error) {
 	var baseChildren []*proto.TreeNode
-	if baseNode != nil && baseNode.Stat.IsDir() {
+	if baseNode != nil && baseNode.Stat.IsDir() && baseNode.Ref != nil {
 		tree, err := w.trees.load(ctx, baseNode.Ref, token)
 		if err != nil {
 			w.logger().Warn("base tree unavailable, reading the directory in full", "tree", fmt.Sprintf("%x", baseNode.Ref.Hash), "dir", dir, "err", err)

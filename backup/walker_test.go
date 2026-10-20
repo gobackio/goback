@@ -149,7 +149,7 @@ func (m *memIndex) reachable(ctx context.Context, ref *proto.Ref) error {
 
 	for _, node := range tree.Nodes {
 		switch {
-		case node.Stat.IsDir():
+		case node.Stat.IsDir() && node.Ref != nil:
 			if err := m.reachable(ctx, node.Ref); err != nil {
 				return err
 			}
@@ -196,7 +196,7 @@ func (m *memIndex) GetTree(ctx context.Context, ref *proto.Ref, maxDepth uint32)
 		}
 
 		for _, node := range tree.GetNodes() {
-			if node.Stat.IsDir() {
+			if node.Stat.IsDir() && node.Ref != nil {
 				queue = append(queue, pending{ref: node.Ref, depth: next.depth + 1})
 			}
 		}

@@ -508,7 +508,7 @@ func canonicalCommit(c *Commit) ([]byte, error) {
 		b = protowire.AppendBytes(b, c.KeyId)
 	}
 
-	return b, nil
+	return appendBool(b, 15, c.Incomplete), nil
 }
 
 func canonicalPin(p *Pin) ([]byte, error) {
@@ -716,7 +716,9 @@ func canonicalFileInfo(info *FileInfo) ([]byte, error) {
 		b = appendMessage(b, 15, appendVarint(body, 3, uint64(stream.Size)))
 	}
 
-	return appendVarint(b, 16, uint64(info.ReparseTag)), nil
+	b = appendVarint(b, 16, uint64(info.ReparseTag))
+
+	return appendBool(b, 17, info.Lost), nil
 }
 
 // SortStreams puts streams in the order a FileInfo records them, by name.
@@ -766,6 +768,10 @@ func canonicalTree(t *Tree) ([]byte, error) {
 			if node.Ref != nil {
 				return nil, invalid("tree node %q: symlink with a ref", name)
 			}
+		} else if node.Stat.Lost {
+			if node.Ref != nil {
+				return nil, invalid("tree node %q: lost with a ref", name)
+			}
 		} else {
 			body, err = appendRef(body, 2, node.Ref)
 			if err != nil {
@@ -785,7 +791,7 @@ func canonicalTree(t *Tree) ([]byte, error) {
 		}
 	}
 
-	return b, nil
+	return appendBool(b, 3, t.Incomplete), nil
 }
 
 // InlineLimit is the largest file stored inline in its File object.

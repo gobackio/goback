@@ -343,6 +343,10 @@ func (v *versions) dir(ctx context.Context, dir string, t *proto.Tree) error {
 
 	for _, node := range t.GetNodes() {
 		child := proto.JoinPath(dir, node.GetStat().GetName())
+		if node.GetStat().GetLost() && node.GetStat().IsDir() {
+			continue
+		}
+
 		if node.GetStat().IsDir() {
 			dirs = append(dirs, child)
 		} else {
@@ -358,6 +362,10 @@ func (v *versions) dir(ctx context.Context, dir string, t *proto.Tree) error {
 	for _, node := range t.GetNodes() {
 		info := node.GetStat()
 		child := proto.JoinPath(dir, info.GetName())
+
+		if info.GetLost() && info.IsDir() {
+			continue
+		}
 
 		if !info.IsDir() {
 			if err := v.file(ctx, child, dir, node, fileRows[child]); err != nil {

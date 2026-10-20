@@ -26,7 +26,10 @@ type Tree struct {
 	Nodes []*TreeNode            `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	// an ordered list of tree objects whose nodes, concatenated, form this
 	// tree; set instead of nodes for directories above the fan-out limit
-	Splits        []*Ref `protobuf:"bytes,2,rep,name=splits,proto3" json:"splits,omitempty"`
+	Splits []*Ref `protobuf:"bytes,2,rep,name=splits,proto3" json:"splits,omitempty"`
+	// entries under this tree are lost: marked lost below it, or gone with a
+	// split so that not even their names are left
+	Incomplete    bool `protobuf:"varint,3,opt,name=incomplete,proto3" json:"incomplete,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -73,6 +76,13 @@ func (x *Tree) GetSplits() []*Ref {
 		return x.Splits
 	}
 	return nil
+}
+
+func (x *Tree) GetIncomplete() bool {
+	if x != nil {
+		return x.Incomplete
+	}
+	return false
 }
 
 type TreeNode struct {
@@ -134,11 +144,14 @@ const file_tree_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
 	"tree.proto\x12\x05proto\x1a\n" +
-	"file.proto\x1a\tref.proto\"Q\n" +
+	"file.proto\x1a\tref.proto\"q\n" +
 	"\x04Tree\x12%\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x0f.proto.TreeNodeR\x05nodes\x12\"\n" +
 	"\x06splits\x18\x02 \x03(\v2\n" +
-	".proto.RefR\x06splits\"M\n" +
+	".proto.RefR\x06splits\x12\x1e\n" +
+	"\n" +
+	"incomplete\x18\x03 \x01(\bR\n" +
+	"incomplete\"M\n" +
 	"\bTreeNode\x12#\n" +
 	"\x04stat\x18\x01 \x01(\v2\x0f.proto.FileInfoR\x04stat\x12\x1c\n" +
 	"\x03ref\x18\x02 \x01(\v2\n" +

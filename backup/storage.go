@@ -20,6 +20,9 @@ var (
 	ErrNotImplemented = errors.New("the store doesn't implement this feature")
 	// ErrNotFound is returned when nothing matches the given ref or set.
 	ErrNotFound = errors.New("the requested object was not found")
+	// ErrLost is returned for an entry of a tree whose content the store
+	// lost.
+	ErrLost = errors.New("the store lost the entry's content")
 	// ErrDanglingRef is returned when an object references objects the store
 	// does not hold.
 	ErrDanglingRef = errors.New("object references missing objects")
