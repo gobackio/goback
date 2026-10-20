@@ -148,6 +148,8 @@ func (s *scanner) next(ctx context.Context) (scanJob, bool) {
 			return job, true
 		}
 
+		// the jobs it passed over may have been the last
+		s.settle()
 		s.cond.Wait()
 	}
 }
@@ -308,6 +310,9 @@ func (s *scanner) take(job scanJob) *scanned {
 	// a directory counted already offered what it holds
 	if !s.closed && (s.count(job, found) || !s.counting) {
 		s.offer(job, found)
+	}
+
+	if !s.closed {
 		s.settle()
 	}
 	s.cond.Broadcast()
