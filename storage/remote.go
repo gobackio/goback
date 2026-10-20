@@ -566,6 +566,13 @@ func (r *Client) sendUpload(ctx context.Context, id string, file io.Reader, size
 		return backup.UploadStatus{}, fromWriteStatus(err)
 	}
 
+	if resp.GetStatus() != nil {
+		status := m.FromUploadStatus(resp.GetStatus())
+		status.ID = id
+
+		return status, nil
+	}
+
 	return backup.UploadStatus{
 		ID:         id,
 		State:      backup.UploadDone,
@@ -1292,12 +1299,12 @@ func (r *Server) SendUpload(stream proto.Store_SendUploadServer) error {
 		return err
 	}
 
-	ingested, err := r.store.SendUpload(stream.Context(), first.GetUploadId(), &uploadStream{stream: stream, data: first.GetData()})
+	sent, err := r.store.SendUpload(stream.Context(), first.GetUploadId(), &uploadStream{stream: stream, data: first.GetData()})
 	if err != nil {
 		return ToStatus(err)
 	}
 
-	return stream.SendAndClose(&proto.SendUploadResponse{Objects: ingested.Objects, Stored: ingested.Stored})
+	return stream.SendAndClose(&proto.SendUploadResponse{Objects: sent.Objects, Stored: sent.Stored, Status: m.UploadStatus(sent)})
 }
 
 // uploadStream reads the bytes of a SendUpload stream.

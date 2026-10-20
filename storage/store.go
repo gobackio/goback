@@ -35,6 +35,12 @@ type Store struct {
 	// store's own when it has one.
 	Lease time.Duration
 
+	// CommitUploaded, when set, takes the commit an upload file sent to
+	// SendUpload held under the upload's id, once the rest of the file is
+	// stored, and answers where the upload stands; nil puts the commit at
+	// once.
+	CommitUploaded func(ctx context.Context, upload string, commit *proto.Object) (backup.UploadStatus, error)
+
 	uploads uploads
 }
 

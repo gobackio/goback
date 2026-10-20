@@ -151,14 +151,17 @@ const (
 )
 
 // Ingested is what Ingest did: the objects the file held, and how many of
-// them the store didn't hold already.
+// them the store didn't hold already. Commit is the commit the file held,
+// which Ingest leaves for the caller to put.
 type Ingested struct {
 	Objects, Stored int64
+	Commit          *proto.Object
 }
 
 // Ingest stores the objects of the upload file r in b, a batch at a time,
 // skipping those b holds already, so ingesting a file twice stores it once.
-// It asks b about at most 4,096 refs at once.
+// It asks b about at most 4,096 refs at once. A commit the file holds, at
+// most one, is not stored but answered in Ingested.Commit.
 // It reports its progress as progress.OpIngest, bytes counting the file's
 // bytes against size.
 func Ingest(ctx context.Context, r io.Reader, size int64, b backup.Batcher) (Ingested, error) {
@@ -228,6 +231,17 @@ func Ingest(ctx context.Context, r io.Reader, size int64, b backup.Batcher) (Ing
 
 		if err != nil {
 			return done, err
+		}
+
+		if obj.GetCommit() != nil {
+			if done.Commit != nil {
+				return done, fmt.Errorf("%w: it holds more than one commit", ErrInvalid)
+			}
+
+			done.Commit = obj
+			done.Objects++
+
+			continue
 		}
 
 		batch = append(batch, obj)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gobackio/goback/progress"
+	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
 )
@@ -23,6 +24,17 @@ func lastUpdates(ctx context.Context) (context.Context, func() []progress.Update
 	})
 
 	return ctx, func() []progress.Update { return updates }
+}
+
+func TestACommitReportsTheDirectoriesItIndexed(t *testing.T) {
+	f := newFixture(t)
+	root := f.tree(f.dir("a", f.dir("b", f.file("c.txt", "one"))), f.file("d.txt", "two"))
+
+	ctx, updates := lastUpdates(f.ctx)
+	commit := proto.NewObject(&proto.Commit{Timestamp: f.clock.Unix(), Tree: root.Ref(), BackupSet: "world", AgentId: "node-1"})
+	require.NoError(t, f.x.Put(ctx, commit))
+
+	require.Equal(t, []progress.Update{{Op: progress.OpCommit, Phase: progress.PhaseIndex, Done: 3}}, updates())
 }
 
 func TestRetireReportsItsPhases(t *testing.T) {

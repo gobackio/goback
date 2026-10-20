@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/progress"
 	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
@@ -56,6 +57,32 @@ func TestACommitReadsWhatItsSessionStoredWithoutLookingUpEachObject(t *testing.T
 
 	require.NoError(t, store.Put(ctx, commitObject(root.Ref())))
 	require.Zero(t, locating.calls.Load())
+}
+
+func TestACommitReportsHowManyOfItsSessionsObjectsItChecked(t *testing.T) {
+	store := newTestStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx, _ := beginSession(t, store, "agent")
+
+	blobs := makeTestData(t, 20)
+	files := makeGCFiles(blobs)
+	root := treeOf(files)
+
+	for _, obj := range append(append(blobs, files...), root) {
+		require.NoError(t, store.Put(ctx, obj))
+	}
+
+	var last progress.Update
+
+	ctx = progress.NewContext(ctx, func(u progress.Update) {
+		if u.Op == progress.OpCommit && u.Phase == progress.PhaseCheck {
+			last = u
+		}
+	})
+
+	require.NoError(t, store.Put(ctx, commitObject(root.Ref())))
+	require.EqualValues(t, 1+1+len(files)+len(blobs), last.Done, "the commit, its tree, the files and their parts")
 }
 
 func TestACommitTakesBackItselfAndTheTombstonesOfWhatItSkipped(t *testing.T) {

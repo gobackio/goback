@@ -13,6 +13,7 @@ import (
 	"github.com/gobackio/goback/index/sql/ent"
 	"github.com/gobackio/goback/index/sql/ent/commitrow"
 	"github.com/gobackio/goback/index/sql/ent/set"
+	"github.com/gobackio/goback/progress"
 	"github.com/gobackio/goback/proto"
 
 	"golang.org/x/sync/errgroup"
@@ -227,7 +228,8 @@ func (x *Index) indexGroup(ctx context.Context, target index.IndexedSet, group [
 			commit.BackupSet, commit.SetId = target.Set, uint64(target.SetID)
 		}
 
-		placed, err := x.indexCommit(ctx, commit, c.ref, false, false)
+		// the caller counts the commits; their walks are no commit operation
+		placed, err := x.indexCommit(progress.NewContext(ctx, nil), commit, c.ref, false, false)
 		if err != nil {
 			return counts, err
 		}

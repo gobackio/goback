@@ -103,3 +103,27 @@ func TestIngestFailsWithWhatBrokeTheRead(t *testing.T) {
 		require.NotErrorIs(t, err, ErrInvalid)
 	}
 }
+
+func TestIngestLeavesTheCommitAFileHoldsToItsCaller(t *testing.T) {
+	part := proto.NewObject(&proto.Blob{Data: []byte("part")})
+	commit := proto.NewObject(&proto.Commit{Timestamp: 1, Tree: part.Ref(), BackupSet: "world"})
+
+	var buf bytes.Buffer
+
+	w, err := NewWriter(&buf)
+	require.NoError(t, err)
+	require.NoError(t, w.Write(commit))
+	require.NoError(t, w.Write(part))
+
+	h := &held{hashes: map[string]bool{}}
+	done, err := Ingest(context.Background(), bytes.NewReader(buf.Bytes()), int64(buf.Len()), h)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), done.Objects)
+	require.Equal(t, int64(1), done.Stored)
+	require.True(t, done.Commit.Ref().Equal(commit.Ref()))
+
+	require.NoError(t, w.Write(commit))
+
+	_, err = Ingest(context.Background(), bytes.NewReader(buf.Bytes()), int64(buf.Len()), &held{hashes: map[string]bool{}})
+	require.ErrorIs(t, err, ErrInvalid, "a file holds one commit at most")
+}

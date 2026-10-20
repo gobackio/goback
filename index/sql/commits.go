@@ -822,9 +822,14 @@ func (d *treeDiff) closeSubtrees(ctx context.Context, dirs []string) error {
 func (d *treeDiff) walk(ctx context.Context, root *proto.Tree) error {
 	next := []level{{dir: "", tree: root}}
 
+	phase := progress.Start(ctx, progress.OpCommit, progress.PhaseIndex, 0, 0)
+	defer phase.Finish()
+
 	for len(next) > 0 {
 		current := next
 		next = nil
+
+		phase.Add(int64(len(current)), 0)
 
 		dirs := make([]string, len(current))
 		for i, l := range current {

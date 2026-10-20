@@ -71,6 +71,9 @@ message SendUploadResponse {
     // the objects the file held, and how many the store didn't hold already
     int64 objects = 1;
     int64 stored = 2;
+    // where the upload stands; an older store sets none and answers only
+    // once it is done
+    UploadStatus status = 3;
 }
 
 message UploadStatusRequest {
@@ -94,6 +97,15 @@ message UploadStatus {
     int64 bytes_total = 5;
     string error = 6;
     int64 stored = 7;
+    // the commit the file held, as the store stored it, once done
+    Object commit = 8;
+    // what the commit references that the store holds nowhere, when it
+    // failed for that; the session stays open to send them and the commit
+    // again
+    repeated Ref missing = 9;
+    // the progress phase the store is in while ingesting, such as ingest,
+    // check or index; objects counts its units
+    string phase = 10;
 }
 
 message UploadStatusResponse {

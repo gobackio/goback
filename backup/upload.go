@@ -3,17 +3,22 @@ package backup
 import (
 	"context"
 	"io"
+
+	"github.com/gobackio/goback/proto"
 )
 
 // Uploader takes upload files (see storage/upload) whole, in the caller's
-// session.
+// session. A file may hold the session's commit, which the store puts once
+// it holds everything else the session uploaded; the commit ends the
+// session as Put's does.
 type Uploader interface {
 	// Upload sends the upload file of size bytes that file holds. The status
-	// is UploadDone once the store ingested it; otherwise UploadStatus
-	// tells, by the status's ID, when it has.
+	// is UploadDone once the store ingested it, and committed the commit it
+	// held; otherwise UploadStatus tells, by the status's ID, when it has.
 	Upload(ctx context.Context, file io.Reader, size int64) (UploadStatus, error)
-	// UploadStatus tells how far the store got with uploads, one status per
-	// id, in order.
+	// UploadStatus tells how far the store got with the caller's uploads,
+	// one status per id, in order. It needs no session, so it also answers
+	// once a commit ended the session.
 	UploadStatus(ctx context.Context, ids []string) ([]UploadStatus, error)
 }
 
@@ -30,8 +35,15 @@ const (
 
 // UploadStatus is how far a store got with an upload: Objects counts the
 // objects ingested, Stored those of them the store didn't hold already, and
-// Bytes the file's bytes read of BytesTotal. Error says why an upload
-// failed.
+// Bytes the file's bytes read of BytesTotal. While it is ingesting, Phase
+// names the progress phase the store is in, such as progress.PhaseIngest,
+// and Objects counts that phase's units. Error says why an upload failed.
+//
+// For a file that held a commit, Commit is the commit as the store stored
+// it once the upload is done. One that failed for what the commit
+// references and the store holds nowhere names that in Missing, as a
+// MissingError would, and leaves the session open to send them and the
+// commit again.
 type UploadStatus struct {
 	ID         string
 	State      UploadState
@@ -40,4 +52,7 @@ type UploadStatus struct {
 	Bytes      int64
 	BytesTotal int64
 	Error      string
+	Phase      string
+	Commit     *proto.Object
+	Missing    []*proto.Ref
 }

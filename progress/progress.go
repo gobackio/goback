@@ -22,6 +22,7 @@ const (
 	OpRetire  = "retire"
 	OpReIndex = "reindex"
 	OpIngest  = "ingest"
+	OpCommit  = "commit"
 )
 
 // Phases, the Phase of an Update. An operation enters its phases in the
@@ -55,6 +56,10 @@ const (
 	PhaseDamage   = "damage"
 	// ingest.
 	PhaseIngest = "ingest"
+	// commit: check, counting the session's objects walked, then index,
+	// counting the directories walked.
+	PhaseCheck = "check"
+	PhaseIndex = "index"
 )
 
 // Update is how far one phase of an operation has got. Done counts the

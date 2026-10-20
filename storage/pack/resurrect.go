@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/progress"
 	"github.com/gobackio/goback/proto"
 )
 
@@ -85,7 +86,8 @@ func (ps *PackStorage) sealedAtBegin(ws *writeSession) (uint64, error) {
 // skippedRefs walks down from the commit while the objects are the
 // session's own and returns the refs it reaches outside them: what the
 // session deduplicated. It fails with a backup.MissingError naming the refs
-// it reaches that no archive the session sees holds.
+// it reaches that no archive the session sees holds. It reports the refs
+// it walked as progress.PhaseCheck.
 func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit *proto.Object) ([]*proto.Ref, error) {
 	pending, err := ps.index.PendingArchives(ws.id)
 	if err != nil {
@@ -103,6 +105,9 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 	frontier := []*proto.Ref{root}
 
 	var skipped, missing []*proto.Ref
+
+	phase := progress.Start(ctx, progress.OpCommit, progress.PhaseCheck, 0, 0)
+	defer phase.Finish()
 
 	for len(frontier) > 0 {
 		found, err := ps.index.LocateCopies(frontier, scope)
@@ -145,6 +150,8 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 				}
 			}
 		}
+
+		phase.Add(int64(len(frontier)), 0)
 
 		frontier = next
 	}

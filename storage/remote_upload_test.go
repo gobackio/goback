@@ -179,3 +179,57 @@ func TestRemoteUploadPutsTheFileWhereTheStoreSays(t *testing.T) {
 	_, err = client.UploadStatus(context.Background(), []string{"up-1"})
 	require.ErrorIs(t, err, backup.ErrNotImplemented)
 }
+
+// withCommit is the upload file of uploadFile(t, n) and a commit of its
+// tree to world, and the commit.
+func withCommit(t *testing.T, n int) ([]byte, *proto.Object) {
+	t.Helper()
+
+	file, tree := uploadFile(t, n)
+	commit := proto.NewObject(&proto.Commit{Timestamp: 1, Tree: tree, AgentId: "node-1", BackupSet: "world"})
+
+	var buf bytes.Buffer
+
+	w, err := upload.NewWriter(&buf)
+	require.NoError(t, err)
+	require.NoError(t, w.Write(commit))
+
+	return append(file, buf.Bytes()[len("goback-upload/1\n"):]...), commit
+}
+
+func TestRemoteUploadCommitsTheCommitItsFileHoldsOnceTheRestIsStored(t *testing.T) {
+	_, dial := startPackServer(t)
+	client := dial("node-1")
+
+	sctx, err := client.BeginSession(context.Background(), &backup.Session{Set: "world"})
+	require.NoError(t, err)
+
+	file, commit := withCommit(t, 20)
+
+	done, err := client.Upload(sctx, bytes.NewReader(file), int64(len(file)))
+	require.NoError(t, err)
+	require.Equal(t, backup.UploadDone, done.State)
+	require.NotNil(t, done.Commit)
+	require.True(t, commit.GetCommit().GetTree().Equal(done.Commit.GetCommit().GetTree()))
+
+	latest, err := client.LatestCommit(context.Background(), "world")
+	require.NoError(t, err)
+	require.True(t, latest.Equal(done.Commit.Ref()), "the stored commit is the set's newest")
+
+	require.ErrorIs(t, client.TouchSession(sctx), backup.ErrNoSession, "the commit ended the session")
+}
+
+func TestRemoteUploadOfACommitOverWhatTheStoreLacksNamesIt(t *testing.T) {
+	gone := []*proto.Ref{proto.HashPayload(proto.ObjectType_BLOB, []byte("a")), proto.HashPayload(proto.ObjectType_TREE, []byte("b"))}
+	client := startServerWith(t, &missingIndex{memIndex: newMemIndex(), gone: gone}, nil)("node-1")
+
+	file, _ := withCommit(t, 3)
+
+	failed, err := client.Upload(context.Background(), bytes.NewReader(file), int64(len(file)))
+	require.NoError(t, err)
+	require.Equal(t, backup.UploadFailed, failed.State)
+	require.Len(t, failed.Missing, 2)
+	require.Equal(t, gone[0].Hash, failed.Missing[0].Hash)
+	require.Equal(t, gone[1].Hash, failed.Missing[1].Hash)
+	require.Nil(t, failed.Commit)
+}

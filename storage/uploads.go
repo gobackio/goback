@@ -72,24 +72,53 @@ func (s *Store) BeginUpload(ctx context.Context, size int64) (string, error) {
 
 // SendUpload ingests the upload file r under id, which BeginUpload issued
 // to the caller in its session; an id takes one file. A file longer than
-// BeginUpload was told is ErrInvalidRequest.
-func (s *Store) SendUpload(ctx context.Context, id string, r io.Reader) (upload.Ingested, error) {
+// BeginUpload was told is ErrInvalidRequest. The commit a file holds goes
+// to CommitUploaded, or is put once the rest is stored.
+func (s *Store) SendUpload(ctx context.Context, id string, r io.Reader) (backup.UploadStatus, error) {
 	p, err := auth.Require(ctx)
 	if err != nil {
-		return upload.Ingested{}, err
+		return backup.UploadStatus{}, err
 	}
 
 	session, err := s.writeSession(ctx)
 	if err != nil {
-		return upload.Ingested{}, err
+		return backup.UploadStatus{}, err
 	}
 
 	up, err := s.uploads.take(id, p.AgentID, session)
 	if err != nil {
-		return upload.Ingested{}, err
+		return backup.UploadStatus{}, err
 	}
 
-	return upload.Ingest(ctx, &capped{r: r, left: up.size}, up.size, s)
+	done, err := upload.Ingest(ctx, &capped{r: r, left: up.size}, up.size, s)
+	if err != nil {
+		return backup.UploadStatus{}, err
+	}
+
+	status := backup.UploadStatus{ID: id, State: backup.UploadDone, Objects: done.Objects, Stored: done.Stored, Bytes: up.size, BytesTotal: up.size}
+
+	switch {
+	case done.Commit == nil:
+		return status, nil
+	case s.CommitUploaded != nil:
+		return s.CommitUploaded(ctx, id, done.Commit)
+	}
+
+	receipt, err := s.Put(ctx, Upload{Object: done.Commit})
+	if err != nil {
+		return backup.UploadStatus{}, err
+	}
+
+	if len(receipt.Missing) > 0 {
+		status.State, status.Missing = backup.UploadFailed, receipt.Missing
+		status.Error = (&backup.MissingError{Refs: receipt.Missing}).Error()
+
+		return status, nil
+	}
+
+	status.Commit = receipt.Object
+
+	return status, nil
 }
 
 // take removes id if it was issued to agent in session and hasn't expired.

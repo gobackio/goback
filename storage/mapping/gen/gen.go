@@ -104,6 +104,9 @@ func (m MapperImpl) FromUploadStatus(in *proto.UploadStatus) backup.UploadStatus
 		Bytes:      in.Bytes,
 		BytesTotal: in.BytesTotal,
 		Error:      in.Error,
+		Phase:      in.Phase,
+		Commit:     in.Commit,
+		Missing:    in.Missing,
 	}
 }
 
@@ -162,6 +165,9 @@ func (m MapperImpl) UploadStatus(in backup.UploadStatus) *proto.UploadStatus {
 		BytesTotal: in.BytesTotal,
 		Error:      in.Error,
 		Stored:     in.Stored,
+		Commit:     in.Commit,
+		Missing:    in.Missing,
+		Phase:      in.Phase,
 	}
 }
 
