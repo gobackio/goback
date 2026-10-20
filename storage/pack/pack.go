@@ -501,6 +501,11 @@ func (ps *PackStorage) put(ctx context.Context, object *proto.Object) error {
 			return fmt.Errorf("%w: %w", backup.ErrSessionLost, err)
 		}
 
+		if errors.Is(err, backup.ErrNoSession) {
+			_ = ps.finalizeArchive(claimed)
+			return err
+		}
+
 		if err != nil {
 			return err
 		}
@@ -799,6 +804,10 @@ func (ps *PackStorage) putTombstone(ctx context.Context, ws *writeSession, ref *
 		return fmt.Errorf("%w: %w", backup.ErrSessionLost, err)
 	}
 
+	if errors.Is(err, backup.ErrNoSession) {
+		_ = ps.finalizeArchive(claimed)
+	}
+
 	return err
 }
 
@@ -1074,6 +1083,13 @@ func (ps *PackStorage) finalizeClaimed(ws *writeSession, a *archive, index Index
 		return fmt.Errorf("archive %s: %w", a.name, err)
 	}
 
+	if errors.Is(err, backup.ErrNoSession) {
+		ps.logger.Info("dropping an archive whose session ended while it was written", "archive", a.name)
+		ps.forget(ws, a)
+
+		return fmt.Errorf("archive %s: %w", a.name, err)
+	}
+
 	if err != nil {
 		ws.fail(err)
 
@@ -1091,6 +1107,11 @@ func (ps *PackStorage) abandon(ws *writeSession, a *archive) {
 		ps.logger.Warn("abandoning archive failed", "archive", a.name, "err", err)
 	}
 
+	ps.forget(ws, a)
+}
+
+// forget drops a claimed archive and what the session waits for from it.
+func (ps *PackStorage) forget(ws *writeSession, a *archive) {
 	ws.pendingMtx.Lock()
 	for key, p := range ws.pending {
 		if p.archive == a {

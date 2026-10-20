@@ -134,11 +134,12 @@ type ClaimIndex interface {
 	// OpenArchive claims a new archive for a live session.
 	OpenArchive(name, session string) error
 	// AddObjects indexes objects written to an open archive, or answers
-	// ErrClaimLapsed when the archive is no longer open.
+	// ErrClaimLapsed when the archive is no longer open and
+	// backup.ErrNoSession when its session ended.
 	AddObjects(archive string, records []IndexRecord) error
 	// FinalizeArchive turns an open archive pending, created at created,
 	// when it was claimed less than within ago, and answers ErrClaimLapsed
-	// otherwise.
+	// otherwise, or backup.ErrNoSession when its session ended.
 	FinalizeArchive(name string, within time.Duration, created time.Time) error
 	// Holds reports whether a pending or open archive of the session holds
 	// the object.

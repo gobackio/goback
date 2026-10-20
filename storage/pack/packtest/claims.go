@@ -146,6 +146,9 @@ func TestClaimIndex(t *testing.T, idx ClaimingIndex) {
 	_, known, err = idx.LookupArchive(unfinished.name)
 	require.NoError(t, err)
 	require.False(t, known)
+
+	require.ErrorIs(t, idx.AddObjects(unfinished.name, RandomIndexFile(1)), backup.ErrNoSession, "the archive's session ended")
+	require.ErrorIs(t, idx.FinalizeArchive(unfinished.name, time.Hour, created), backup.ErrNoSession)
 }
 
 func refs(index pack.IndexFile) []*proto.Ref {

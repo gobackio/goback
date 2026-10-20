@@ -400,7 +400,7 @@ func (x *Index) AddObjects(name string, records []pack.IndexRecord) error {
 		}
 
 		if !open {
-			return pack.ErrClaimLapsed
+			return claimGone(ctx, tx.Archive, name)
 		}
 
 		return insertObjects(ctx, tx, name, records)
@@ -424,10 +424,25 @@ func (x *Index) FinalizeArchive(name string, within time.Duration, created time.
 	}
 
 	if n == 0 {
-		return pack.ErrClaimLapsed
+		return claimGone(ctx, x.client.Archive, name)
 	}
 
 	return nil
+}
+
+// claimGone is why the archive name is not open: its claim lapsed, or its
+// session ended and took the row with it.
+func claimGone(ctx context.Context, archives *ent.ArchiveClient, name string) error {
+	known, err := archives.Query().Where(archive.ID(name)).Exist(ctx)
+	if err != nil {
+		return err
+	}
+
+	if !known {
+		return backup.ErrNoSession
+	}
+
+	return pack.ErrClaimLapsed
 }
 
 // Holds implements pack.ClaimIndex.

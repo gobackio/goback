@@ -198,10 +198,10 @@ func (sim *simulation) endable(err error) bool {
 	return true
 }
 
-// flushed accepts a lapsed claim, which a session another process ended
-// leaves behind, from flushing or closing a process.
+// flushed accepts a lapsed claim, and the end of a session another process
+// ended, from flushing or closing a process.
 func (sim *simulation) flushed(err error) {
-	if !errors.Is(err, ErrClaimLapsed) {
+	if !errors.Is(err, ErrClaimLapsed) && !errors.Is(err, backup.ErrNoSession) {
 		require.NoError(sim.t, err)
 	}
 }

@@ -346,7 +346,12 @@ func (i *InMemoryIndex) AddObjects(archive string, records []IndexRecord) error 
 	i.mtx.Lock()
 	defer i.mtx.Unlock()
 
-	if i.archives[archive].State != ArchiveOpen {
+	info, ok := i.archives[archive]
+	if !ok {
+		return backup.ErrNoSession
+	}
+
+	if info.State != ArchiveOpen {
 		return ErrClaimLapsed
 	}
 
@@ -362,7 +367,11 @@ func (i *InMemoryIndex) FinalizeArchive(name string, within time.Duration, creat
 	i.mtx.Lock()
 	defer i.mtx.Unlock()
 
-	info := i.archives[name]
+	info, ok := i.archives[name]
+	if !ok {
+		return backup.ErrNoSession
+	}
+
 	if info.State != ArchiveOpen || i.now().Sub(i.claimed[name]) >= within {
 		return ErrClaimLapsed
 	}
