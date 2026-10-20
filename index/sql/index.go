@@ -26,6 +26,7 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"golang.org/x/sync/errgroup"
 	_ "modernc.org/sqlite"
 )
 
@@ -362,6 +363,48 @@ func (x *Index) flush() error {
 // HasAll implements backup.HasAller as the store's Has would answer.
 func (x *Index) HasAll(ctx context.Context, refs []*proto.Ref) ([]bool, error) {
 	return backup.HasAll(ctx, x.ObjectStore, refs)
+}
+
+var _ backup.Batcher = (*Index)(nil)
+
+// Missing implements backup.Batcher as HasAll would answer.
+func (x *Index) Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error) {
+	return backup.Missing(ctx, x, refs)
+}
+
+// putObjectsWorkers bounds the objects one PutObjects call stores at once.
+const putObjectsWorkers = 32
+
+// PutObjects implements backup.Batcher, checking what the objects reference
+// beyond each other in one lookup. A commit or pin goes through Put, which
+// indexes it.
+func (x *Index) PutObjects(ctx context.Context, objects []*proto.Object) error {
+	for _, object := range objects {
+		if object.GetCommit() != nil || object.GetPin() != nil {
+			return fmt.Errorf("a %s goes through Put", object.Type())
+		}
+	}
+
+	if x.behind == nil {
+		if err := backup.CheckAllReferences(ctx, x.ObjectStore, objects); err != nil {
+			return err
+		}
+	}
+
+	for _, level := range backup.ByReference(objects) {
+		grp, gctx := errgroup.WithContext(ctx)
+		grp.SetLimit(putObjectsWorkers)
+
+		for _, object := range level {
+			grp.Go(func() error { return x.ObjectStore.Put(gctx, object) })
+		}
+
+		if err := grp.Wait(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // ReadRecords implements backup.RecordReader when the store does, and

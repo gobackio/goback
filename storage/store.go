@@ -200,7 +200,11 @@ func (s *Store) PutObjects(ctx context.Context, objects []*proto.Object) error {
 		}
 	}
 
-	for _, level := range byReference(objects) {
+	if batcher, ok := s.Index.(backup.Batcher); ok {
+		return batcher.PutObjects(ctx, objects)
+	}
+
+	for _, level := range backup.ByReference(objects) {
 		grp, gctx := errgroup.WithContext(ctx)
 		grp.SetLimit(putObjectsWorkers)
 
@@ -214,49 +218,6 @@ func (s *Store) PutObjects(ctx context.Context, objects []*proto.Object) error {
 	}
 
 	return nil
-}
-
-// byReference groups objects so that each group comes after every group
-// holding an object it references.
-func byReference(objects []*proto.Object) [][]*proto.Object {
-	at := make(map[string]int, len(objects))
-	for i, object := range objects {
-		at[string(object.Ref().GetHash())] = i
-	}
-
-	depth := make([]int, len(objects))
-	for i := range depth {
-		depth[i] = -1
-	}
-
-	var levelOf func(i int) int
-	levelOf = func(i int) int {
-		if depth[i] >= 0 {
-			return depth[i]
-		}
-
-		depth[i] = 0
-		for _, ref := range backup.References(objects[i]) {
-			if j, ok := at[string(ref.GetHash())]; ok && j != i {
-				depth[i] = max(depth[i], levelOf(j)+1)
-			}
-		}
-
-		return depth[i]
-	}
-
-	var levels [][]*proto.Object
-
-	for i, object := range objects {
-		level := levelOf(i)
-		for len(levels) <= level {
-			levels = append(levels, nil)
-		}
-
-		levels[level] = append(levels[level], object)
-	}
-
-	return levels
 }
 
 // clearStamp removes a client-supplied set id, and a pin's receipt time,

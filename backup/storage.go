@@ -128,6 +128,93 @@ func CheckReferences(ctx context.Context, store ObjectStore, obj *proto.Object) 
 	return nil
 }
 
+// CheckAllReferences is CheckReferences for many objects in one lookup; an
+// object may reference others among them.
+func CheckAllReferences(ctx context.Context, store ObjectStore, objects []*proto.Object) error {
+	among := make(map[string]bool, len(objects))
+	for _, obj := range objects {
+		among[string(obj.Ref().GetHash())] = true
+	}
+
+	var (
+		refs []*proto.Ref
+		by   []*proto.Object
+		seen = map[string]bool{}
+	)
+
+	for _, obj := range objects {
+		for _, ref := range References(obj) {
+			if ref == nil || among[string(ref.GetHash())] || seen[string(ref.GetHash())] {
+				continue
+			}
+
+			seen[string(ref.GetHash())] = true
+			refs = append(refs, ref)
+			by = append(by, obj)
+		}
+	}
+
+	if len(refs) == 0 {
+		return nil
+	}
+
+	held, err := HasAll(ctx, store, refs)
+	if err != nil {
+		return err
+	}
+
+	for i, ok := range held {
+		if !ok {
+			return fmt.Errorf("%w: %s %x needs %x", ErrDanglingRef, by[i].Type(), by[i].Ref().Hash, refs[i].Hash)
+		}
+	}
+
+	return nil
+}
+
+// ByReference groups objects so that each group comes after every group
+// holding an object it references.
+func ByReference(objects []*proto.Object) [][]*proto.Object {
+	at := make(map[string]int, len(objects))
+	for i, obj := range objects {
+		at[string(obj.Ref().GetHash())] = i
+	}
+
+	depth := make([]int, len(objects))
+	for i := range depth {
+		depth[i] = -1
+	}
+
+	var levelOf func(i int) int
+	levelOf = func(i int) int {
+		if depth[i] >= 0 {
+			return depth[i]
+		}
+
+		depth[i] = 0
+		for _, ref := range References(objects[i]) {
+			if j, ok := at[string(ref.GetHash())]; ok && j != i {
+				depth[i] = max(depth[i], levelOf(j)+1)
+			}
+		}
+
+		return depth[i]
+	}
+
+	var levels [][]*proto.Object
+
+	for i, obj := range objects {
+		level := levelOf(i)
+		for len(levels) <= level {
+			levels = append(levels, nil)
+		}
+
+		levels[level] = append(levels[level], obj)
+	}
+
+	return levels
+}
+
 //go:generate go run github.com/vektra/mockery/v2 --testonly --inpackage --name ObjectStore
 
 // ObjectStore is content-addressed storage of objects by ref.
