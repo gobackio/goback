@@ -114,7 +114,7 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 
 		for _, ref := range frontier {
 			copies := found[string(ref.Hash)]
-			if len(copies) == 0 && !ref.Equal(root) {
+			if len(copies) == 0 && !ref.Equal(root) && !ps.foreignRefs {
 				missing = append(missing, ref)
 				continue
 			}

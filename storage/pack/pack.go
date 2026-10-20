@@ -92,6 +92,7 @@ func NewPackStorage(options ...PackOption) (*PackStorage, error) {
 		claimOpen:        opts.claimOpen,
 		claimGrace:       opts.claimGrace,
 		localSessions:    opts.localSessions,
+		foreignRefs:      opts.foreignRefs,
 		archives:        make([]*archive, 0),
 		retired:          make(map[string]bool),
 		sessions:         make(map[string]*writeSession),
@@ -135,6 +136,8 @@ type PackStorage struct {
 	claimGrace time.Duration
 	// localSessions leaves a Put's index row for finalize to wait for
 	localSessions bool
+	// foreignRefs lets a commit reference what the store doesn't hold
+	foreignRefs bool
 
 	observer ArchiveObserver
 
@@ -549,7 +552,7 @@ func (ps *PackStorage) put(ctx context.Context, object *proto.Object) error {
 }
 
 // ChecksAtCommit implements backup.CommitChecker.
-func (ps *PackStorage) ChecksAtCommit() {}
+func (ps *PackStorage) ChecksAtCommit() bool { return !ps.foreignRefs }
 
 // refuse tombstones a commit that failed after its record was written, so
 // the record stays dead even where a rebuild without the index would find

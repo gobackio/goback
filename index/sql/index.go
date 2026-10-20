@@ -383,9 +383,9 @@ func (x *Index) checks(ctx context.Context) bool {
 		return true
 	}
 
-	_, atCommit := storeAs[backup.CommitChecker](x.ObjectStore)
+	checker, ok := storeAs[backup.CommitChecker](x.ObjectStore)
 
-	return !atCommit
+	return !ok || !checker.ChecksAtCommit()
 }
 
 // putObjectsWorkers bounds the objects one PutObjects call stores at once.

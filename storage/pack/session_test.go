@@ -592,3 +592,17 @@ func sealedBlob(t *testing.T, content string) *proto.Object {
 
 	return obj
 }
+
+func TestACommitOverWhatTheStoreLacksIsRefusedUnlessAnotherStoreHoldsIt(t *testing.T) {
+	plain := newTestStore(t, t.TempDir())
+	t.Cleanup(func() { _ = plain.Close() })
+
+	ctx, _ := beginSession(t, plain, "agent-a")
+	require.ErrorIs(t, plain.Put(ctx, commitObject(makeRef())), backup.ErrDanglingRef)
+
+	front := newTestStore(t, t.TempDir(), WithForeignRefs())
+	t.Cleanup(func() { _ = front.Close() })
+
+	ctx, _ = beginSession(t, front, "agent-a")
+	require.NoError(t, front.Put(ctx, commitObject(makeRef())))
+}

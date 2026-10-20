@@ -22,6 +22,7 @@ type packOptions struct {
 	claimOpen       time.Duration
 	claimGrace      time.Duration
 	localSessions   bool
+	foreignRefs     bool
 	atRestKey       *AtRestKey
 	observer        ArchiveObserver
 	logger          *slog.Logger
@@ -159,6 +160,15 @@ func WithArchiveStorage(storage ArchiveStorage) PackOption {
 func WithLocalSessions() PackOption {
 	return func(p *packOptions) {
 		p.localSessions = true
+	}
+}
+
+// WithForeignRefs lets a commit reference objects the store doesn't hold,
+// for a store in front of another that holds them: its commit checks
+// nothing.
+func WithForeignRefs() PackOption {
+	return func(p *packOptions) {
+		p.foreignRefs = true
 	}
 }
 

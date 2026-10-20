@@ -70,12 +70,12 @@ func (e *MissingError) Is(target error) bool {
 	return target == ErrDanglingRef
 }
 
-// CommitChecker is a store that checks, as a session commits, that it holds
-// everything the session's objects reference, failing with a MissingError
-// otherwise. Writes in a session to such a store are not checked one by one,
-// so they may come in any order.
+// CommitChecker is a store that may check, as a session commits, that it
+// holds everything the session's objects reference, failing with a
+// MissingError otherwise. Writes in a session to a store that does are not
+// checked one by one, so they may come in any order.
 type CommitChecker interface {
-	ChecksAtCommit()
+	ChecksAtCommit() bool
 }
 
 // SetID reads s as a set id, which a set given by digits alone is; ok is

@@ -207,7 +207,7 @@ func (s Settings) withIndex(build func(*sql.Index) (*pack.PackStorage, error)) (
 func (s Settings) packOptions() ([]pack.PackOption, error) {
 	var options []pack.PackOption
 	if s.Behind != nil {
-		options = append(options, pack.WithLocalSessions())
+		options = append(options, pack.WithLocalSessions(), pack.WithForeignRefs())
 	}
 
 	if s.AtRestKey == "" {
