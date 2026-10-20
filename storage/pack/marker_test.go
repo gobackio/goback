@@ -27,7 +27,7 @@ func committedSession(t *testing.T, base string) (*backup.Session, []*proto.Obje
 	for _, obj := range objects {
 		require.NoError(t, store.Put(ctx, obj))
 	}
-	require.NoError(t, store.Put(ctx, commitObject()))
+	require.NoError(t, store.Put(ctx, commitObject(objects[0].Ref())))
 	require.NoError(t, store.Close())
 
 	listed, err := store.storage.List(ArchiveSuffix)

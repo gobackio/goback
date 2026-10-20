@@ -144,8 +144,9 @@ type Walker struct {
 	CheckpointInterval time.Duration
 	ReadRetries        int
 
-	// LostRetries is how often a commit refused with ErrSessionLost is
-	// retried by walking again in a new session.
+	// LostRetries is how often a commit refused with ErrSessionLost, or
+	// missing what a collection took, is retried by walking again in a new
+	// session.
 	LostRetries int
 
 	// ScanWorkers is how many directories are listed ahead of the walk at
@@ -415,7 +416,11 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 
 	for retry := 0; ; retry++ {
 		result, err := w.walk(w.session)
-		if !errors.Is(err, ErrSessionLost) || retry >= w.LostRetries || w.Stream != nil {
+
+		var missing *MissingError
+		lost := errors.Is(err, ErrSessionLost) || errors.As(err, &missing)
+
+		if !lost || retry >= w.LostRetries || w.Stream != nil {
 			return result, err
 		}
 

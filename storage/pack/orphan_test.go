@@ -46,10 +46,13 @@ func TestAnotherSessionsUntombstonesVouchForNothingUntilItCommits(t *testing.T) 
 	gcAfterBatch = func(int) error {
 		gcAfterBatch = nil
 
-		// it takes x back, then finds y gone
-		require.ErrorIs(t, store.Put(failing, commitOver(file.Ref())), backup.ErrSessionLost)
+		// it finds y gone before it takes anything back
+		var missing *backup.MissingError
+		require.ErrorAs(t, store.Put(failing, commitOver(file.Ref())), &missing)
+		require.Len(t, missing.Refs, 1)
+		require.Equal(t, y.Ref().Hash, missing.Refs[0].Hash)
 		_, err := store.LookupSession(ctx, lost.ID)
-		require.ErrorIs(t, err, backup.ErrNoSession, "a session that lost what it relied on ends")
+		require.NoError(t, err, "a session missing what it relied on may store it again")
 
 		relying, _ := beginSession(t, store, "agent-b")
 		has, err := store.Has(relying, x.Ref())

@@ -19,10 +19,9 @@ var commitAfterResurrect func()
 // refs the session's objects reference outside its own archives, and when
 // a collection sealed tombstones since the session began, it copies
 // whatever those condemn under the skipped refs into the session.
-func (ps *PackStorage) resurrect(ctx context.Context, ws *writeSession, commit *proto.Object) error {
-	skipped, err := ps.skippedRefs(ctx, ws, commit)
-	if err != nil || len(skipped) == 0 {
-		return err
+func (ps *PackStorage) resurrect(ctx context.Context, ws *writeSession, skipped []*proto.Ref) error {
+	if len(skipped) == 0 {
+		return nil
 	}
 
 	tombstoned, err := ps.tombstoned(ctx, skipped)
@@ -85,7 +84,8 @@ func (ps *PackStorage) sealedAtBegin(ws *writeSession) (uint64, error) {
 
 // skippedRefs walks down from the commit while the objects are the
 // session's own and returns the refs it reaches outside them: what the
-// session deduplicated.
+// session deduplicated. It fails with a backup.MissingError naming the refs
+// it reaches that no archive the session sees holds.
 func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit *proto.Object) ([]*proto.Ref, error) {
 	pending, err := ps.index.PendingArchives(ws.id)
 	if err != nil {
@@ -102,7 +102,7 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 	seen := map[string]bool{string(root.Hash): true}
 	frontier := []*proto.Ref{root}
 
-	var skipped []*proto.Ref
+	var skipped, missing []*proto.Ref
 
 	for len(frontier) > 0 {
 		found, err := ps.index.LocateCopies(frontier, scope)
@@ -113,7 +113,13 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 		var next []*proto.Ref
 
 		for _, ref := range frontier {
-			loc, ours := ownCopy(found[string(ref.Hash)], own)
+			copies := found[string(ref.Hash)]
+			if len(copies) == 0 && !ref.Equal(root) {
+				missing = append(missing, ref)
+				continue
+			}
+
+			loc, ours := ownCopy(copies, own)
 			if !ours {
 				skipped = append(skipped, ref)
 				continue
@@ -140,6 +146,10 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 		}
 
 		frontier = next
+	}
+
+	if len(missing) > 0 {
+		return nil, &backup.MissingError{Refs: missing}
 	}
 
 	return skipped, nil

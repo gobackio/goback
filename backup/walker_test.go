@@ -980,12 +980,14 @@ func TestWalkerRunsInASessionAndUploadsEachChunkOnce(t *testing.T) {
 }
 
 // losingIndex refuses the first commit with ErrSessionLost and ends its
-// session, as a store does when a collection took what the run reused;
-// it refuses anything later put in an ended session.
+// session, as a store does when a collection took what the run reused, or
+// with missing, naming what is gone; it refuses anything later put in an
+// ended session.
 type losingIndex struct {
 	*memIndex
 	sessions *memSessions
 	lost     atomic.Bool
+	missing  bool
 }
 
 func (l *losingIndex) Put(ctx context.Context, obj *proto.Object) error {
@@ -1000,6 +1002,10 @@ func (l *losingIndex) Put(ctx context.Context, obj *proto.Object) error {
 	}
 
 	if obj.GetCommit() != nil && l.lost.CompareAndSwap(false, true) {
+		if l.missing {
+			return &MissingError{Refs: []*proto.Ref{obj.GetCommit().GetTree()}}
+		}
+
 		_ = l.sessions.EndSession(ctx)
 		return ErrSessionLost
 	}
@@ -1019,6 +1025,20 @@ func TestWalkerRetriesALostSessionInANewOne(t *testing.T) {
 
 	require.Len(t, sessions.began, 2)
 	require.Equal(t, sessions.began, sessions.ended)
+}
+
+func TestWalkerRetriesACommitMissingWhatACollectionTookInANewSession(t *testing.T) {
+	f := newWalkerFixture(t)
+	sessions := &memSessions{}
+	f.walker.Sessions = sessions
+	f.walker.Index = &losingIndex{memIndex: f.index, sessions: sessions, missing: true}
+	f.walker.LostRetries = 1
+	f.write("a.txt", []byte("a"))
+
+	f.run()
+
+	require.Len(t, sessions.began, 2)
+	require.ElementsMatch(t, sessions.began, sessions.ended)
 }
 
 // endingStore ends a session when a commit is put in it, as a store with

@@ -147,6 +147,12 @@ func (s *Store) Put(ctx context.Context, up Upload) (*Receipt, error) {
 	}
 
 	err = s.Index.Put(ctx, object)
+
+	var missing *backup.MissingError
+	if errors.As(err, &missing) {
+		return &Receipt{Ref: object.Ref(), Missing: missing.Refs}, nil
+	}
+
 	if err != nil {
 		return nil, err
 	}

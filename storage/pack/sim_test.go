@@ -186,9 +186,10 @@ func (sim *simulation) step(i int) {
 }
 
 // endable reports whether err is nil, and accepts the end of a session
-// a lease expiry or a collection took as an outcome a writer may meet.
+// a lease expiry or a collection took, and a commit missing what a
+// collection took, as an outcome a writer may meet.
 func (sim *simulation) endable(err error) bool {
-	if errors.Is(err, backup.ErrNoSession) || errors.Is(err, backup.ErrSessionLost) {
+	if errors.Is(err, backup.ErrNoSession) || errors.Is(err, backup.ErrSessionLost) || errors.Is(err, backup.ErrDanglingRef) {
 		sim.lost++
 		return false
 	}

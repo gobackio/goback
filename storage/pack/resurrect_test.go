@@ -81,15 +81,16 @@ func TestACommitThatDeduplicatedStoresItsUntombstoneInItsOwnArchive(t *testing.T
 		require.NoError(t, store.Put(sctx, obj))
 	}
 
-	archives := archiveFiles(t, filepath.Join(base, session.ID))
-	require.Len(t, archives, 1)
+	var names []string
+	for _, archive := range archiveFiles(t, filepath.Join(base, session.ID)) {
+		names = append(names, session.ID+"/"+strings.TrimSuffix(filepath.Base(archive), ArchiveSuffix))
+	}
 
-	name := session.ID + "/" + strings.TrimSuffix(filepath.Base(archives[0]), ArchiveSuffix)
 	untomb := proto.TombstoneRef(proto.TombstoneRef(commit.Ref()))
 	found, err := store.index.LocateCopies([]*proto.Ref{commit.Ref(), untomb}, Scope{})
 	require.NoError(t, err)
-	require.Equal(t, name, found[string(commit.Ref().Hash)][0].Archive)
-	require.Equal(t, name, found[string(untomb.Hash)][0].Archive)
+	require.Contains(t, names, found[string(commit.Ref().Hash)][0].Archive)
+	require.Contains(t, names, found[string(untomb.Hash)][0].Archive)
 
 	requirePresent(t, store, chain, true)
 	requireStored(t, store, chain, true)
@@ -181,7 +182,7 @@ func TestACommitFailsWhenACollectionTookWhatItReliedOn(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, second.ReclaimedObjects)
 
-	require.ErrorIs(t, store.Put(sctx, commit), backup.ErrSessionLost)
+	require.ErrorIs(t, store.Put(sctx, commit), backup.ErrDanglingRef, "what the collection took is missing, for the session to store again")
 	requirePresent(t, store, chain[len(chain)-1:], false)
 }
 

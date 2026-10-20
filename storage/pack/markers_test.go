@@ -33,8 +33,9 @@ func TestASessionLeavesABeginAndTheOutcomeItEndedWith(t *testing.T) {
 	ctx, committed := beginSession(t, store, "agent-a")
 	require.Contains(t, readMarker(t, store, committed.ID+SessionBeginExt), "agent-a")
 
-	require.NoError(t, store.Put(ctx, makeTestData(t, 1)[0]))
-	require.NoError(t, store.Put(ctx, commitObject()))
+	blob := makeTestData(t, 1)[0]
+	require.NoError(t, store.Put(ctx, blob))
+	require.NoError(t, store.Put(ctx, commitObject(blob.Ref())))
 	require.Equal(t, string(sessionCommitted), readMarker(t, store, committed.ID+SessionEndExt))
 
 	require.NoError(t, store.EndSession(ctx))
@@ -57,7 +58,7 @@ func TestACommitLosesToAnEndAlreadyTaken(t *testing.T) {
 	// another process's reaper ended the session
 	require.NoError(t, store.storage.CreateNew(session.ID+SessionEndExt, []byte(sessionAborted)))
 
-	require.ErrorIs(t, store.Put(ctx, commitObject()), backup.ErrNoSession)
+	require.ErrorIs(t, store.Put(ctx, commitObject(obj.Ref())), backup.ErrNoSession)
 	requireVisible(t, store, context.Background(), obj, false)
 }
 

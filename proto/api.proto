@@ -107,8 +107,9 @@ message PutResponse {
     // the object as stored, returned for commits and pins, whose set id and
     // receipt time the server assigns
     Object object = 2;
-    // assumed refs the store does not hold; when set the object was not
-    // stored and the client must upload them and put the object again
+    // what the store does not hold of a file's assumed refs, or of what a
+    // commit's session references; when set the object was not stored and
+    // the client must upload them and put the object again
     repeated Ref missing = 3;
 }
 

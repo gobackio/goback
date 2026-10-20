@@ -357,9 +357,13 @@ func reachedTrees(ref *proto.Ref, received map[string]*proto.Object) ([]*proto.O
 	return objects, nil
 }
 
-// Put implements backup.ObjectStore.
+// Put implements backup.ObjectStore. A commit the store lacks objects for
+// fails with a backup.MissingError naming them.
 func (r *Client) Put(ctx context.Context, object *proto.Object) error {
-	_, err := r.put(ctx, object, nil)
+	missing, err := r.put(ctx, object, nil)
+	if err == nil && len(missing) > 0 {
+		return &backup.MissingError{Refs: missing}
+	}
 
 	return err
 }

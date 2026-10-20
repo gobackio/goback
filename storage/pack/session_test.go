@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,8 +28,12 @@ func beginSession(t *testing.T, store *PackStorage, agent string) (context.Conte
 	return ctx, s
 }
 
-func commitObject() *proto.Object {
-	return proto.NewObject(&proto.Commit{Timestamp: 1, Tree: makeRef(), BackupSet: "world"})
+var commitStamps atomic.Int64
+
+// commitObject is a commit no other is over the object at ref, which the
+// session stored.
+func commitObject(over *proto.Ref) *proto.Object {
+	return proto.NewObject(&proto.Commit{Timestamp: commitStamps.Add(1), Tree: over, BackupSet: "world"})
 }
 
 // commitOver commits over an object of the session's own, so the commit
@@ -346,8 +351,8 @@ func TestCompactionMergesSessionsIntoTheRoot(t *testing.T) {
 		require.NoError(t, store.Put(ctxB, obj))
 	}
 
-	require.NoError(t, store.Put(ctxA, commitObject()))
-	require.NoError(t, store.Put(ctxB, commitObject()))
+	require.NoError(t, store.Put(ctxA, commitObject(blob.Ref())))
+	require.NoError(t, store.Put(ctxB, commitObject(blob.Ref())))
 
 	all := []*proto.Object{blob, sealed, onlyA, onlyB, both}
 	require.Equal(t, []bool{true, true, true, true, true}, inSession(t, store, all...))
@@ -411,7 +416,7 @@ func TestOpenKeepsCommittedSessionArchivesWithoutTheIndex(t *testing.T) {
 	for _, obj := range objects {
 		require.NoError(t, store.Put(ctx, obj))
 	}
-	require.NoError(t, store.Put(ctx, commitObject()))
+	require.NoError(t, store.Put(ctx, commitObject(objects[0].Ref())))
 	require.NoError(t, store.Close())
 
 	orphan := leftBehind(t, base)
@@ -532,7 +537,8 @@ func TestCommitRefusesASessionThatLostAnArchive(t *testing.T) {
 	store := newTestStore(t, base, WithArchiveIndex(index), WithIdleFinalize(time.Hour))
 
 	ctx, session := beginSession(t, store, "agent-a")
-	require.NoError(t, store.Put(ctx, makeTestData(t, 1)[0]))
+	blob := makeTestData(t, 1)[0]
+	require.NoError(t, store.Put(ctx, blob))
 
 	index.failNext = true
 	store.Sweep(time.Now().Add(2 * time.Hour))
@@ -540,7 +546,7 @@ func TestCommitRefusesASessionThatLostAnArchive(t *testing.T) {
 	ws := store.lookupWriteSession(session.ID)
 	require.Nil(t, ws.archive, "the sweep finalized the archive")
 
-	commit := commitObject()
+	commit := commitObject(blob.Ref())
 	err := store.Put(ctx, commit)
 	require.ErrorContains(t, err, "lost an archive")
 
@@ -552,7 +558,7 @@ func TestCommitRefusesASessionThatLostAnArchive(t *testing.T) {
 	rebuilt := newTestStore(t, base, WithArchiveIndex(NewInMemoryIndex()))
 	t.Cleanup(func() { _ = rebuilt.Close() })
 
-	require.NoError(t, rebuilt.Put(backup.WithSession(context.Background(), session), commitObject()))
+	require.NoError(t, rebuilt.Put(backup.WithSession(context.Background(), session), commitObject(blob.Ref())))
 
 	var dead bool
 	require.NoError(t, rebuilt.WalkHeaders(context.Background(), proto.ObjectType_TOMBSTONE, func(hdr *proto.ObjectHeader) error {

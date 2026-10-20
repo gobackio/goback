@@ -831,8 +831,9 @@ type PutResponse struct {
 	// the object as stored, returned for commits and pins, whose set id and
 	// receipt time the server assigns
 	Object *Object `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
-	// assumed refs the store does not hold; when set the object was not
-	// stored and the client must upload them and put the object again
+	// what the store does not hold of a file's assumed refs, or of what a
+	// commit's session references; when set the object was not stored and
+	// the client must upload them and put the object again
 	Missing       []*Ref `protobuf:"bytes,3,rep,name=missing,proto3" json:"missing,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

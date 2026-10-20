@@ -372,6 +372,22 @@ func (x *Index) Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, e
 	return backup.Missing(ctx, x, refs)
 }
 
+// checks reports whether a write under ctx checks what it references: one
+// in a session of a store that checks at commit doesn't.
+func (x *Index) checks(ctx context.Context) bool {
+	if x.behind != nil {
+		return false
+	}
+
+	if _, ok := backup.SessionFromContext(ctx); !ok {
+		return true
+	}
+
+	_, atCommit := storeAs[backup.CommitChecker](x.ObjectStore)
+
+	return !atCommit
+}
+
 // putObjectsWorkers bounds the objects one PutObjects call stores at once.
 const putObjectsWorkers = 32
 
@@ -385,7 +401,7 @@ func (x *Index) PutObjects(ctx context.Context, objects []*proto.Object) error {
 		}
 	}
 
-	if x.behind == nil {
+	if x.checks(ctx) {
 		if err := backup.CheckAllReferences(ctx, x.ObjectStore, objects); err != nil {
 			return err
 		}

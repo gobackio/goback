@@ -99,7 +99,7 @@ func (x *Index) seedStamp(ctx context.Context) error {
 func (x *Index) Put(ctx context.Context, object *proto.Object) error {
 	var err error
 
-	if x.behind == nil {
+	if x.checks(ctx) {
 		if err = backup.CheckReferences(ctx, x.ObjectStore, object); err != nil {
 			return err
 		}

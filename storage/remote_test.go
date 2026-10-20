@@ -621,6 +621,33 @@ func TestRemotePutStampsCommitsAndPins(t *testing.T) {
 	require.ErrorIs(t, client.Put(ctx, dangling), backup.ErrDanglingRef, "a pin needs an existing target")
 }
 
+// missingIndex refuses every commit as missing gone.
+type missingIndex struct {
+	*memIndex
+	gone []*proto.Ref
+}
+
+func (m *missingIndex) Put(ctx context.Context, obj *proto.Object) error {
+	if obj.GetCommit() != nil {
+		return &backup.MissingError{Refs: m.gone}
+	}
+
+	return m.memIndex.Put(ctx, obj)
+}
+
+func TestARemoteCommitMissingObjectsNamesThem(t *testing.T) {
+	gone := []*proto.Ref{proto.HashPayload(proto.ObjectType_BLOB, []byte("a")), proto.HashPayload(proto.ObjectType_TREE, []byte("b"))}
+	client := startServerWith(t, &missingIndex{memIndex: newMemIndex(), gone: gone}, nil)("node-1")
+
+	err := client.Put(context.Background(), proto.NewObject(&proto.Commit{Timestamp: 1, Tree: gone[1], AgentId: "node-1", BackupSet: "world"}))
+
+	var missing *backup.MissingError
+	require.ErrorAs(t, err, &missing)
+	require.Len(t, missing.Refs, 2)
+	require.Equal(t, gone[0].Hash, missing.Refs[0].Hash)
+	require.Equal(t, gone[1].Hash, missing.Refs[1].Hash)
+}
+
 // Presence implements backup.PresenceIndex with whatever filters the test
 // planted, recording the scope it was asked for.
 func (m *memIndex) Presence(ctx context.Context, scope backup.PresenceScope, set string) ([]*proto.PresenceFilter, error) {

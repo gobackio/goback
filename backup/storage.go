@@ -55,6 +55,29 @@ var (
 	ErrQuotaExceeded = errors.New("read quota exceeded")
 )
 
+// MissingError is what a commit fails with when the store lacks objects its
+// session's objects reference: the caller stores Refs and puts the commit
+// again. It matches ErrDanglingRef.
+type MissingError struct {
+	Refs []*proto.Ref
+}
+
+func (e *MissingError) Error() string {
+	return fmt.Sprintf("%v: %d objects the session's objects reference", ErrDanglingRef, len(e.Refs))
+}
+
+func (e *MissingError) Is(target error) bool {
+	return target == ErrDanglingRef
+}
+
+// CommitChecker is a store that checks, as a session commits, that it holds
+// everything the session's objects reference, failing with a MissingError
+// otherwise. Writes in a session to such a store are not checked one by one,
+// so they may come in any order.
+type CommitChecker interface {
+	ChecksAtCommit()
+}
+
 // SetID reads s as a set id, which a set given by digits alone is; ok is
 // false for a set name. Digits too many for an id give id 0, which no set
 // has.
@@ -81,7 +104,7 @@ type HeadKeeper interface {
 
 // References lists the refs an object points at directly: a commit's tree,
 // a tree's nodes with their security descriptors and streams, a tree's
-// splits, a file's parts, a pin's target.
+// splits, a file's parts and splits, a pin's target.
 func References(obj *proto.Object) []*proto.Ref {
 	switch obj.Type() {
 	case proto.ObjectType_COMMIT:
@@ -99,12 +122,12 @@ func References(obj *proto.Object) []*proto.Ref {
 		}
 		return append(refs, tree.Splits...)
 	case proto.ObjectType_FILE:
-		parts := obj.GetFile().GetParts()
-		refs := make([]*proto.Ref, 0, len(parts))
-		for _, part := range parts {
+		file := obj.GetFile()
+		refs := make([]*proto.Ref, 0, len(file.Parts)+len(file.Splits))
+		for _, part := range file.Parts {
 			refs = append(refs, part.Ref)
 		}
-		return refs
+		return append(refs, file.Splits...)
 	}
 
 	return nil

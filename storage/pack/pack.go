@@ -548,6 +548,9 @@ func (ps *PackStorage) put(ctx context.Context, object *proto.Object) error {
 	return nil
 }
 
+// ChecksAtCommit implements backup.CommitChecker.
+func (ps *PackStorage) ChecksAtCommit() {}
+
 // refuse tombstones a commit that failed after its record was written, so
 // the record stays dead even where a rebuild without the index would find
 // it in an archive. The tombstone goes beside the record, in the session's
@@ -576,14 +579,6 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 		return fmt.Errorf("session %s lost an archive: %w", ws.id, err)
 	}
 
-	// the commit's un-tombstone keeps everything the commit reaches; it is
-	// stored by the flush below, before resurrect reads the seals
-	if ws.session != nil {
-		if err := ps.putTombstone(ctx, ws, proto.TombstoneRef(commit.Ref()), false); err != nil {
-			return fmt.Errorf("taking back the tombstones of what session %s relied on: %w", ws.id, err)
-		}
-	}
-
 	// an archive of ours that lapsed is lost now, which settle answers for
 	err := ps.flushSession(ws)
 	if err != nil && !lapsed(err) {
@@ -598,13 +593,36 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 		if err := ps.settle(ws.id); err != nil {
 			return err
 		}
+	}
 
+	// a commit missing anything is refused before it takes anything back,
+	// so its session may store what is missing and commit again
+	skipped, err := ps.skippedRefs(ctx, ws, commit)
+	if err != nil {
+		return err
+	}
+
+	// the commit's un-tombstone keeps everything the commit reaches; it is
+	// stored before resurrect reads the seals
+	if err := ps.putTombstone(ctx, ws, proto.TombstoneRef(commit.Ref()), false); err != nil {
+		return fmt.Errorf("taking back the tombstones of what session %s relied on: %w", ws.id, err)
+	}
+
+	if err := ps.flushSession(ws); err != nil {
+		if lapsed(err) {
+			return fmt.Errorf("%w: %w", backup.ErrSessionLost, err)
+		}
+
+		return err
+	}
+
+	if ps.claims != nil {
 		if err := ps.kept(ctx, ws, commit.Ref()); err != nil {
 			return err
 		}
 	}
 
-	if err := ps.resurrect(ctx, ws, commit); err != nil {
+	if err := ps.resurrect(ctx, ws, skipped); err != nil {
 		// what the session relied on is gone, so it can never commit; once
 		// it has ended, marks no longer keep what its un-tombstones take back
 		if errors.Is(err, backup.ErrSessionLost) {

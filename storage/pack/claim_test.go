@@ -117,7 +117,7 @@ func TestACommitWaitsForTheArchiveAnotherProcessHoldsOpen(t *testing.T) {
 	require.NoError(t, a.Put(ctx, blob))
 
 	start := time.Now()
-	require.NoError(t, b.Put(ctx, commitObject()))
+	require.NoError(t, b.Put(ctx, commitObject(blob.Ref())))
 	require.GreaterOrEqual(t, time.Since(start), 100*time.Millisecond, "the commit waited for a to finalize")
 
 	has, err := b.Has(ctx, blob.Ref())
@@ -141,7 +141,7 @@ func TestACommitRefusesWhatALapsedArchiveHeldUntilItIsStoredAgain(t *testing.T) 
 
 	at.add(2 * time.Hour)
 
-	err := b.Put(ctx, commitObject())
+	err := b.Put(ctx, commitObject(blob.Ref()))
 	require.ErrorIs(t, err, backup.ErrSessionLost)
 
 	has, err := b.Has(ctx, blob.Ref())
@@ -152,7 +152,7 @@ func TestACommitRefusesWhatALapsedArchiveHeldUntilItIsStoredAgain(t *testing.T) 
 	require.ErrorIs(t, err, ErrClaimLapsed, "a stalled process cannot bring the archive back")
 
 	require.NoError(t, b.Put(ctx, blob))
-	require.NoError(t, b.Put(ctx, commitObject()))
+	require.NoError(t, b.Put(ctx, commitObject(blob.Ref())))
 
 	got, err := b.Get(t.Context(), blob.Ref())
 	require.NoError(t, err)
@@ -168,14 +168,14 @@ func TestACommitOnTheProcessWhoseOwnArchiveLapsedRefusesWhatItHeld(t *testing.T)
 
 	at.add(2 * time.Hour)
 
-	require.ErrorIs(t, a.Put(ctx, commitObject()), backup.ErrSessionLost)
+	require.ErrorIs(t, a.Put(ctx, commitObject(blob.Ref())), backup.ErrSessionLost)
 
 	has, err := a.Has(ctx, blob.Ref())
 	require.NoError(t, err)
 	require.False(t, has, "the process forgets what its lapsed archive held")
 
 	require.NoError(t, a.Put(ctx, blob))
-	require.NoError(t, a.Put(ctx, commitObject()))
+	require.NoError(t, a.Put(ctx, commitObject(blob.Ref())))
 }
 
 func TestAWriteToAnArchiveACommitElsewhereGaveUpIsRefusedAsLost(t *testing.T) {
@@ -186,7 +186,7 @@ func TestAWriteToAnArchiveACommitElsewhereGaveUpIsRefusedAsLost(t *testing.T) {
 	require.NoError(t, a.Put(ctx, objects[0]))
 
 	at.add(2 * time.Hour)
-	require.ErrorIs(t, b.Put(ctx, commitObject()), backup.ErrSessionLost)
+	require.ErrorIs(t, b.Put(ctx, commitObject(objects[0].Ref())), backup.ErrSessionLost)
 
 	require.ErrorIs(t, a.Put(ctx, objects[1]), backup.ErrSessionLost, "a wakes up writing an archive that is gone")
 
@@ -199,7 +199,7 @@ func TestAWriteToAnArchiveACommitElsewhereGaveUpIsRefusedAsLost(t *testing.T) {
 	}
 
 	require.NoError(t, a.Flush())
-	require.NoError(t, b.Put(ctx, commitObject()))
+	require.NoError(t, b.Put(ctx, commitObject(objects[0].Ref())))
 
 	for _, obj := range objects {
 		requireVisible(t, b, t.Context(), obj, true)
@@ -221,17 +221,17 @@ func TestARefusedCommitStaysAbsentWhenItsSessionCommitsAndThroughARebuild(t *tes
 
 	at.add(2 * time.Hour)
 
-	refused := commitObject()
+	refused := commitObject(blob.Ref())
 	require.ErrorIs(t, b.Put(ctx, refused), backup.ErrSessionLost)
 
 	require.NoError(t, b.Put(ctx, blob))
-	require.NoError(t, b.Put(ctx, commitObject()))
+	require.NoError(t, b.Put(ctx, commitObject(blob.Ref())))
 
 	requirePresent(t, b, []*proto.Object{refused}, false)
 	require.NoError(t, b.Close())
 
 	rebuilt := closing(t, newTestStore(t, base))
-	requireUntombed(t, rebuilt, []*proto.Object{refused}, true)
+	requireUntombed(t, rebuilt, []*proto.Object{refused}, false)
 	requirePresent(t, rebuilt, []*proto.Object{refused}, false)
 	requireVisible(t, rebuilt, t.Context(), blob, true)
 }
@@ -258,7 +258,8 @@ func (s *stallAfter) AddObjects(archive string, records []IndexRecord) error {
 
 func TestACommitWhoseOwnArchiveLapsesBeforeItIsFinalizedIsRefused(t *testing.T) {
 	at := &clock{now: time.Now()}
-	commit := commitObject()
+	blob := makeTestData(t, 1)[0]
+	commit := commitObject(blob.Ref())
 
 	index := &stallAfter{InMemoryIndex: NewInMemoryIndex(), at: at}
 	index.Now = at.Now
@@ -267,7 +268,6 @@ func TestACommitWhoseOwnArchiveLapsesBeforeItIsFinalizedIsRefused(t *testing.T) 
 	store := closing(t, newTestStore(t, t.TempDir(), WithArchiveIndex(index), WithClaims(time.Hour, time.Minute)))
 
 	ctx, _ := beginSession(t, store, "agent")
-	blob := makeTestData(t, 1)[0]
 	require.NoError(t, store.Put(ctx, blob))
 	require.NoError(t, store.Flush())
 
@@ -373,7 +373,7 @@ func TestAStoreWithLocalSessionsIndexesRowsInBatchesBeforeItsArchiveIsFinalized(
 		require.NoError(t, store.Put(ctx, obj))
 	}
 
-	require.NoError(t, store.Put(ctx, commitObject()))
+	require.NoError(t, store.Put(ctx, commitObject(objects[0].Ref())))
 	require.Less(t, index.inserts(), len(objects)/10, "the writes shared their inserts")
 
 	for _, obj := range objects {
@@ -390,7 +390,7 @@ func TestAStoreWithLocalSessionsRefusesACommitWhoseRowsFailed(t *testing.T) {
 	require.NoError(t, store.Put(ctx, blob), "its row is only queued")
 	require.Error(t, store.Flush(), "the archive lacks a row of what it holds")
 
-	commit := commitObject()
+	commit := commitObject(blob.Ref())
 	require.Error(t, store.Put(ctx, commit))
 
 	requireVisible(t, store, t.Context(), blob, false)
