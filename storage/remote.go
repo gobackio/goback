@@ -81,6 +81,7 @@ func dialStore(addr string, creds auth.Credentials, transport credentials.Transp
 	return &Client{
 		store:     proto.NewStoreClient(con),
 		admin:     adminpb.NewAdminClient(con),
+		HTTP:      &http.Client{Transport: newSpread(http.DefaultTransport.(*http.Transport), locationConns)},
 		downloads: received,
 		fetching:  semaphore.NewWeighted(runFetchers),
 	}, nil
@@ -151,8 +152,9 @@ type Client struct {
 	store proto.StoreClient
 	admin adminpb.AdminClient
 
-	// HTTP fetches the locations a server answers with; nil uses the
-	// default client.
+	// HTTP fetches from and puts to the locations a server answers with.
+	// NewClient sets one that spreads its requests over several
+	// connections; nil uses the default client.
 	HTTP *http.Client
 
 	downloads *downloads
