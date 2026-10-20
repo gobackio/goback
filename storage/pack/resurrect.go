@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/progress"
@@ -83,6 +84,10 @@ func (ps *PackStorage) sealedAtBegin(ws *writeSession) (uint64, error) {
 	return marker.Sealed, nil
 }
 
+// checkChunk is how many refs of a level skippedRefs looks up and reads
+// at a time, so its progress moves within a level.
+const checkChunk = 10_000
+
 // skippedRefs walks down from the commit while the objects are the
 // session's own and returns the refs it reaches outside them: what the
 // session deduplicated. It fails with a backup.MissingError naming the refs
@@ -110,48 +115,50 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 	defer phase.Finish()
 
 	for len(frontier) > 0 {
-		found, err := ps.index.LocateCopies(frontier, scope)
-		if err != nil {
-			return nil, err
-		}
-
-		var below []*proto.Ref
-
-		for _, ref := range frontier {
-			copies := found[string(ref.Hash)]
-			if len(copies) == 0 && !ref.Equal(root) && !ps.foreignRefs {
-				missing = append(missing, ref)
-				continue
-			}
-
-			loc, ours := ownCopy(copies, own)
-			if !ours {
-				skipped = append(skipped, ref)
-				continue
-			}
-
-			if proto.ObjectType(loc.Record.Type) != proto.ObjectType_BLOB {
-				below = append(below, ref)
-			}
-		}
-
-		objects, err := ps.readOwn(ctx, ws, commit, below)
-		if err != nil {
-			return nil, err
-		}
-
 		var next []*proto.Ref
 
-		for _, obj := range objects {
-			for _, child := range backup.References(obj) {
-				if !seen[string(child.Hash)] {
-					seen[string(child.Hash)] = true
-					next = append(next, child)
+		for chunk := range slices.Chunk(frontier, checkChunk) {
+			found, err := ps.index.LocateCopies(chunk, scope)
+			if err != nil {
+				return nil, err
+			}
+
+			var below []*proto.Ref
+
+			for _, ref := range chunk {
+				copies := found[string(ref.Hash)]
+				if len(copies) == 0 && !ref.Equal(root) && !ps.foreignRefs {
+					missing = append(missing, ref)
+					continue
+				}
+
+				loc, ours := ownCopy(copies, own)
+				if !ours {
+					skipped = append(skipped, ref)
+					continue
+				}
+
+				if proto.ObjectType(loc.Record.Type) != proto.ObjectType_BLOB {
+					below = append(below, ref)
 				}
 			}
-		}
 
-		phase.Add(int64(len(frontier)), 0)
+			objects, err := ps.readOwn(ctx, ws, commit, below)
+			if err != nil {
+				return nil, err
+			}
+
+			for _, obj := range objects {
+				for _, child := range backup.References(obj) {
+					if !seen[string(child.Hash)] {
+						seen[string(child.Hash)] = true
+						next = append(next, child)
+					}
+				}
+			}
+
+			phase.Add(int64(len(chunk)), 0)
+		}
 
 		frontier = next
 	}
