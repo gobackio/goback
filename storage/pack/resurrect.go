@@ -110,7 +110,7 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 			return nil, err
 		}
 
-		var next []*proto.Ref
+		var below []*proto.Ref
 
 		for _, ref := range frontier {
 			copies := found[string(ref.Hash)]
@@ -125,18 +125,19 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 				continue
 			}
 
-			if proto.ObjectType(loc.Record.Type) == proto.ObjectType_BLOB {
-				continue
+			if proto.ObjectType(loc.Record.Type) != proto.ObjectType_BLOB {
+				below = append(below, ref)
 			}
+		}
 
-			obj := commit
-			if !ref.Equal(root) {
-				obj, err = ps.Get(ctx, ref)
-				if err != nil {
-					return nil, fmt.Errorf("reading %x of session %s: %w", ref.Hash, ws.id, err)
-				}
-			}
+		objects, err := ps.readOwn(ctx, ws, commit, below)
+		if err != nil {
+			return nil, err
+		}
 
+		var next []*proto.Ref
+
+		for _, obj := range objects {
 			for _, child := range backup.References(obj) {
 				if !seen[string(child.Hash)] {
 					seen[string(child.Hash)] = true
@@ -153,6 +154,36 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 	}
 
 	return skipped, nil
+}
+
+// readOwn reads the session's objects at refs, the commit being one it
+// has at hand, a range read per run of neighbouring records.
+func (ps *PackStorage) readOwn(ctx context.Context, ws *writeSession, commit *proto.Object, refs []*proto.Ref) ([]*proto.Object, error) {
+	var out []*proto.Object
+
+	stored := make([]*proto.Ref, 0, len(refs))
+	for _, ref := range refs {
+		if ref.Equal(commit.Ref()) {
+			out = append(out, commit)
+		} else {
+			stored = append(stored, ref)
+		}
+	}
+
+	objects, err := ps.ReadRecords(ctx, stored)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, ref := range stored {
+		if objects[i] == nil {
+			if objects[i], err = ps.Get(ctx, ref); err != nil {
+				return nil, fmt.Errorf("reading %x of session %s: %w", ref.Hash, ws.id, err)
+			}
+		}
+	}
+
+	return append(out, objects...), nil
 }
 
 // tombstoned returns the refs a tombstone the session sees names.

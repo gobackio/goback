@@ -36,6 +36,28 @@ func requireUntombed(t *testing.T, store *PackStorage, objects []*proto.Object, 
 	}
 }
 
+func TestACommitReadsWhatItsSessionStoredWithoutLookingUpEachObject(t *testing.T) {
+	store := newTestStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx, _ := beginSession(t, store, "agent")
+
+	blobs := makeTestData(t, 50)
+	files := makeGCFiles(blobs)
+	root := treeOf(files)
+
+	for _, obj := range append(append(blobs, files...), root) {
+		require.NoError(t, store.Put(ctx, obj))
+	}
+
+	locating := &locatingIndex{ArchiveIndex: store.index}
+	store.index = locating
+	t.Cleanup(func() { store.index = locating.ArchiveIndex })
+
+	require.NoError(t, store.Put(ctx, commitObject(root.Ref())))
+	require.Zero(t, locating.calls.Load())
+}
+
 func TestACommitTakesBackItselfAndTheTombstonesOfWhatItSkipped(t *testing.T) {
 	store := newGCStore(t, t.TempDir())
 	t.Cleanup(func() { _ = store.Close() })
