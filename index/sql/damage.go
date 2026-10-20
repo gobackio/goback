@@ -208,16 +208,24 @@ func (x *Index) MarkLost(ctx context.Context, versions []backup.FilePath) error 
 	}
 
 	for _, setID := range sets {
-		err := inBatches(bySet[setID], func(batch []predicate.File) error {
-			return x.client.File.Update().Where(file.SetID(setID), file.Or(batch...)).SetLost(true).Exec(ctx)
-		})
-		if err != nil {
-			return fmt.Errorf("marking versions of set %d lost: %w", setID, err)
+		versions := bySet[setID]
+
+		for start := 0; start < len(versions); start += lostBatch {
+			batch := versions[start:min(start+lostBatch, len(versions))]
+
+			err := x.client.File.Update().Where(file.SetID(setID), file.Or(batch...)).SetLost(true).Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("marking versions of set %d lost: %w", setID, err)
+			}
 		}
 	}
 
 	return nil
 }
+
+// lostBatch is how many versions MarkLost names in one statement: SQLite
+// nests each OR a level deeper, and parses at most 1000 levels.
+const lostBatch = 200
 
 // LostVersions returns the versions of a set the store cannot read and the
 // commits each one damages. A restore of those commits cannot produce that

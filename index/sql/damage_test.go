@@ -126,6 +126,29 @@ func TestAClosedVersionIsLostInTheCommitsThatHoldIt(t *testing.T) {
 	require.NotEqual(t, first, second)
 }
 
+func TestMoreVersionsThanOneStatementNamesAreMarkedLost(t *testing.T) {
+	f := newFixture(t)
+
+	old := f.file("level.dat", "the version that will be lost")
+	f.commit("world", f.tree(old), false)
+
+	f.clock = f.clock.Add(time.Hour)
+	f.commit("world", f.tree(f.file("level.dat", "the version on disk today")), false)
+
+	versions := []backup.FilePath{{Ref: old.Ref, SetID: f.setID("world"), Path: "level.dat"}}
+	for i := range 2_500 {
+		ref := proto.NewObject(&proto.Blob{Data: fmt.Append(nil, i)}).Ref()
+		versions = append(versions, backup.FilePath{Ref: ref, SetID: f.setID("world"), Path: fmt.Sprint(i)})
+	}
+
+	require.NoError(t, f.x.MarkLost(f.ctx, versions))
+
+	lost, err := f.x.LostVersions(f.ctx, "world")
+	require.NoError(t, err)
+	require.Len(t, lost, 1)
+	require.True(t, lost[0].Ref.Equal(old.Ref))
+}
+
 func TestAnOpenVersionStopsBeingLostOnceARunCoversIt(t *testing.T) {
 	f := newFixture(t)
 	ctx := f.ctx
