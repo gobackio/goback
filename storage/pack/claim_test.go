@@ -3,6 +3,7 @@ package pack
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,6 +71,42 @@ func TestAnObjectAnotherProcessIsWritingCountsAsStoredButCannotBeRead(t *testing
 
 	require.NoError(t, a.Flush())
 	requireVisible(t, b, ctx, blob, true)
+}
+
+// holdAsks counts the lookups of the session's open archives.
+type holdAsks struct {
+	*InMemoryIndex
+	asks atomic.Int64
+}
+
+func (h *holdAsks) Holds(refs []*proto.Ref, session string) (map[string]bool, error) {
+	h.asks.Add(1)
+	return h.InMemoryIndex.Holds(refs, session)
+}
+
+func TestObjectsOtherProcessesAreWritingAreLookedUpOnceForAWholeBatch(t *testing.T) {
+	base := t.TempDir()
+	index := &holdAsks{InMemoryIndex: NewInMemoryIndex()}
+	opts := []PackOption{WithArchiveIndex(index), WithClaims(time.Hour, time.Hour)}
+	a, b := closing(t, newTestStore(t, base, opts...)), closing(t, newTestStore(t, base, opts...))
+
+	ctx, _ := beginSession(t, a, "agent")
+	blobs := makeTestData(t, 5)
+	for _, blob := range blobs[:3] {
+		require.NoError(t, a.Put(ctx, blob))
+	}
+
+	refs := make([]*proto.Ref, len(blobs))
+	for i, blob := range blobs {
+		refs[i] = blob.Ref()
+	}
+
+	index.asks.Store(0)
+
+	has, err := b.HasAll(ctx, refs)
+	require.NoError(t, err)
+	require.Equal(t, []bool{true, true, true, false, false}, has)
+	require.EqualValues(t, 1, index.asks.Load())
 }
 
 func TestACommitWaitsForTheArchiveAnotherProcessHoldsOpen(t *testing.T) {

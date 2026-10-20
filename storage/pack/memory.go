@@ -385,24 +385,28 @@ func (i *InMemoryIndex) FinalizeArchive(name string, within time.Duration, creat
 }
 
 // Holds implements ClaimIndex.
-func (i *InMemoryIndex) Holds(ref *proto.Ref, session string) (bool, error) {
-	var sum [proto.HashSize]byte
-	copy(sum[:], ref.Hash)
-
+func (i *InMemoryIndex) Holds(refs []*proto.Ref, session string) (map[string]bool, error) {
 	i.mtx.RLock()
 	defer i.mtx.RUnlock()
+
+	held := make(map[string]bool)
 
 	for name, info := range i.archives {
 		if info.Session != session || (info.State != ArchivePending && info.State != ArchiveOpen) {
 			continue
 		}
 
-		if _, ok := i.index[name][sum]; ok {
-			return true, nil
+		for _, ref := range refs {
+			var sum [proto.HashSize]byte
+			copy(sum[:], ref.Hash)
+
+			if _, ok := i.index[name][sum]; ok {
+				held[string(ref.Hash)] = true
+			}
 		}
 	}
 
-	return false, nil
+	return held, nil
 }
 
 // Claims implements ClaimIndex.

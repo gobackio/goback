@@ -141,9 +141,9 @@ type ClaimIndex interface {
 	// when it was claimed less than within ago, and answers ErrClaimLapsed
 	// otherwise, or backup.ErrNoSession when its session ended.
 	FinalizeArchive(name string, within time.Duration, created time.Time) error
-	// Holds reports whether a pending or open archive of the session holds
-	// the object.
-	Holds(ref *proto.Ref, session string) (bool, error)
+	// Holds returns, by hash, those of refs that a pending or open archive
+	// of the session holds.
+	Holds(refs []*proto.Ref, session string) (map[string]bool, error)
 	// Claims lists the open archives of the session.
 	Claims(session string) ([]Claim, error)
 	// Abandon turns an open archive lost when it was claimed at least

@@ -181,7 +181,8 @@ func (ps *PackStorage) Has(ctx context.Context, ref *proto.Ref) (bool, error) {
 var _ backup.HasAller = (*PackStorage)(nil)
 
 // HasAll implements backup.HasAller: Has for each of refs, from one lookup
-// of their tombstones and one of their copies.
+// of their tombstones, one of their copies and one of the session's open
+// archives.
 func (ps *PackStorage) HasAll(ctx context.Context, refs []*proto.Ref) ([]bool, error) {
 	scope := ScopeOf(ctx)
 
@@ -202,6 +203,8 @@ func (ps *PackStorage) HasAll(ctx context.Context, refs []*proto.Ref) ([]bool, e
 	}
 
 	has := make([]bool, len(refs))
+	var unheld []*proto.Ref
+
 	for i, ref := range refs {
 		tomb, untomb := tombs[2*i], tombs[2*i+1]
 
@@ -209,13 +212,32 @@ func (ps *PackStorage) HasAll(ctx context.Context, refs []*proto.Ref) ([]bool, e
 		if err != nil {
 			return nil, err
 		}
+
+		if !has[i] {
+			unheld = append(unheld, ref)
+		}
+	}
+
+	// another process may hold them in an archive it has not finalized yet
+	if ps.claims == nil || scope.Session == "" || len(unheld) == 0 {
+		return has, nil
+	}
+
+	claimed, err := ps.claims.Holds(unheld, scope.Session)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, ref := range refs {
+		has[i] = has[i] || claimed[string(ref.Hash)]
 	}
 
 	return has, nil
 }
 
 // holds is Has for ref given the locations of its tombstones, its
-// un-tombstones and its copies.
+// un-tombstones and its copies, short of the archives other processes have
+// open.
 func (ps *PackStorage) holds(scope Scope, ref *proto.Ref, tombs, untombs, copies []IndexLocation) (bool, error) {
 	bound, err := ps.tombstoneBound(tombs, untombs)
 	if err != nil {
@@ -245,11 +267,6 @@ func (ps *PackStorage) holds(scope Scope, ref *proto.Ref, tombs, untombs, copies
 		if pending {
 			return true, nil
 		}
-	}
-
-	// another process may hold it in an archive it has not finalized yet
-	if ps.claims != nil && scope.Session != "" {
-		return ps.claims.Holds(ref, scope.Session)
 	}
 
 	return false, nil

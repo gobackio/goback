@@ -35,14 +35,15 @@ func TestClaimIndex(t *testing.T, idx ClaimingIndex) {
 	require.NoError(t, idx.AddObjects(open.name, open.index[10:]))
 
 	ref := &proto.Ref{Hash: open.index[0].Sum[:]}
+	elsewhere := &proto.Ref{Hash: RandomIndexFile(1)[0].Sum[:]}
 
-	held, err := idx.Holds(ref, session.ID)
+	held, err := idx.Holds([]*proto.Ref{elsewhere, ref}, session.ID)
 	require.NoError(t, err)
-	require.True(t, held, "the session holds what its open archive has")
+	require.Equal(t, map[string]bool{string(ref.Hash): true}, held, "the session holds what its open archive has")
 
-	held, err = idx.Holds(ref, other.ID)
+	held, err = idx.Holds([]*proto.Ref{ref}, other.ID)
 	require.NoError(t, err)
-	require.False(t, held, "another session does not")
+	require.Empty(t, held, "another session does not")
 
 	_, err = idx.LocateObject(ref, pack.Scope{Session: session.ID})
 	require.ErrorIs(t, err, pack.ErrRecordNotFound, "an open archive cannot be read from yet")
@@ -104,9 +105,9 @@ func TestClaimIndex(t *testing.T, idx ClaimingIndex) {
 
 	strayRef := &proto.Ref{Hash: stray.index[0].Sum[:]}
 
-	held, err = idx.Holds(strayRef, session.ID)
+	held, err = idx.Holds([]*proto.Ref{strayRef}, session.ID)
 	require.NoError(t, err)
-	require.False(t, held, "a lost archive holds nothing")
+	require.Empty(t, held, "a lost archive holds nothing")
 
 	lost, err := idx.Lost(session.ID)
 	require.NoError(t, err)

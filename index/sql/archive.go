@@ -446,11 +446,34 @@ func claimGone(ctx context.Context, archives *ent.ArchiveClient, name string) er
 }
 
 // Holds implements pack.ClaimIndex.
-func (x *Index) Holds(ref *proto.Ref, id string) (bool, error) {
-	return x.client.Object.Query().Where(
-		object.Ref(ref.Hash),
-		object.HasArchiveWith(archive.SessionID(id), archive.StateIn(int(pack.ArchivePending), int(pack.ArchiveOpen))),
-	).Exist(context.Background())
+func (x *Index) Holds(refs []*proto.Ref, id string) (map[string]bool, error) {
+	ctx := context.Background()
+	defer recordLookup(ctx, "claims", time.Now())
+
+	held := make(map[string]bool)
+
+	for start := 0; start < len(refs); start += objectBatch {
+		chunk := refs[start:min(start+objectBatch, len(refs))]
+
+		hashes := make([][]byte, len(chunk))
+		for i, ref := range chunk {
+			hashes[i] = ref.Hash
+		}
+
+		found, err := x.client.Object.Query().Where(
+			object.RefIn(hashes...),
+			object.HasArchiveWith(archive.SessionID(id), archive.StateIn(int(pack.ArchivePending), int(pack.ArchiveOpen))),
+		).Select(object.FieldRef).Strings(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, ref := range found {
+			held[ref] = true
+		}
+	}
+
+	return held, nil
 }
 
 // Claims implements pack.ClaimIndex.
