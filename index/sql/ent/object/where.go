@@ -88,6 +88,11 @@ func CarriedOffset(v uint32) predicate.Object {
 	return predicate.Object(sql.FieldEQ(FieldCarriedOffset, v))
 }
 
+// Incomplete applies equality check predicate on the "incomplete" field. It's identical to IncompleteEQ.
+func Incomplete(v bool) predicate.Object {
+	return predicate.Object(sql.FieldEQ(FieldIncomplete, v))
+}
+
 // RefEQ applies the EQ predicate on the "ref" field.
 func RefEQ(v []byte) predicate.Object {
 	return predicate.Object(sql.FieldEQ(FieldRef, v))
@@ -411,6 +416,16 @@ func CarriedOffsetIsNil() predicate.Object {
 // CarriedOffsetNotNil applies the NotNil predicate on the "carried_offset" field.
 func CarriedOffsetNotNil() predicate.Object {
 	return predicate.Object(sql.FieldNotNull(FieldCarriedOffset))
+}
+
+// IncompleteEQ applies the EQ predicate on the "incomplete" field.
+func IncompleteEQ(v bool) predicate.Object {
+	return predicate.Object(sql.FieldEQ(FieldIncomplete, v))
+}
+
+// IncompleteNEQ applies the NEQ predicate on the "incomplete" field.
+func IncompleteNEQ(v bool) predicate.Object {
+	return predicate.Object(sql.FieldNEQ(FieldIncomplete, v))
 }
 
 // HasArchive applies the HasEdge predicate on the "archive" edge.

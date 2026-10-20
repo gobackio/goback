@@ -4864,6 +4864,7 @@ type ObjectMutation struct {
 	addcarried_time   *int64
 	carried_offset    *uint32
 	addcarried_offset *int32
+	incomplete        *bool
 	clearedFields     map[string]struct{}
 	archive           *string
 	clearedarchive    bool
@@ -5350,6 +5351,42 @@ func (m *ObjectMutation) ResetCarriedOffset() {
 	delete(m.clearedFields, object.FieldCarriedOffset)
 }
 
+// SetIncomplete sets the "incomplete" field.
+func (m *ObjectMutation) SetIncomplete(b bool) {
+	m.incomplete = &b
+}
+
+// Incomplete returns the value of the "incomplete" field in the mutation.
+func (m *ObjectMutation) Incomplete() (r bool, exists bool) {
+	v := m.incomplete
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIncomplete returns the old "incomplete" field's value of the Object entity.
+// If the Object object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ObjectMutation) OldIncomplete(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIncomplete is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIncomplete requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIncomplete: %w", err)
+	}
+	return oldValue.Incomplete, nil
+}
+
+// ResetIncomplete resets all changes to the "incomplete" field.
+func (m *ObjectMutation) ResetIncomplete() {
+	m.incomplete = nil
+}
+
 // ClearArchive clears the "archive" edge to the Archive entity.
 func (m *ObjectMutation) ClearArchive() {
 	m.clearedarchive = true
@@ -5411,7 +5448,7 @@ func (m *ObjectMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ObjectMutation) Fields() []string {
-	fields := make([]string, 0, 7)
+	fields := make([]string, 0, 8)
 	if m.ref != nil {
 		fields = append(fields, object.FieldRef)
 	}
@@ -5432,6 +5469,9 @@ func (m *ObjectMutation) Fields() []string {
 	}
 	if m.carried_offset != nil {
 		fields = append(fields, object.FieldCarriedOffset)
+	}
+	if m.incomplete != nil {
+		fields = append(fields, object.FieldIncomplete)
 	}
 	return fields
 }
@@ -5455,6 +5495,8 @@ func (m *ObjectMutation) Field(name string) (ent.Value, bool) {
 		return m.CarriedTime()
 	case object.FieldCarriedOffset:
 		return m.CarriedOffset()
+	case object.FieldIncomplete:
+		return m.Incomplete()
 	}
 	return nil, false
 }
@@ -5478,6 +5520,8 @@ func (m *ObjectMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldCarriedTime(ctx)
 	case object.FieldCarriedOffset:
 		return m.OldCarriedOffset(ctx)
+	case object.FieldIncomplete:
+		return m.OldIncomplete(ctx)
 	}
 	return nil, fmt.Errorf("unknown Object field %s", name)
 }
@@ -5535,6 +5579,13 @@ func (m *ObjectMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCarriedOffset(v)
+		return nil
+	case object.FieldIncomplete:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIncomplete(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Object field %s", name)
@@ -5683,6 +5734,9 @@ func (m *ObjectMutation) ResetField(name string) error {
 		return nil
 	case object.FieldCarriedOffset:
 		m.ResetCarriedOffset()
+		return nil
+	case object.FieldIncomplete:
+		m.ResetIncomplete()
 		return nil
 	}
 	return fmt.Errorf("unknown Object field %s", name)

@@ -26,6 +26,8 @@ const (
 	FieldCarriedTime = "carried_time"
 	// FieldCarriedOffset holds the string denoting the carried_offset field in the database.
 	FieldCarriedOffset = "carried_offset"
+	// FieldIncomplete holds the string denoting the incomplete field in the database.
+	FieldIncomplete = "incomplete"
 	// EdgeArchive holds the string denoting the archive edge name in mutations.
 	EdgeArchive = "archive"
 	// Table holds the table name of the object in the database.
@@ -49,6 +51,7 @@ var Columns = []string{
 	FieldType,
 	FieldCarriedTime,
 	FieldCarriedOffset,
+	FieldIncomplete,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -60,6 +63,11 @@ func ValidColumn(column string) bool {
 	}
 	return false
 }
+
+var (
+	// DefaultIncomplete holds the default value on creation for the "incomplete" field.
+	DefaultIncomplete bool
+)
 
 // OrderOption defines the ordering options for the Object queries.
 type OrderOption func(*sql.Selector)
@@ -97,6 +105,11 @@ func ByCarriedTime(opts ...sql.OrderTermOption) OrderOption {
 // ByCarriedOffset orders the results by the carried_offset field.
 func ByCarriedOffset(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCarriedOffset, opts...).ToFunc()
+}
+
+// ByIncomplete orders the results by the incomplete field.
+func ByIncomplete(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldIncomplete, opts...).ToFunc()
 }
 
 // ByArchiveField orders the results by archive field.

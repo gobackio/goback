@@ -123,8 +123,9 @@ func (m MapperImpl) Location(in *ent.Object) pack.IndexLocation {
 	}
 
 	return pack.IndexLocation{
-		Archive: in.ArchiveID,
-		Record:  m.Record(in),
+		Archive:    in.ArchiveID,
+		Record:     m.Record(in),
+		Incomplete: in.Incomplete,
 	}
 }
 

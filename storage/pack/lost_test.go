@@ -112,3 +112,41 @@ func TestACommitWithoutTheFlagIsStillRefusedForWhatItLacks(t *testing.T) {
 	var missing *backup.MissingError
 	require.ErrorAs(t, store.Put(sctx, commitOver(file.Ref())), &missing)
 }
+
+func TestWhatAnIncompleteCommitLeftAboveItsGapsIsNotTakenAsWholeByALaterCommit(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+
+	blobs := makeTestData(t, 1)
+	gone := blobs[0]
+	goneFile := proto.NewObject(&proto.File{Parts: []*proto.FilePart{{Ref: gone.Ref(), Length: 1}}})
+	root := proto.NewObject(&proto.Tree{Nodes: []*proto.TreeNode{node("gone.txt", false, goneFile.Ref())}})
+
+	sctx, _ := beginSession(t, store, "agent")
+	require.NoError(t, store.Put(sctx, goneFile))
+	require.NoError(t, store.Put(sctx, root))
+	require.NoError(t, store.Put(sctx, proto.NewObject(&proto.Commit{Timestamp: 1, Tree: root.Ref(), BackupSet: "world", Incomplete: true})))
+
+	sctx, _ = beginSession(t, store, "agent")
+	err := store.Put(sctx, proto.NewObject(&proto.Commit{Timestamp: 2, Tree: root.Ref(), BackupSet: "world"}))
+
+	var missing *backup.MissingError
+	require.ErrorAs(t, err, &missing, "the tree is held, but not whole")
+	require.Len(t, missing.Refs, 1)
+	require.Equal(t, gone.Ref().Hash, missing.Refs[0].Hash)
+
+	again := proto.NewObject(&proto.Commit{Timestamp: 2, Tree: root.Ref(), BackupSet: "world", Incomplete: true})
+	require.NoError(t, store.Put(sctx, again))
+	require.True(t, again.GetCommit().Incomplete, "it is marked lost again")
+
+	sctx, _ = beginSession(t, store, "agent")
+	require.NoError(t, store.Put(sctx, gone))
+	require.NoError(t, store.Put(sctx, proto.NewObject(&proto.Commit{Timestamp: 3, Tree: root.Ref(), BackupSet: "world"})), "sent again, it is whole")
+
+	found, err := store.index.LocateCopies([]*proto.Ref{root.Ref(), goneFile.Ref()}, Scope{})
+	require.NoError(t, err)
+
+	for _, copies := range found {
+		require.False(t, incomplete(copies), "a check that found it whole clears the flag")
+	}
+}

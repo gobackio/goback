@@ -6,6 +6,7 @@ import (
 	"github.com/gobackio/goback/index/sql/ent/archive"
 	"github.com/gobackio/goback/index/sql/ent/commitrow"
 	"github.com/gobackio/goback/index/sql/ent/file"
+	"github.com/gobackio/goback/index/sql/ent/object"
 	"github.com/gobackio/goback/index/sql/ent/schema"
 	"github.com/gobackio/goback/index/sql/ent/set"
 	"github.com/gobackio/goback/index/sql/ent/settings"
@@ -61,6 +62,12 @@ func init() {
 	fileDescLost := fileFields[13].Descriptor()
 	// file.DefaultLost holds the default value on creation for the lost field.
 	file.DefaultLost = fileDescLost.Default.(bool)
+	objectFields := schema.Object{}.Fields()
+	_ = objectFields
+	// objectDescIncomplete is the schema descriptor for incomplete field.
+	objectDescIncomplete := objectFields[7].Descriptor()
+	// object.DefaultIncomplete holds the default value on creation for the incomplete field.
+	object.DefaultIncomplete = objectDescIncomplete.Default.(bool)
 	setFields := schema.Set{}.Fields()
 	_ = setFields
 	// setDescRetentionPaused is the schema descriptor for retention_paused field.

@@ -12,26 +12,30 @@ import (
 // NewInMemoryIndex returns an empty index.
 func NewInMemoryIndex() *InMemoryIndex {
 	return &InMemoryIndex{
-		index:    make(map[string]map[[proto.HashSize]byte]IndexRecord),
-		archives: make(map[string]ArchiveInfo),
-		sessions: make(map[string]*backup.Session),
-		claimed:  make(map[string]time.Time),
+		index:      make(map[string]map[[proto.HashSize]byte]IndexRecord),
+		incomplete: make(map[string]map[[proto.HashSize]byte]bool),
+		archives:   make(map[string]ArchiveInfo),
+		sessions:   make(map[string]*backup.Session),
+		claimed:    make(map[string]time.Time),
 	}
 }
 
 var (
-	_ ArchiveIndex = (*InMemoryIndex)(nil)
-	_ ClaimIndex   = (*InMemoryIndex)(nil)
+	_ ArchiveIndex    = (*InMemoryIndex)(nil)
+	_ ClaimIndex      = (*InMemoryIndex)(nil)
+	_ IncompleteIndex = (*InMemoryIndex)(nil)
 )
 
 // InMemoryIndex is an ArchiveIndex kept entirely in memory, for tests and
 // short-lived tools.
 type InMemoryIndex struct {
-	mtx      sync.RWMutex
-	index    map[string]map[[proto.HashSize]byte]IndexRecord
-	archives map[string]ArchiveInfo
-	sessions map[string]*backup.Session
-	claimed  map[string]time.Time
+	mtx   sync.RWMutex
+	index map[string]map[[proto.HashSize]byte]IndexRecord
+	// incomplete flags, by archive, the copies that reach lost content
+	incomplete map[string]map[[proto.HashSize]byte]bool
+	archives   map[string]ArchiveInfo
+	sessions   map[string]*backup.Session
+	claimed    map[string]time.Time
 
 	// Now is the clock claims are aged by; nil means time.Now.
 	Now func() time.Time
@@ -104,7 +108,8 @@ func (i *InMemoryIndex) locateCopies(refs []*proto.Ref, scope Scope, match func(
 			}
 
 			if record, ok := records[sum]; ok && match(record) {
-				copies[string(ref.Hash)] = append(copies[string(ref.Hash)], IndexLocation{Archive: archive, Record: record})
+				loc := IndexLocation{Archive: archive, Record: record, Incomplete: i.incomplete[archive][sum]}
+				copies[string(ref.Hash)] = append(copies[string(ref.Hash)], loc)
 			}
 		}
 	}
@@ -159,6 +164,7 @@ func (i *InMemoryIndex) DeleteArchives(names []string) error {
 	i.mtx.Lock()
 	for _, name := range names {
 		delete(i.index, name)
+		delete(i.incomplete, name)
 		delete(i.archives, name)
 	}
 	i.mtx.Unlock()
@@ -236,6 +242,7 @@ func (i *InMemoryIndex) EndSession(id string) ([]string, error) {
 			dropped = append(dropped, name)
 			delete(i.archives, name)
 			delete(i.index, name)
+			delete(i.incomplete, name)
 			delete(i.claimed, name)
 		}
 	}
@@ -282,6 +289,7 @@ func (i *InMemoryIndex) CommitSession(id string) error {
 		case ArchiveLost:
 			delete(i.archives, name)
 			delete(i.index, name)
+			delete(i.incomplete, name)
 			delete(i.claimed, name)
 		}
 	}
@@ -491,4 +499,49 @@ func (i *InMemoryIndex) Lost(session string) ([]*proto.Ref, error) {
 	}
 
 	return lost, nil
+}
+
+// MarkIncomplete implements IncompleteIndex.
+func (i *InMemoryIndex) MarkIncomplete(session string, refs []*proto.Ref) error {
+	i.mtx.Lock()
+	defer i.mtx.Unlock()
+
+	for name, info := range i.archives {
+		if info.State == ArchiveCommitted || info.Session != session {
+			continue
+		}
+
+		for _, ref := range refs {
+			var sum [proto.HashSize]byte
+			copy(sum[:], ref.Hash)
+
+			if _, ok := i.index[name][sum]; !ok {
+				continue
+			}
+
+			if i.incomplete[name] == nil {
+				i.incomplete[name] = map[[proto.HashSize]byte]bool{}
+			}
+
+			i.incomplete[name][sum] = true
+		}
+	}
+
+	return nil
+}
+
+// ClearIncomplete implements IncompleteIndex.
+func (i *InMemoryIndex) ClearIncomplete(refs []*proto.Ref) error {
+	i.mtx.Lock()
+	defer i.mtx.Unlock()
+
+	for _, flagged := range i.incomplete {
+		for _, ref := range refs {
+			var sum [proto.HashSize]byte
+			copy(sum[:], ref.Hash)
+			delete(flagged, sum)
+		}
+	}
+
+	return nil
 }

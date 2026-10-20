@@ -80,6 +80,20 @@ func (_c *ObjectCreate) SetNillableCarriedOffset(v *uint32) *ObjectCreate {
 	return _c
 }
 
+// SetIncomplete sets the "incomplete" field.
+func (_c *ObjectCreate) SetIncomplete(v bool) *ObjectCreate {
+	_c.mutation.SetIncomplete(v)
+	return _c
+}
+
+// SetNillableIncomplete sets the "incomplete" field if the given value is not nil.
+func (_c *ObjectCreate) SetNillableIncomplete(v *bool) *ObjectCreate {
+	if v != nil {
+		_c.SetIncomplete(*v)
+	}
+	return _c
+}
+
 // SetArchive sets the "archive" edge to the Archive entity.
 func (_c *ObjectCreate) SetArchive(v *Archive) *ObjectCreate {
 	return _c.SetArchiveID(v.ID)
@@ -92,6 +106,7 @@ func (_c *ObjectCreate) Mutation() *ObjectMutation {
 
 // Save creates the Object in the database.
 func (_c *ObjectCreate) Save(ctx context.Context) (*Object, error) {
+	_c.defaults()
 	return withHooks(ctx, _c.sqlSave, _c.mutation, _c.hooks)
 }
 
@@ -117,6 +132,14 @@ func (_c *ObjectCreate) ExecX(ctx context.Context) {
 	}
 }
 
+// defaults sets the default values of the builder before save.
+func (_c *ObjectCreate) defaults() {
+	if _, ok := _c.mutation.Incomplete(); !ok {
+		v := object.DefaultIncomplete
+		_c.mutation.SetIncomplete(v)
+	}
+}
+
 // check runs all checks and user-defined validators on the builder.
 func (_c *ObjectCreate) check() error {
 	if _, ok := _c.mutation.Ref(); !ok {
@@ -133,6 +156,9 @@ func (_c *ObjectCreate) check() error {
 	}
 	if _, ok := _c.mutation.GetType(); !ok {
 		return &ValidationError{Name: "type", err: errors.New(`ent: missing required field "Object.type"`)}
+	}
+	if _, ok := _c.mutation.Incomplete(); !ok {
+		return &ValidationError{Name: "incomplete", err: errors.New(`ent: missing required field "Object.incomplete"`)}
 	}
 	if len(_c.mutation.ArchiveIDs()) == 0 {
 		return &ValidationError{Name: "archive", err: errors.New(`ent: missing required edge "Object.archive"`)}
@@ -187,6 +213,10 @@ func (_c *ObjectCreate) createSpec() (*Object, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.CarriedOffset(); ok {
 		_spec.SetField(object.FieldCarriedOffset, field.TypeUint32, value)
 		_node.CarriedOffset = value
+	}
+	if value, ok := _c.mutation.Incomplete(); ok {
+		_spec.SetField(object.FieldIncomplete, field.TypeBool, value)
+		_node.Incomplete = value
 	}
 	if nodes := _c.mutation.ArchiveIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -383,6 +413,18 @@ func (u *ObjectUpsert) ClearCarriedOffset() *ObjectUpsert {
 	return u
 }
 
+// SetIncomplete sets the "incomplete" field.
+func (u *ObjectUpsert) SetIncomplete(v bool) *ObjectUpsert {
+	u.Set(object.FieldIncomplete, v)
+	return u
+}
+
+// UpdateIncomplete sets the "incomplete" field to the value that was provided on create.
+func (u *ObjectUpsert) UpdateIncomplete() *ObjectUpsert {
+	u.SetExcluded(object.FieldIncomplete)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -570,6 +612,20 @@ func (u *ObjectUpsertOne) ClearCarriedOffset() *ObjectUpsertOne {
 	})
 }
 
+// SetIncomplete sets the "incomplete" field.
+func (u *ObjectUpsertOne) SetIncomplete(v bool) *ObjectUpsertOne {
+	return u.Update(func(s *ObjectUpsert) {
+		s.SetIncomplete(v)
+	})
+}
+
+// UpdateIncomplete sets the "incomplete" field to the value that was provided on create.
+func (u *ObjectUpsertOne) UpdateIncomplete() *ObjectUpsertOne {
+	return u.Update(func(s *ObjectUpsert) {
+		s.UpdateIncomplete()
+	})
+}
+
 // Exec executes the query.
 func (u *ObjectUpsertOne) Exec(ctx context.Context) error {
 	if len(u.create.conflict) == 0 {
@@ -622,6 +678,7 @@ func (_c *ObjectCreateBulk) Save(ctx context.Context) ([]*Object, error) {
 	for i := range _c.builders {
 		func(i int, root context.Context) {
 			builder := _c.builders[i]
+			builder.defaults()
 			var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
 				mutation, ok := m.(*ObjectMutation)
 				if !ok {
@@ -917,6 +974,20 @@ func (u *ObjectUpsertBulk) UpdateCarriedOffset() *ObjectUpsertBulk {
 func (u *ObjectUpsertBulk) ClearCarriedOffset() *ObjectUpsertBulk {
 	return u.Update(func(s *ObjectUpsert) {
 		s.ClearCarriedOffset()
+	})
+}
+
+// SetIncomplete sets the "incomplete" field.
+func (u *ObjectUpsertBulk) SetIncomplete(v bool) *ObjectUpsertBulk {
+	return u.Update(func(s *ObjectUpsert) {
+		s.SetIncomplete(v)
+	})
+}
+
+// UpdateIncomplete sets the "incomplete" field to the value that was provided on create.
+func (u *ObjectUpsertBulk) UpdateIncomplete() *ObjectUpsertBulk {
+	return u.Update(func(s *ObjectUpsert) {
+		s.UpdateIncomplete()
 	})
 }
 

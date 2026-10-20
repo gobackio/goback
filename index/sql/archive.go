@@ -2,6 +2,7 @@ package sql
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -278,6 +279,45 @@ func (x *Index) EndSession(id string) ([]string, error) {
 	})
 
 	return dropped, err
+}
+
+// MarkIncomplete implements pack.IncompleteIndex.
+func (x *Index) MarkIncomplete(id string, refs []*proto.Ref) error {
+	ctx := context.Background()
+
+	for chunk := range slices.Chunk(refs, objectBatch) {
+		err := x.client.Object.Update().
+			Where(object.RefIn(refHashes(chunk)...), object.HasArchiveWith(archive.SessionID(id), archive.StateNEQ(int(pack.ArchiveCommitted)))).
+			SetIncomplete(true).Exec(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// ClearIncomplete implements pack.IncompleteIndex.
+func (x *Index) ClearIncomplete(refs []*proto.Ref) error {
+	ctx := context.Background()
+
+	for chunk := range slices.Chunk(refs, objectBatch) {
+		err := x.client.Object.Update().Where(object.RefIn(refHashes(chunk)...), object.Incomplete(true)).SetIncomplete(false).Exec(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func refHashes(refs []*proto.Ref) [][]byte {
+	hashes := make([][]byte, len(refs))
+	for i, ref := range refs {
+		hashes[i] = ref.Hash
+	}
+
+	return hashes
 }
 
 // PendingArchives implements pack.SessionIndex.

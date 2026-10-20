@@ -65,6 +65,9 @@ func (Object) Fields() []ent.Field {
 		// one that has its archive's
 		field.Int64("carried_time").Optional(),
 		field.Uint32("carried_offset").Optional(),
+		// incomplete is set on a copy that reaches content a commit marked
+		// lost
+		field.Bool("incomplete").Default(false),
 	}
 }
 

@@ -94,7 +94,7 @@ func NewPackStorage(options ...PackOption) (*PackStorage, error) {
 		claimGrace:       opts.claimGrace,
 		localSessions:    opts.localSessions,
 		foreignRefs:      opts.foreignRefs,
-		archives:        make([]*archive, 0),
+		archives:         make([]*archive, 0),
 		retired:          make(map[string]bool),
 		sessions:         make(map[string]*writeSession),
 		archiveSemaphore: semaphore.NewWeighted(int64(opts.maxParallel)),
@@ -613,7 +613,7 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 
 	// a commit missing anything is refused before it takes anything back,
 	// so its session may store what is missing and commit again
-	skipped, err := ps.skippedRefs(ctx, ws, commit, nil)
+	skipped, whole, err := ps.skippedRefs(ctx, ws, commit, nil)
 	if err != nil {
 		return err
 	}
@@ -666,6 +666,12 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 	err = ps.index.CommitSession(ws.id)
 	if err != nil {
 		return err
+	}
+
+	if x, ok := ps.index.(IncompleteIndex); ok && len(whole) > 0 {
+		if err := x.ClearIncomplete(whole); err != nil {
+			ps.logger.Warn("clearing what a commit found whole again failed", "session", ws.id, "err", err)
+		}
 	}
 
 	ps.mtx.RLock()
@@ -1709,6 +1715,19 @@ func ListInfo(storage ArchiveStorage, extension string) ([]ListedFile, error) {
 type IndexLocation struct {
 	Archive string
 	Record  IndexRecord
+	// Incomplete is set on a copy that reaches content a commit marked
+	// lost.
+	Incomplete bool
+}
+
+// IncompleteIndex is implemented by an index that flags the copies of
+// objects that reach content a commit marked lost, which a commit check
+// walks into instead of taking them as whole.
+type IncompleteIndex interface {
+	// MarkIncomplete flags the copies of refs in the session's archives.
+	MarkIncomplete(session string, refs []*proto.Ref) error
+	// ClearIncomplete clears the flag from every copy of refs.
+	ClearIncomplete(refs []*proto.Ref) error
 }
 
 var (

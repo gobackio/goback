@@ -61,4 +61,12 @@ func TestAnAgentThatLacksContentCommitsWhatItHasWithTheRestMarkedLost(t *testing
 	require.True(t, tree.Incomplete)
 	require.True(t, tree.Nodes[0].Stat.Lost)
 	require.False(t, tree.Nodes[1].Stat.Lost)
+
+	sctx, err = agent.Store.(backup.SessionStore).BeginSession(ctx, &backup.Session{AgentID: "agent", Set: "world"})
+	require.NoError(t, err)
+
+	var missing *backup.MissingError
+	err = agent.Store.Put(sctx, proto.NewObject(&proto.Commit{Timestamp: 43, Tree: root.Ref(), AgentId: "agent", BackupSet: "world"}))
+	require.ErrorAs(t, err, &missing, "what the commit left above its gap is not taken as whole")
+	require.Equal(t, gone.Ref().Hash, missing.Refs[0].Hash)
 }

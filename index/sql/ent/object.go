@@ -31,6 +31,8 @@ type Object struct {
 	CarriedTime int64 `json:"carried_time,omitempty"`
 	// CarriedOffset holds the value of the "carried_offset" field.
 	CarriedOffset uint32 `json:"carried_offset,omitempty"`
+	// Incomplete holds the value of the "incomplete" field.
+	Incomplete bool `json:"incomplete,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ObjectQuery when eager-loading is set.
 	Edges        ObjectEdges `json:"edges"`
@@ -64,6 +66,8 @@ func (*Object) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case object.FieldRef:
 			values[i] = new([]byte)
+		case object.FieldIncomplete:
+			values[i] = new(sql.NullBool)
 		case object.FieldID, object.FieldStart, object.FieldLength, object.FieldType, object.FieldCarriedTime, object.FieldCarriedOffset:
 			values[i] = new(sql.NullInt64)
 		case object.FieldArchiveID:
@@ -131,6 +135,12 @@ func (_m *Object) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.CarriedOffset = uint32(value.Int64)
 			}
+		case object.FieldIncomplete:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field incomplete", values[i])
+			} else if value.Valid {
+				_m.Incomplete = value.Bool
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -192,6 +202,9 @@ func (_m *Object) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("carried_offset=")
 	builder.WriteString(fmt.Sprintf("%v", _m.CarriedOffset))
+	builder.WriteString(", ")
+	builder.WriteString("incomplete=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Incomplete))
 	builder.WriteByte(')')
 	return builder.String()
 }

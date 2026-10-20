@@ -221,6 +221,7 @@ var (
 		{Name: "type", Type: field.TypeUint32},
 		{Name: "carried_time", Type: field.TypeInt64, Nullable: true},
 		{Name: "carried_offset", Type: field.TypeUint32, Nullable: true},
+		{Name: "incomplete", Type: field.TypeBool, Default: false},
 		{Name: "archive_id", Type: field.TypeString},
 	}
 	// ObjectsTable holds the schema information for the "objects" table.
@@ -231,7 +232,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "objects_archives_objects",
-				Columns:    []*schema.Column{ObjectsColumns[7]},
+				Columns:    []*schema.Column{ObjectsColumns[8]},
 				RefColumns: []*schema.Column{ArchivesColumns[0]},
 				OnDelete:   schema.Cascade,
 			},
@@ -240,12 +241,12 @@ var (
 			{
 				Name:    "object_ref_archive_id",
 				Unique:  true,
-				Columns: []*schema.Column{ObjectsColumns[1], ObjectsColumns[7]},
+				Columns: []*schema.Column{ObjectsColumns[1], ObjectsColumns[8]},
 			},
 			{
 				Name:    "object_archive_id",
 				Unique:  false,
-				Columns: []*schema.Column{ObjectsColumns[7]},
+				Columns: []*schema.Column{ObjectsColumns[8]},
 			},
 			{
 				Name:    "objects_tombstones",

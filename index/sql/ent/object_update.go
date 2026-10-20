@@ -165,6 +165,20 @@ func (_u *ObjectUpdate) ClearCarriedOffset() *ObjectUpdate {
 	return _u
 }
 
+// SetIncomplete sets the "incomplete" field.
+func (_u *ObjectUpdate) SetIncomplete(v bool) *ObjectUpdate {
+	_u.mutation.SetIncomplete(v)
+	return _u
+}
+
+// SetNillableIncomplete sets the "incomplete" field if the given value is not nil.
+func (_u *ObjectUpdate) SetNillableIncomplete(v *bool) *ObjectUpdate {
+	if v != nil {
+		_u.SetIncomplete(*v)
+	}
+	return _u
+}
+
 // SetArchive sets the "archive" edge to the Archive entity.
 func (_u *ObjectUpdate) SetArchive(v *Archive) *ObjectUpdate {
 	return _u.SetArchiveID(v.ID)
@@ -266,6 +280,9 @@ func (_u *ObjectUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.CarriedOffsetCleared() {
 		_spec.ClearField(object.FieldCarriedOffset, field.TypeUint32)
+	}
+	if value, ok := _u.mutation.Incomplete(); ok {
+		_spec.SetField(object.FieldIncomplete, field.TypeBool, value)
 	}
 	if _u.mutation.ArchiveCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -453,6 +470,20 @@ func (_u *ObjectUpdateOne) ClearCarriedOffset() *ObjectUpdateOne {
 	return _u
 }
 
+// SetIncomplete sets the "incomplete" field.
+func (_u *ObjectUpdateOne) SetIncomplete(v bool) *ObjectUpdateOne {
+	_u.mutation.SetIncomplete(v)
+	return _u
+}
+
+// SetNillableIncomplete sets the "incomplete" field if the given value is not nil.
+func (_u *ObjectUpdateOne) SetNillableIncomplete(v *bool) *ObjectUpdateOne {
+	if v != nil {
+		_u.SetIncomplete(*v)
+	}
+	return _u
+}
+
 // SetArchive sets the "archive" edge to the Archive entity.
 func (_u *ObjectUpdateOne) SetArchive(v *Archive) *ObjectUpdateOne {
 	return _u.SetArchiveID(v.ID)
@@ -584,6 +615,9 @@ func (_u *ObjectUpdateOne) sqlSave(ctx context.Context) (_node *Object, err erro
 	}
 	if _u.mutation.CarriedOffsetCleared() {
 		_spec.ClearField(object.FieldCarriedOffset, field.TypeUint32)
+	}
+	if value, ok := _u.mutation.Incomplete(); ok {
+		_spec.SetField(object.FieldIncomplete, field.TypeBool, value)
 	}
 	if _u.mutation.ArchiveCleared() {
 		edge := &sqlgraph.EdgeSpec{

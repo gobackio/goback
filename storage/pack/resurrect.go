@@ -90,15 +90,17 @@ func (ps *PackStorage) sealedAtBegin(ws *writeSession) (uint64, error) {
 const checkChunk = 10_000
 
 // skippedRefs walks down from the commit while the objects are the
-// session's own and returns the refs it reaches outside them: what the
-// session deduplicated. It fails with a backup.MissingError naming the refs
-// it reaches that no archive the session sees holds. It reports the refs
-// it walked as progress.PhaseCheck. A non-nil parents gets, for every ref
-// it reaches below the commit, the objects that reference it.
-func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit *proto.Object, parents map[string][]*proto.Ref) ([]*proto.Ref, error) {
+// session's own, or held only as incomplete, and returns the refs it
+// reaches outside the session's own: what the session deduplicated, and of
+// those the ones held only as incomplete, which it found whole. It fails
+// with a backup.MissingError naming the refs it reaches that no archive the
+// session sees holds. It reports the refs it walked as progress.PhaseCheck.
+// A non-nil parents gets, for every ref it reaches below the commit, the
+// objects that reference it.
+func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit *proto.Object, parents map[string][]*proto.Ref) (skipped, whole []*proto.Ref, err error) {
 	pending, err := ps.index.PendingArchives(ws.id)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	own := make(map[string]bool, len(pending))
@@ -111,7 +113,7 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 	seen := map[string]bool{string(root.Hash): true}
 	frontier := []*proto.Ref{root}
 
-	var skipped, missing []*proto.Ref
+	var missing []*proto.Ref
 
 	phase := progress.Start(ctx, progress.OpCommit, progress.PhaseCheck, 0, 0)
 	defer phase.Finish()
@@ -122,7 +124,7 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 		for chunk := range slices.Chunk(frontier, checkChunk) {
 			found, err := ps.index.LocateCopies(chunk, scope)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			var below []*proto.Ref
@@ -143,6 +145,12 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 				loc, ours := ownCopy(copies, own)
 				if !ours {
 					skipped = append(skipped, ref)
+
+					if incomplete(copies) {
+						whole = append(whole, ref)
+						below = append(below, ref)
+					}
+
 					continue
 				}
 
@@ -153,7 +161,7 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 
 			objects, err := ps.readOwn(ctx, ws, commit, below)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			for _, obj := range objects {
@@ -181,14 +189,27 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 	}
 
 	if len(missing) > 0 {
-		return nil, &backup.MissingError{Refs: missing}
+		return nil, nil, &backup.MissingError{Refs: missing}
 	}
 
-	return skipped, nil
+	return skipped, whole, nil
+}
+
+// incomplete reports whether every copy reaches content a commit marked
+// lost.
+func incomplete(copies []IndexLocation) bool {
+	for _, loc := range copies {
+		if !loc.Incomplete {
+			return false
+		}
+	}
+
+	return len(copies) > 0
 }
 
 // readOwn reads the session's objects at refs, the commit being one it
-// has at hand, a range read per run of neighbouring records.
+// has at hand or one held only as incomplete, a range read per run of
+// neighbouring records.
 func (ps *PackStorage) readOwn(ctx context.Context, ws *writeSession, commit *proto.Object, refs []*proto.Ref) ([]*proto.Object, error) {
 	var out []*proto.Object
 
@@ -366,7 +387,7 @@ func (ps *PackStorage) markLost(ctx context.Context, commit *proto.Object) (*pro
 			return nil, err
 		}
 
-		_, err = ps.skippedRefs(ctx, ws, commit, parents)
+		_, _, err = ps.skippedRefs(ctx, ws, commit, parents)
 		if err != nil && !errors.As(err, &missing) {
 			return nil, err
 		}
@@ -394,6 +415,19 @@ func (ps *PackStorage) markLost(ctx context.Context, commit *proto.Object) (*pro
 		}
 
 		frontier = next
+	}
+
+	// what reaches the gaps stays in the session's archives; no later
+	// commit takes it as whole
+	if x, ok := ps.index.(IncompleteIndex); ok {
+		refs := make([]*proto.Ref, 0, len(above))
+		for hash := range above {
+			refs = append(refs, &proto.Ref{Hash: []byte(hash)})
+		}
+
+		if err := x.MarkIncomplete(ws.id, refs); err != nil {
+			return nil, err
+		}
 	}
 
 	ps.logger.Info("a commit marks what its session lacks as lost", "session", ws.id, "lost", len(missing.Refs))
