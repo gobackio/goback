@@ -2,7 +2,9 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -99,12 +101,32 @@ func writeStatus(dir string, s *Status) error {
 		return err
 	}
 
-	if err := os.Rename(tmp.Name(), filepath.Join(dir, StatusFile)); err != nil {
+	if err := rename(tmp.Name(), filepath.Join(dir, StatusFile)); err != nil {
 		_ = os.Remove(tmp.Name())
 		return err
 	}
 
 	return nil
+}
+
+// renameTries is how often rename tries before it gives up.
+const renameTries = 10
+
+// rename renames from to to, trying again for a while when to is denied:
+// on Windows a file someone is reading can't be replaced until they close
+// it.
+func rename(from, to string) error {
+	var err error
+
+	for try := range renameTries {
+		if err = os.Rename(from, to); !errors.Is(err, fs.ErrPermission) {
+			return err
+		}
+
+		time.Sleep(time.Duration(try+1) * 10 * time.Millisecond)
+	}
+
+	return err
 }
 
 // ReadStatus reads the status file in dir.
