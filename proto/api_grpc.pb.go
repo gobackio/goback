@@ -22,6 +22,9 @@ const (
 	Store_Put_FullMethodName            = "/proto.Store/Put"
 	Store_Missing_FullMethodName        = "/proto.Store/Missing"
 	Store_PutObjects_FullMethodName     = "/proto.Store/PutObjects"
+	Store_BeginUpload_FullMethodName    = "/proto.Store/BeginUpload"
+	Store_SendUpload_FullMethodName     = "/proto.Store/SendUpload"
+	Store_UploadStatus_FullMethodName   = "/proto.Store/UploadStatus"
 	Store_Get_FullMethodName            = "/proto.Store/Get"
 	Store_ReadFile_FullMethodName       = "/proto.Store/ReadFile"
 	Store_ReadFiles_FullMethodName      = "/proto.Store/ReadFiles"
@@ -58,6 +61,16 @@ type StoreClient interface {
 	// PutObjects stores the objects of every message of the stream; a
 	// refused object fails the call, with what came before it stored
 	PutObjects(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[PutObjectsRequest, PutObjectsResponse], error)
+	// BeginUpload opens an upload of one upload file in the caller's
+	// session: the store answers where to PUT it, or with nothing, and the
+	// file goes to SendUpload
+	BeginUpload(ctx context.Context, in *BeginUploadRequest, opts ...grpc.CallOption) (*BeginUploadResponse, error)
+	// SendUpload streams an upload file BeginUpload answered without a
+	// location, and answers once the store has ingested it
+	SendUpload(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SendUploadRequest, SendUploadResponse], error)
+	// UploadStatus tells how far the store got ingesting uploads that went
+	// to a location
+	UploadStatus(ctx context.Context, in *UploadStatusRequest, opts ...grpc.CallOption) (*UploadStatusResponse, error)
 	// Get serves a commit, tree or file object the store references; blobs
 	// are read through ReadFile
 	Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error)
@@ -145,6 +158,39 @@ func (c *storeClient) PutObjects(ctx context.Context, opts ...grpc.CallOption) (
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Store_PutObjectsClient = grpc.ClientStreamingClient[PutObjectsRequest, PutObjectsResponse]
 
+func (c *storeClient) BeginUpload(ctx context.Context, in *BeginUploadRequest, opts ...grpc.CallOption) (*BeginUploadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BeginUploadResponse)
+	err := c.cc.Invoke(ctx, Store_BeginUpload_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeClient) SendUpload(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SendUploadRequest, SendUploadResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[1], Store_SendUpload_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SendUploadRequest, SendUploadResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Store_SendUploadClient = grpc.ClientStreamingClient[SendUploadRequest, SendUploadResponse]
+
+func (c *storeClient) UploadStatus(ctx context.Context, in *UploadStatusRequest, opts ...grpc.CallOption) (*UploadStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UploadStatusResponse)
+	err := c.cc.Invoke(ctx, Store_UploadStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *storeClient) Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetResponse)
@@ -157,7 +203,7 @@ func (c *storeClient) Get(ctx context.Context, in *GetRequest, opts ...grpc.Call
 
 func (c *storeClient) ReadFile(ctx context.Context, in *ReadFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadFileResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[1], Store_ReadFile_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[2], Store_ReadFile_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +222,7 @@ type Store_ReadFileClient = grpc.ServerStreamingClient[ReadFileResponse]
 
 func (c *storeClient) ReadFiles(ctx context.Context, in *ReadFilesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadFilesResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[2], Store_ReadFiles_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[3], Store_ReadFiles_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +281,7 @@ func (c *storeClient) LatestCommit(ctx context.Context, in *LatestCommitRequest,
 
 func (c *storeClient) GetTree(ctx context.Context, in *GetTreeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetTreeResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[3], Store_GetTree_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[4], Store_GetTree_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +340,7 @@ func (c *storeClient) TouchSession(ctx context.Context, in *TouchSessionRequest,
 
 func (c *storeClient) GetPresence(ctx context.Context, in *GetPresenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetPresenceResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[4], Store_GetPresence_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Store_ServiceDesc.Streams[5], Store_GetPresence_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -431,6 +477,16 @@ type StoreServer interface {
 	// PutObjects stores the objects of every message of the stream; a
 	// refused object fails the call, with what came before it stored
 	PutObjects(grpc.ClientStreamingServer[PutObjectsRequest, PutObjectsResponse]) error
+	// BeginUpload opens an upload of one upload file in the caller's
+	// session: the store answers where to PUT it, or with nothing, and the
+	// file goes to SendUpload
+	BeginUpload(context.Context, *BeginUploadRequest) (*BeginUploadResponse, error)
+	// SendUpload streams an upload file BeginUpload answered without a
+	// location, and answers once the store has ingested it
+	SendUpload(grpc.ClientStreamingServer[SendUploadRequest, SendUploadResponse]) error
+	// UploadStatus tells how far the store got ingesting uploads that went
+	// to a location
+	UploadStatus(context.Context, *UploadStatusRequest) (*UploadStatusResponse, error)
 	// Get serves a commit, tree or file object the store references; blobs
 	// are read through ReadFile
 	Get(context.Context, *GetRequest) (*GetResponse, error)
@@ -493,6 +549,15 @@ func (UnimplementedStoreServer) Missing(context.Context, *MissingRequest) (*Miss
 }
 func (UnimplementedStoreServer) PutObjects(grpc.ClientStreamingServer[PutObjectsRequest, PutObjectsResponse]) error {
 	return status.Error(codes.Unimplemented, "method PutObjects not implemented")
+}
+func (UnimplementedStoreServer) BeginUpload(context.Context, *BeginUploadRequest) (*BeginUploadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BeginUpload not implemented")
+}
+func (UnimplementedStoreServer) SendUpload(grpc.ClientStreamingServer[SendUploadRequest, SendUploadResponse]) error {
+	return status.Error(codes.Unimplemented, "method SendUpload not implemented")
+}
+func (UnimplementedStoreServer) UploadStatus(context.Context, *UploadStatusRequest) (*UploadStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UploadStatus not implemented")
 }
 func (UnimplementedStoreServer) Get(context.Context, *GetRequest) (*GetResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Get not implemented")
@@ -629,6 +694,49 @@ func _Store_PutObjects_Handler(srv interface{}, stream grpc.ServerStream) error 
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Store_PutObjectsServer = grpc.ClientStreamingServer[PutObjectsRequest, PutObjectsResponse]
+
+func _Store_BeginUpload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BeginUploadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServer).BeginUpload(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Store_BeginUpload_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServer).BeginUpload(ctx, req.(*BeginUploadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Store_SendUpload_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(StoreServer).SendUpload(&grpc.GenericServerStream[SendUploadRequest, SendUploadResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Store_SendUploadServer = grpc.ClientStreamingServer[SendUploadRequest, SendUploadResponse]
+
+func _Store_UploadStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UploadStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServer).UploadStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Store_UploadStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServer).UploadStatus(ctx, req.(*UploadStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
 
 func _Store_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetRequest)
@@ -1050,6 +1158,14 @@ var Store_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Store_Missing_Handler,
 		},
 		{
+			MethodName: "BeginUpload",
+			Handler:    _Store_BeginUpload_Handler,
+		},
+		{
+			MethodName: "UploadStatus",
+			Handler:    _Store_UploadStatus_Handler,
+		},
+		{
 			MethodName: "Get",
 			Handler:    _Store_Get_Handler,
 		},
@@ -1134,6 +1250,11 @@ var Store_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "PutObjects",
 			Handler:       _Store_PutObjects_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "SendUpload",
+			Handler:       _Store_SendUpload_Handler,
 			ClientStreams: true,
 		},
 		{

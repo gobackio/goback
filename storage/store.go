@@ -34,6 +34,8 @@ type Store struct {
 	// Lease is what BeginSession promises the client: the session
 	// store's own when it has one.
 	Lease time.Duration
+
+	uploads uploads
 }
 
 // NewStore returns a Store over index. sessions is nil for a store without

@@ -5,6 +5,7 @@ package mapping
 import (
 	"time"
 
+	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/index"
@@ -35,6 +36,11 @@ type Mapper interface {
 
 	RetentionBracket(in retention.Bracket) *proto.RetentionBracket
 	FromRetentionBracket(in *proto.RetentionBracket) retention.Bracket
+
+	// field:UploadId from:"ID"
+	UploadStatus(in backup.UploadStatus) *proto.UploadStatus
+	// field:ID from:"UploadId"
+	FromUploadStatus(in *proto.UploadStatus) backup.UploadStatus
 }
 
 // Seconds is d in whole seconds, as the store service carries durations.

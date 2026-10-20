@@ -3,6 +3,7 @@
 package gen
 
 import (
+	backup "github.com/gobackio/goback/backup"
 	retention "github.com/gobackio/goback/backup/retention"
 	storekey "github.com/gobackio/goback/backup/storekey"
 	index "github.com/gobackio/goback/index"
@@ -90,6 +91,22 @@ func (m MapperImpl) FromStorePolicy(in *proto.StorePolicy) *storekey.Policy {
 	}
 }
 
+func (m MapperImpl) FromUploadStatus(in *proto.UploadStatus) backup.UploadStatus {
+	if in == nil {
+		return backup.UploadStatus{}
+	}
+
+	return backup.UploadStatus{
+		ID:         in.UploadId,
+		State:      backup.UploadState(in.State),
+		Objects:    in.Objects,
+		Stored:     in.Stored,
+		Bytes:      in.Bytes,
+		BytesTotal: in.BytesTotal,
+		Error:      in.Error,
+	}
+}
+
 func (m MapperImpl) RetentionBracket(in retention.Bracket) *proto.RetentionBracket {
 
 	return &proto.RetentionBracket{
@@ -132,6 +149,19 @@ func (m MapperImpl) StorePolicy(in *storekey.Policy) *proto.StorePolicy {
 		Version:       in.Version,
 		Mode:          string(in.Mode),
 		PresenceScope: in.PresenceScope,
+	}
+}
+
+func (m MapperImpl) UploadStatus(in backup.UploadStatus) *proto.UploadStatus {
+
+	return &proto.UploadStatus{
+		UploadId:   in.ID,
+		State:      proto.UploadState(in.State),
+		Objects:    in.Objects,
+		Bytes:      in.Bytes,
+		BytesTotal: in.BytesTotal,
+		Error:      in.Error,
+		Stored:     in.Stored,
 	}
 }
 

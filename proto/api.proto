@@ -41,6 +41,66 @@ message PutObjectsResponse {
     int64 stored = 1;
 }
 
+message BeginUploadRequest {
+    // the upload file's size in bytes; the store takes no more
+    int64 size = 1;
+}
+
+message BeginUploadResponse {
+    string upload_id = 1;
+    // where to PUT the upload file; without it, the file goes to
+    // SendUpload
+    UploadLocation location = 2;
+}
+
+message UploadLocation {
+    string url = 1;
+    // header must be sent with the request, verbatim
+    map<string, string> header = 2;
+    google.protobuf.Timestamp expires = 3;
+}
+
+message SendUploadRequest {
+    // the first message names the upload; every message may carry bytes of
+    // the file, in order
+    string upload_id = 1;
+    bytes data = 2;
+}
+
+message SendUploadResponse {
+    // the objects the file held, and how many the store didn't hold already
+    int64 objects = 1;
+    int64 stored = 2;
+}
+
+message UploadStatusRequest {
+    repeated string upload_ids = 1;
+}
+
+enum UploadState {
+    UPLOAD_STATE_UNSPECIFIED = 0;
+    // the file hasn't arrived yet
+    UPLOAD_STATE_WAITING = 1;
+    UPLOAD_STATE_INGESTING = 2;
+    UPLOAD_STATE_DONE = 3;
+    UPLOAD_STATE_FAILED = 4;
+}
+
+message UploadStatus {
+    string upload_id = 1;
+    UploadState state = 2;
+    int64 objects = 3;
+    int64 bytes = 4;
+    int64 bytes_total = 5;
+    string error = 6;
+    int64 stored = 7;
+}
+
+message UploadStatusResponse {
+    // one per id asked about, in order
+    repeated UploadStatus uploads = 1;
+}
+
 message PutResponse {
     // the ref the object was stored under
     Ref ref = 1;
@@ -433,6 +493,16 @@ service Store {
     // PutObjects stores the objects of every message of the stream; a
     // refused object fails the call, with what came before it stored
     rpc PutObjects (stream PutObjectsRequest) returns (PutObjectsResponse) {}
+    // BeginUpload opens an upload of one upload file in the caller's
+    // session: the store answers where to PUT it, or with nothing, and the
+    // file goes to SendUpload
+    rpc BeginUpload (BeginUploadRequest) returns (BeginUploadResponse) {}
+    // SendUpload streams an upload file BeginUpload answered without a
+    // location, and answers once the store has ingested it
+    rpc SendUpload (stream SendUploadRequest) returns (SendUploadResponse) {}
+    // UploadStatus tells how far the store got ingesting uploads that went
+    // to a location
+    rpc UploadStatus (UploadStatusRequest) returns (UploadStatusResponse) {}
     // Get serves a commit, tree or file object the store references; blobs
     // are read through ReadFile
     rpc Get (GetRequest) returns (GetResponse) {}

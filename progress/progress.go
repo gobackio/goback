@@ -21,6 +21,7 @@ const (
 	OpScrub   = "scrub"
 	OpRetire  = "retire"
 	OpReIndex = "reindex"
+	OpIngest  = "ingest"
 )
 
 // Phases, the Phase of an Update. An operation enters its phases in the
@@ -52,6 +53,8 @@ const (
 	PhaseSets     = "sets"
 	PhasePolicies = "policies"
 	PhaseDamage   = "damage"
+	// ingest.
+	PhaseIngest = "ingest"
 )
 
 // Update is how far one phase of an operation has got. Done counts the

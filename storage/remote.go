@@ -23,6 +23,7 @@ import (
 	adminpb "github.com/gobackio/goback/proto/admin"
 	"github.com/gobackio/goback/storage/mapping/gen"
 	"github.com/gobackio/goback/storage/pack"
+	"github.com/gobackio/goback/storage/upload"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
@@ -489,6 +490,136 @@ func (r *Client) PutObjects(ctx context.Context, objects []*proto.Object) error 
 	_, err = stream.CloseAndRecv()
 
 	return fromWriteStatus(err)
+}
+
+var _ backup.Uploader = (*Client)(nil)
+
+// uploadMessage is how many bytes of an upload file one SendUpload message
+// carries.
+const uploadMessage = 1 << 20
+
+// Upload implements backup.Uploader, sending the file where BeginUpload
+// says: to its location, or in a SendUpload stream.
+func (r *Client) Upload(ctx context.Context, file io.Reader, size int64) (backup.UploadStatus, error) {
+	begun, err := r.store.BeginUpload(r.outgoing(ctx), &proto.BeginUploadRequest{Size: size})
+	if err != nil {
+		return backup.UploadStatus{}, fromWriteStatus(err)
+	}
+
+	id := begun.GetUploadId()
+
+	if location := begun.GetLocation(); location != nil {
+		if err := r.place(ctx, location, file, size); err != nil {
+			return backup.UploadStatus{}, fmt.Errorf("putting upload %s at its location: %w", id, err)
+		}
+
+		return backup.UploadStatus{ID: id, State: backup.UploadWaiting, BytesTotal: size}, nil
+	}
+
+	return r.sendUpload(ctx, id, file, size)
+}
+
+func (r *Client) sendUpload(ctx context.Context, id string, file io.Reader, size int64) (backup.UploadStatus, error) {
+	ctx, cancel := context.WithCancel(r.outgoing(ctx))
+	defer cancel()
+
+	stream, err := r.store.SendUpload(ctx)
+	if err != nil {
+		return backup.UploadStatus{}, fromWriteStatus(err)
+	}
+
+	request := &proto.SendUploadRequest{UploadId: id}
+
+	for {
+		// a sent message is the stream's to keep, so each gets its own
+		data := make([]byte, uploadMessage)
+		n, err := io.ReadFull(file, data)
+
+		if n > 0 || request.UploadId != "" {
+			request.Data = data[:n]
+			// the server's answer, which CloseAndRecv reads, says why a
+			// send ended the stream
+			if stream.Send(request) != nil {
+				break
+			}
+
+			request = &proto.SendUploadRequest{}
+		}
+
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+
+		if err != nil {
+			return backup.UploadStatus{}, err
+		}
+	}
+
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		return backup.UploadStatus{}, fromWriteStatus(err)
+	}
+
+	return backup.UploadStatus{
+		ID:         id,
+		State:      backup.UploadDone,
+		Objects:    resp.GetObjects(),
+		Stored:     resp.GetStored(),
+		Bytes:      size,
+		BytesTotal: size,
+	}, nil
+}
+
+// place PUTs an upload file at its location.
+func (r *Client) place(ctx context.Context, location *proto.UploadLocation, file io.Reader, size int64) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, location.GetUrl(), io.NopCloser(file))
+	if err != nil {
+		return err
+	}
+
+	request.ContentLength = size
+
+	for name, value := range location.GetHeader() {
+		request.Header.Set(name, value)
+	}
+
+	client := r.HTTP
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	_, _ = io.Copy(io.Discard, response.Body)
+
+	if response.StatusCode/100 != 2 {
+		return errors.New(response.Status)
+	}
+
+	return nil
+}
+
+// UploadStatus implements backup.Uploader.
+func (r *Client) UploadStatus(ctx context.Context, ids []string) ([]backup.UploadStatus, error) {
+	resp, err := r.store.UploadStatus(r.outgoing(ctx), &proto.UploadStatusRequest{UploadIds: ids})
+	if err != nil {
+		return nil, fromWriteStatus(err)
+	}
+
+	if len(resp.GetUploads()) != len(ids) {
+		return nil, fmt.Errorf("asked about %d uploads, the store answered about %d", len(ids), len(resp.GetUploads()))
+	}
+
+	statuses := make([]backup.UploadStatus, len(ids))
+	for i, up := range resp.GetUploads() {
+		statuses[i] = m.FromUploadStatus(up)
+	}
+
+	return statuses, nil
 }
 
 // Presence implements backup.PresenceSource.
@@ -1133,6 +1264,64 @@ func (r *Server) PutObjects(stream proto.Store_PutObjectsServer) error {
 	}
 }
 
+// BeginUpload implements proto.StoreServer, answering every upload inline.
+func (r *Server) BeginUpload(ctx context.Context, request *proto.BeginUploadRequest) (*proto.BeginUploadResponse, error) {
+	id, err := r.store.BeginUpload(ctx, request.GetSize())
+	if err != nil {
+		return nil, ToStatus(err)
+	}
+
+	return &proto.BeginUploadResponse{UploadId: id}, nil
+}
+
+// SendUpload implements proto.StoreServer, ingesting the file as it
+// arrives.
+func (r *Server) SendUpload(stream proto.Store_SendUploadServer) error {
+	first, err := stream.Recv()
+	if err == io.EOF {
+		return status.Error(codes.InvalidArgument, "the stream names no upload")
+	}
+
+	if err != nil {
+		return err
+	}
+
+	ingested, err := r.store.SendUpload(stream.Context(), first.GetUploadId(), &uploadStream{stream: stream, data: first.GetData()})
+	if err != nil {
+		return ToStatus(err)
+	}
+
+	return stream.SendAndClose(&proto.SendUploadResponse{Objects: ingested.Objects, Stored: ingested.Stored})
+}
+
+// uploadStream reads the bytes of a SendUpload stream.
+type uploadStream struct {
+	stream proto.Store_SendUploadServer
+	data   []byte
+}
+
+func (u *uploadStream) Read(p []byte) (int, error) {
+	for len(u.data) == 0 {
+		request, err := u.stream.Recv()
+		if err != nil {
+			return 0, err
+		}
+
+		u.data = request.GetData()
+	}
+
+	n := copy(p, u.data)
+	u.data = u.data[n:]
+
+	return n, nil
+}
+
+// UploadStatus implements proto.StoreServer: SendUpload answers once its
+// upload is ingested, so there is nothing to ask about.
+func (r *Server) UploadStatus(context.Context, *proto.UploadStatusRequest) (*proto.UploadStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "uploads are ingested as they are sent")
+}
+
 // LatestCommit answers with an empty ref when the set has no commit.
 func (r *Server) LatestCommit(ctx context.Context, request *proto.LatestCommitRequest) (*proto.LatestCommitResponse, error) {
 	ref, err := r.store.Index.LatestCommit(ctx, request.BackupSet)
@@ -1190,7 +1379,7 @@ func ToStatus(err error) error {
 		return status.Error(codes.PermissionDenied, err.Error())
 	case errors.Is(err, ErrInvalidRequest), errors.Is(err, proto.ErrRefMismatch), errors.Is(err, proto.ErrInvalidObject),
 		errors.Is(err, backup.ErrInvalidEscrow), errors.Is(err, backup.ErrSetName), errors.Is(err, backup.ErrInvalidCount),
-		errors.Is(err, retention.ErrInvalidPolicy):
+		errors.Is(err, retention.ErrInvalidPolicy), errors.Is(err, upload.ErrInvalid):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, backup.ErrDanglingRef), errors.Is(err, backup.ErrSetClosed),
 		errors.Is(err, backup.ErrTombstoned), errors.Is(err, backup.ErrNewestCommit),
