@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"fmt"
 	"time"
 
 	"testing"
@@ -73,6 +74,25 @@ func TestARescanIsClearedByAFullRun(t *testing.T) {
 	grant, err = f.x.BeginCommit(ctx, "world")
 	require.NoError(t, err)
 	require.False(t, grant.Rescan)
+}
+
+func TestThePathsOfMoreFilesThanOneStatementNamesComeInPathOrder(t *testing.T) {
+	f := newFixture(t)
+
+	b, a := f.file("b.txt", "two"), f.file("a.txt", "one")
+	f.commit("world", f.tree(b, a), false)
+
+	refs := []*proto.Ref{b.Ref}
+	for i := range 40_000 {
+		refs = append(refs, proto.NewObject(&proto.Blob{Data: fmt.Append(nil, i)}).Ref())
+	}
+	refs = append(refs, a.Ref)
+
+	paths, err := f.x.PathsOfFiles(f.ctx, refs)
+	require.NoError(t, err)
+	require.Len(t, paths, 2)
+	require.Equal(t, "a.txt", paths[0].Path)
+	require.Equal(t, "b.txt", paths[1].Path)
 }
 
 func TestAClosedVersionIsLostInTheCommitsThatHoldIt(t *testing.T) {

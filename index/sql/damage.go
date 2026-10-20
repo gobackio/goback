@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,10 +31,19 @@ func (x *Index) PathsOfFiles(ctx context.Context, refs []*proto.Ref) ([]backup.F
 		raw = append(raw, ref.GetHash())
 	}
 
-	rows, err := x.client.File.Query().Where(file.RefIn(raw...)).Order(ent.Asc(file.FieldPath)).All(ctx)
+	var rows []*ent.File
+
+	err := inBatches(raw, func(batch [][]byte) error {
+		found, err := x.client.File.Query().Where(file.RefIn(batch...)).All(ctx)
+		rows = append(rows, found...)
+
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
+
+	slices.SortStableFunc(rows, func(a, b *ent.File) int { return strings.Compare(a.Path, b.Path) })
 
 	ids := make([]int64, 0)
 	names := make(map[int64]string)
