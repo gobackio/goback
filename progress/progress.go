@@ -58,10 +58,13 @@ const (
 	PhaseIngest = "ingest"
 	// commit: check, counting the session's objects walked, lost, counting
 	// the objects read above what the session lacks when it is stored
-	// incomplete, then index, counting the directories walked.
-	PhaseCheck = "check"
-	PhaseLost  = "lost"
-	PhaseIndex = "index"
+	// incomplete, condemned, counting the objects walked below what the
+	// session deduplicated when a collection sealed during the session,
+	// then index, counting the directories walked.
+	PhaseCheck     = "check"
+	PhaseLost      = "lost"
+	PhaseCondemned = "condemned"
+	PhaseIndex     = "index"
 )
 
 // Update is how far one phase of an operation has got. Done counts the

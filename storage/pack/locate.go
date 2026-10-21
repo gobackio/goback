@@ -52,7 +52,7 @@ func (ps *PackStorage) LocateRecords(ctx context.Context, refs []*proto.Ref) ([]
 		return nil, nil
 	}
 
-	byArchive, err := ps.locateRecords(ScopeOf(ctx), refs)
+	byArchive, err := ps.locateRecords(ScopeOf(ctx), refs, true)
 	if err != nil {
 		return nil, err
 	}
@@ -86,10 +86,11 @@ func (ps *PackStorage) serves(ctx context.Context, ref *proto.Ref, rec *IndexRec
 	return err == nil && held
 }
 
-// locateRecords finds a live committed copy of each of refs in one lookup
-// and groups them by archive, each archive's records in offset order.
-func (ps *PackStorage) locateRecords(scope Scope, refs []*proto.Ref) (map[*archive][]locatedRecord, error) {
-	archives, records, err := ps.committedCopies(scope, refs, true)
+// locateRecords finds a committed copy of each of refs in one lookup,
+// live only when liveOnly, and groups them by archive, each archive's
+// records in offset order.
+func (ps *PackStorage) locateRecords(scope Scope, refs []*proto.Ref, liveOnly bool) (map[*archive][]locatedRecord, error) {
+	archives, records, err := ps.committedCopies(scope, refs, liveOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -143,9 +144,15 @@ const recordReaders = 16
 // ReadRecords implements backup.RecordReader with one range read per run
 // of neighbouring records.
 func (ps *PackStorage) ReadRecords(ctx context.Context, refs []*proto.Ref) ([]*proto.Object, error) {
+	return ps.readRecords(ctx, refs, true)
+}
+
+// readRecords is ReadRecords, reading copies the last collection found
+// unreachable too unless liveOnly.
+func (ps *PackStorage) readRecords(ctx context.Context, refs []*proto.Ref, liveOnly bool) ([]*proto.Object, error) {
 	ps.touchSessionOf(ctx)
 
-	byArchive, err := ps.locateRecords(ScopeOf(ctx), refs)
+	byArchive, err := ps.locateRecords(ScopeOf(ctx), refs, liveOnly)
 	if err != nil {
 		return nil, err
 	}

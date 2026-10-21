@@ -222,20 +222,32 @@ func (ps *PackStorage) readOwn(ctx context.Context, ws *writeSession, commit *pr
 		}
 	}
 
-	objects, err := ps.ReadRecords(ctx, stored)
+	objects, err := ps.readAll(ctx, stored)
+	if err != nil {
+		return nil, fmt.Errorf("reading the objects of session %s: %w", ws.id, err)
+	}
+
+	return append(out, objects...), nil
+}
+
+// readAll reads the objects at refs, in their order, as Get would, a range
+// read per run of neighbouring records, and reads one at a time what those
+// leave out.
+func (ps *PackStorage) readAll(ctx context.Context, refs []*proto.Ref) ([]*proto.Object, error) {
+	objects, err := ps.readRecords(ctx, refs, false)
 	if err != nil {
 		return nil, err
 	}
 
-	for i, ref := range stored {
+	for i, ref := range refs {
 		if objects[i] == nil {
 			if objects[i], err = ps.Get(ctx, ref); err != nil {
-				return nil, fmt.Errorf("reading %x of session %s: %w", ref.Hash, ws.id, err)
+				return nil, fmt.Errorf("reading %x: %w", ref.Hash, err)
 			}
 		}
 	}
 
-	return append(out, objects...), nil
+	return objects, nil
 }
 
 // tombstoned returns the refs a tombstone the session sees names.
@@ -271,9 +283,10 @@ func ownCopy(locs []IndexLocation, own map[string]bool) (IndexLocation, bool) {
 	return IndexLocation{}, false
 }
 
-// copyCondemned walks everything under the refs and copies into the
-// session each object a sealed tombstone condemns. An object whose old
-// copy is gone loses the session.
+// copyCondemned walks everything under the refs, checkChunk at a time,
+// and copies into the session each object a sealed tombstone condemns. An
+// object whose old copy is gone loses the session. It reports the refs it
+// walked as progress.PhaseCondemned.
 func (ps *PackStorage) copyCondemned(ctx context.Context, refs []*proto.Ref, sealed map[int64]bool) (int, error) {
 	seen := make(map[string]bool, len(refs))
 	for _, ref := range refs {
@@ -283,53 +296,64 @@ func (ps *PackStorage) copyCondemned(ctx context.Context, refs []*proto.Ref, sea
 	scope := ScopeOf(ctx)
 	copied := 0
 
+	phase := progress.Start(ctx, progress.OpCommit, progress.PhaseCondemned, 0, 0)
+	defer phase.Finish()
+
 	for frontier := refs; len(frontier) > 0; {
-		condemned, err := ps.sealedTombstones(frontier, sealed)
-		if err != nil {
-			return 0, err
-		}
-
-		found, err := ps.index.LocateCopies(frontier, scope)
-		if err != nil {
-			return 0, err
-		}
-
 		var next []*proto.Ref
 
-		for _, ref := range frontier {
-			locs := found[string(ref.Hash)]
-			if len(locs) == 0 {
-				return 0, fmt.Errorf("%w: a collection took %x", backup.ErrSessionLost, ref.Hash)
+		for chunk := range slices.Chunk(frontier, checkChunk) {
+			condemned, err := ps.sealedTombstones(chunk, sealed)
+			if err != nil {
+				return 0, err
 			}
 
-			blob := proto.ObjectType(locs[0].Record.Type) == proto.ObjectType_BLOB
-			if blob && !condemned[string(ref.Hash)] {
-				continue
+			found, err := ps.index.LocateCopies(chunk, scope)
+			if err != nil {
+				return 0, err
 			}
 
-			obj, err := ps.Get(ctx, ref)
+			var read []*proto.Ref
+
+			for _, ref := range chunk {
+				locs := found[string(ref.Hash)]
+				if len(locs) == 0 {
+					return 0, fmt.Errorf("%w: a collection took %x", backup.ErrSessionLost, ref.Hash)
+				}
+
+				blob := proto.ObjectType(locs[0].Record.Type) == proto.ObjectType_BLOB
+				if !blob || condemned[string(ref.Hash)] {
+					read = append(read, ref)
+				}
+			}
+
+			objects, err := ps.readAll(ctx, read)
 			if errors.Is(err, backup.ErrNotFound) {
-				return 0, fmt.Errorf("%w: a collection took %x", backup.ErrSessionLost, ref.Hash)
+				return 0, fmt.Errorf("%w: %w", backup.ErrSessionLost, err)
 			}
 
 			if err != nil {
 				return 0, err
 			}
 
-			if condemned[string(ref.Hash)] && obj.Type() != proto.ObjectType_COMMIT {
-				if err := ps.put(ctx, obj); err != nil {
-					return 0, err
+			for i, obj := range objects {
+				if condemned[string(read[i].Hash)] && obj.Type() != proto.ObjectType_COMMIT {
+					if err := ps.put(ctx, obj); err != nil {
+						return 0, err
+					}
+
+					copied++
 				}
 
-				copied++
-			}
-
-			for _, child := range backup.References(obj) {
-				if !seen[string(child.Hash)] {
-					seen[string(child.Hash)] = true
-					next = append(next, child)
+				for _, child := range backup.References(obj) {
+					if !seen[string(child.Hash)] {
+						seen[string(child.Hash)] = true
+						next = append(next, child)
+					}
 				}
 			}
+
+			phase.Add(int64(len(chunk)), 0)
 		}
 
 		frontier = next

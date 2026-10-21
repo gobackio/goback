@@ -213,6 +213,37 @@ func TestACommitCopiesWhatACollectionCondemnedUnderWhatItReliedOn(t *testing.T) 
 	requirePresent(t, store, chain, true)
 }
 
+func TestACommitReportsTheObjectsItWalkedForWhatACollectionCondemned(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+
+	blobs := makeTestData(t, 20)
+	files := makeGCFiles(blobs)
+	root := treeOf(files)
+	putAll(t, store, append(append(blobs, files...), root))
+
+	sctx, _ := beginSession(t, store, "agent-a")
+
+	_, err := store.Collect(context.Background(), gcOptions(t, 0))
+	require.NoError(t, err)
+
+	locating := &locatingIndex{ArchiveIndex: store.index}
+	store.index = locating
+	t.Cleanup(func() { store.index = locating.ArchiveIndex })
+
+	var last progress.Update
+
+	ctx := progress.NewContext(sctx, func(u progress.Update) {
+		if u.Op == progress.OpCommit && u.Phase == progress.PhaseCondemned {
+			last = u
+		}
+	})
+
+	require.NoError(t, store.Put(ctx, commitObject(root.Ref())))
+	require.EqualValues(t, 1+len(files)+len(blobs), last.Done, "the tree, the files and their parts")
+	require.Zero(t, locating.calls.Load(), "the walk reads in runs, not one object at a time")
+}
+
 func TestACommitFailsWhenACollectionTookWhatItReliedOn(t *testing.T) {
 	store := newGCStore(t, t.TempDir())
 	t.Cleanup(func() { _ = store.Close() })
