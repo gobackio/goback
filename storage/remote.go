@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -40,20 +41,38 @@ import (
 // NewClient connects to a store server over TLS, presenting creds
 // on every call. A nil tlsConfig trusts the system roots; see ClientTLS
 // for a pinned certificate authority.
-func NewClient(addr string, creds auth.Credentials, tlsConfig *tls.Config) (*Client, error) {
-	return dialStore(addr, creds, credentials.NewTLS(tlsConfig), true)
+func NewClient(addr string, creds auth.Credentials, tlsConfig *tls.Config, opts ...ClientOption) (*Client, error) {
+	return dialStore(addr, creds, credentials.NewTLS(tlsConfig), true, opts)
+}
+
+// Dialer opens a connection to addr over network, as
+// net.Dialer.DialContext does.
+type Dialer func(ctx context.Context, network, addr string) (net.Conn, error)
+
+// ClientOption changes how a Client connects.
+type ClientOption func(*clientOptions)
+
+type clientOptions struct {
+	dial Dialer
+}
+
+// WithDialer has the client open every connection through dial: to the
+// store server and to the locations it hands out for uploads and
+// downloads.
+func WithDialer(dial Dialer) ClientOption {
+	return func(o *clientOptions) { o.dial = dial }
 }
 
 // NewPlaintextClient connects to a store server without TLS, putting the
 // credentials and every object on the wire in the clear. It is for a
 // store on the same machine as the agent; anywhere else, use NewClient.
 // The credentials must allow it.
-func NewPlaintextClient(addr string, creds auth.Credentials) (*Client, error) {
+func NewPlaintextClient(addr string, creds auth.Credentials, opts ...ClientOption) (*Client, error) {
 	if !creds.Plaintext {
 		return nil, errors.New("plaintext credentials are required to dial a store without TLS")
 	}
 
-	return dialStore(addr, creds, insecure.NewCredentials(), false)
+	return dialStore(addr, creds, insecure.NewCredentials(), false, opts)
 }
 
 // downloadWindows let a stream have a long link's worth of parts in
@@ -68,17 +87,31 @@ var downloadWindows = []grpc.DialOption{
 // that names hundreds of thousands of refs the store lacks.
 var replies = grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(256 << 20))
 
-func dialStore(addr string, creds auth.Credentials, transport credentials.TransportCredentials, secure bool) (*Client, error) {
+func dialStore(addr string, creds auth.Credentials, transport credentials.TransportCredentials, secure bool, opts []ClientOption) (*Client, error) {
+	var o clientOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	jar := newCookies(addr, secure)
 	received := &downloads{}
-	con, err := grpc.NewClient(addr, append([]grpc.DialOption{
+	dialOpts := append([]grpc.DialOption{
 		grpc.WithTransportCredentials(transport),
 		grpc.WithPerRPCCredentials(creds),
 		grpc.WithUnaryInterceptor(jar.unary()),
 		grpc.WithStreamInterceptor(jar.stream()),
 		grpc.WithStatsHandler(received),
 		replies,
-	}, downloadWindows...)...)
+	}, downloadWindows...)
+
+	base := http.DefaultTransport.(*http.Transport).Clone()
+
+	if o.dial != nil {
+		dialOpts = append(dialOpts, grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) { return o.dial(ctx, "tcp", addr) }))
+		base.DialContext = o.dial
+	}
+
+	con, err := grpc.NewClient(addr, dialOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +119,7 @@ func dialStore(addr string, creds auth.Credentials, transport credentials.Transp
 	return &Client{
 		store:     proto.NewStoreClient(con),
 		admin:     adminpb.NewAdminClient(con),
-		HTTP:      &http.Client{Transport: newSpread(http.DefaultTransport.(*http.Transport), locationConns)},
+		HTTP:      &http.Client{Transport: newSpread(base, locationConns)},
 		downloads: received,
 		fetching:  semaphore.NewWeighted(runFetchers),
 	}, nil

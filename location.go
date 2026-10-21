@@ -308,7 +308,14 @@ func openRemote(_ context.Context, u *url.URL, s Settings) (backup.ObjectStore, 
 	ca := u.Query().Get("ca")
 	creds := auth.Credentials{Secret: key, AgentID: s.AgentID}
 
-	var client *storage.Client
+	var (
+		client *storage.Client
+		opts   []storage.ClientOption
+	)
+
+	if s.Dial != nil {
+		opts = append(opts, storage.WithDialer(s.Dial))
+	}
 
 	if u.Scheme == insecureScheme {
 		if ca != "" {
@@ -318,14 +325,14 @@ func openRemote(_ context.Context, u *url.URL, s Settings) (backup.ObjectStore, 
 		s.logger().Warn("talking to the store server without TLS; the api key and everything uploaded is readable on the way", "address", addr)
 		creds.Plaintext = true
 
-		client, err = storage.NewPlaintextClient(addr, creds)
+		client, err = storage.NewPlaintextClient(addr, creds, opts...)
 	} else {
 		tlsConfig, tlsErr := storage.ClientTLS(ca)
 		if tlsErr != nil {
 			return nil, nil, tlsErr
 		}
 
-		client, err = storage.NewClient(addr, creds, tlsConfig)
+		client, err = storage.NewClient(addr, creds, tlsConfig, opts...)
 	}
 
 	if err != nil {

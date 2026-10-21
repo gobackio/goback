@@ -16,6 +16,7 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/blobcache"
 	"github.com/gobackio/goback/backup/storekey"
+	"github.com/gobackio/goback/storage"
 	"github.com/gobackio/goback/storage/pack"
 	"github.com/gobackio/goback/storage/wrapped"
 )
@@ -67,6 +68,9 @@ type Settings struct {
 	BlobCacheSize int64
 	// Logger is where opening reports; nil means slog.Default.
 	Logger *slog.Logger
+	// Dial opens a store server client's connections, to the server and to
+	// the locations it hands out; nil dials them directly.
+	Dial storage.Dialer
 }
 
 func (s Settings) logger() *slog.Logger {

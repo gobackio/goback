@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"net"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gobackio/goback/auth"
@@ -62,4 +63,21 @@ func TestPlaintextNeedsCredentialsThatAllowIt(t *testing.T) {
 func TestCredentialsRefuseAPlaintextWireUnlessTold(t *testing.T) {
 	require.True(t, auth.Credentials{Secret: "s"}.RequireTransportSecurity())
 	require.False(t, auth.Credentials{Secret: "s", Plaintext: true}.RequireTransportSecurity())
+}
+
+func TestAClientWithADialerConnectsThroughIt(t *testing.T) {
+	ctx := context.Background()
+	addr := servePlaintext(t, newMemIndex())
+
+	var dialed atomic.Int32
+
+	client, err := NewPlaintextClient(addr, auth.Credentials{Secret: testSecret, AgentID: "laptop", Plaintext: true},
+		WithDialer(func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dialed.Add(1)
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}))
+	require.NoError(t, err)
+
+	require.NoError(t, client.Put(ctx, proto.NewObject(&proto.Blob{Data: []byte("dialed")})))
+	require.Positive(t, dialed.Load())
 }
