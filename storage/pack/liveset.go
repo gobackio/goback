@@ -78,9 +78,19 @@ func sortRefs(refs []liveRef) {
 }
 
 // sortRoots groups the roots by group and then by set, so a batch of
-// them holds one set and every group's batches are contiguous.
+// them holds one set and every group's batches are contiguous. A group's
+// whole roots come before its shallow ones, so a file a shallow root
+// visited first never keeps a whole root from its parts.
 func sortRoots(roots []gcRoot) {
 	sort.Slice(roots, func(i, j int) bool {
+		if roots[i].owner.Group != roots[j].owner.Group {
+			return roots[i].owner.before(roots[j].owner)
+		}
+
+		if roots[i].shallow != roots[j].shallow {
+			return !roots[i].shallow
+		}
+
 		if roots[i].owner != roots[j].owner {
 			return roots[i].owner.before(roots[j].owner)
 		}

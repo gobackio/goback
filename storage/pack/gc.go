@@ -56,6 +56,10 @@ type CollectOptions struct {
 	// Owner names what a root belongs to, so the mark can attribute the
 	// objects it reaches; nil, or a zero Attribution, attributes nothing.
 	Owner func(root []byte) Attribution
+	// Shallow names the roots that keep their trees and files but not the
+	// parts of those files, which go unless another root reaches them; nil
+	// keeps every root whole.
+	Shallow func(root []byte) bool
 }
 
 // Attribution is what a root belongs to: the group its objects are
@@ -347,8 +351,9 @@ func newGCRun(ps *PackStorage, opts CollectOptions, prev *gcState, reads *gcRead
 
 // gcRoot is a root with what it belongs to, zero when nothing names it.
 type gcRoot struct {
-	key   refKey
-	owner Attribution
+	key     refKey
+	owner   Attribution
+	shallow bool
 }
 
 // Collect marks every object reachable from a live commit or pin, records
@@ -732,18 +737,22 @@ func (r *gcRun) root(hash []byte) gcRoot {
 		root.owner = r.opts.Owner(hash)
 	}
 
+	if r.opts.Shallow != nil {
+		root.shallow = r.opts.Shallow(hash)
+	}
+
 	return root
 }
 
 // batches groups the roots into the units the mark checkpoints. A batch
 // holds the roots of one set only, so every run it spills belongs to that
-// set.
+// set, and either shallow roots or whole ones.
 func (r *gcRun) batches() [][]gcRoot {
 	var batches [][]gcRoot
 
 	for start := 0; start < len(r.roots); {
 		end := start
-		for end < len(r.roots) && end-start < rootBatch && r.roots[end].owner == r.roots[start].owner {
+		for end < len(r.roots) && end-start < rootBatch && r.roots[end].owner == r.roots[start].owner && r.roots[end].shallow == r.roots[start].shallow {
 			end++
 		}
 
@@ -1253,7 +1262,7 @@ func (r *gcRun) mark(ctx context.Context) (*liveRuns, error) {
 			return nil, err
 		}
 
-		if err := r.markBatch(ctx, walked, claim, live); err != nil {
+		if err := r.markBatch(ctx, walked, claim, live, roots[0].shallow); err != nil {
 			return nil, err
 		}
 
@@ -1276,8 +1285,8 @@ func (r *gcRun) mark(ctx context.Context) (*liveRuns, error) {
 
 // markBatch walks breadth-first from the frontier, reading each run of
 // records that sit close together in an archive at once, up to Readers runs
-// at a time.
-func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]refKey) []refKey, live *liveRuns) error {
+// at a time. A shallow walk leaves the parts of files out.
+func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]refKey) []refKey, live *liveRuns, shallow bool) error {
 	for len(frontier) > 0 {
 		records, err := r.placeAll(ctx, frontier)
 		if err != nil {
@@ -1304,7 +1313,13 @@ func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]r
 
 				for _, read := range reads {
 					found = append(found, liveRef{key: read.key, size: uint64(len(read.obj.GetFile().GetInline()))})
-					children = appendChildren(children, &found, read.obj)
+
+					if shallow {
+						var parts []liveRef
+						children = appendChildren(children, &parts, read.obj)
+					} else {
+						children = appendChildren(children, &found, read.obj)
+					}
 				}
 
 				if err := live.add(found); err != nil {
@@ -1786,7 +1801,7 @@ func (r *gcRun) flagErased(ctx context.Context) error {
 	defer runs.close()
 
 	visited := newVisitedSet()
-	if err := r.markBatch(ctx, visited.claimUnreached(roots), visited.claimUnreached, runs); err != nil {
+	if err := r.markBatch(ctx, visited.claimUnreached(roots), visited.claimUnreached, runs, false); err != nil {
 		return err
 	}
 
