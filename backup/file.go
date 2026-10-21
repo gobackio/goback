@@ -17,7 +17,6 @@ import (
 
 	"github.com/pkg/errors"
 	"go4.org/syncutil"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -625,20 +624,8 @@ func FileParts(ctx context.Context, store Getter, file *proto.File) ([]*proto.Fi
 		return file.GetParts(), nil
 	}
 
-	subFiles := make([]*proto.File, len(file.GetSplits()))
-	grp, grpCtx := errgroup.WithContext(ctx)
-	grp.SetLimit(splitFetchers)
-
-	for i, split := range file.GetSplits() {
-		grp.Go(func() error {
-			sub, err := loadSplit(grpCtx, store, i, split)
-			subFiles[i] = sub
-
-			return err
-		})
-	}
-
-	if err := grp.Wait(); err != nil {
+	subFiles, err := loadSplits(ctx, store, file.GetSplits())
+	if err != nil {
 		return nil, err
 	}
 
@@ -664,8 +651,33 @@ func FileParts(ctx context.Context, store Getter, file *proto.File) ([]*proto.Fi
 	return parts, nil
 }
 
-// splitFetchers bounds the sub-file objects loaded at once.
-const splitFetchers = 16
+// loadSplits reads the sub-file objects of a split file together.
+func loadSplits(ctx context.Context, store Getter, splits []*proto.Ref) ([]*proto.File, error) {
+	objects, errs := ReadObjects(ctx, store, splits)
+
+	files := make([]*proto.File, len(splits))
+	for i, split := range splits {
+		var err error
+		if files[i], err = subFileOf(i, split, objects[i], errs[i]); err != nil {
+			return nil, err
+		}
+	}
+
+	return files, nil
+}
+
+// subFileOf is the sub-file object read for split i of a file.
+func subFileOf(i int, split *proto.Ref, obj *proto.Object, err error) (*proto.File, error) {
+	if err != nil {
+		return nil, errors.Wrapf(err, "split %d (%x) of file", i, split.GetHash())
+	}
+
+	if obj.GetFile() == nil {
+		return nil, errors.Errorf("split %d (%x) of file is not a file object", i, split.GetHash())
+	}
+
+	return obj.GetFile(), nil
+}
 
 func loadSplit(ctx context.Context, store Getter, i int, split *proto.Ref) (*proto.File, error) {
 	obj, err := store.Get(ctx, split)
@@ -683,16 +695,25 @@ func loadSplit(ctx context.Context, store Getter, i int, split *proto.Ref) (*pro
 // SubFiles calls visit with every file object of a split file's tree
 // below file, loading only the ones that are split themselves.
 func SubFiles(ctx context.Context, store Getter, file *proto.File, visit func(ref *proto.Ref) error) error {
+	var (
+		objects []*proto.Object
+		errs    []error
+	)
+
+	if file.GetSplitDepth() > 1 {
+		objects, errs = ReadObjects(ctx, store, file.GetSplits())
+	}
+
 	for i, split := range file.GetSplits() {
 		if err := visit(split); err != nil {
 			return err
 		}
 
-		if file.GetSplitDepth() <= 1 {
+		if objects == nil {
 			continue
 		}
 
-		sub, err := loadSplit(ctx, store, i, split)
+		sub, err := subFileOf(i, split, objects[i], errs[i])
 		if err != nil {
 			return err
 		}

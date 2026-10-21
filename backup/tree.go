@@ -267,14 +267,27 @@ func LoadTree(ctx context.Context, store Getter, ref *proto.Ref) (*proto.Tree, e
 		return nil, errors.New("object is not a tree")
 	}
 
-	tree := obj.GetTree()
+	return flatten(ctx, store, obj.GetTree())
+}
+
+// flatten returns tree with its splits, read together, in place of it.
+func flatten(ctx context.Context, store Getter, tree *proto.Tree) (*proto.Tree, error) {
 	if len(tree.Splits) == 0 {
 		return tree, nil
 	}
 
+	objects, err := readObjects(ctx, store, tree.Splits)
+	if err != nil {
+		return nil, err
+	}
+
 	flat := &proto.Tree{}
-	for _, split := range tree.Splits {
-		sub, err := LoadTree(ctx, store, split)
+	for _, obj := range objects {
+		if obj.Type() != proto.ObjectType_TREE {
+			return nil, errors.New("object is not a tree")
+		}
+
+		sub, err := flatten(ctx, store, obj.GetTree())
 		if err != nil {
 			return nil, err
 		}

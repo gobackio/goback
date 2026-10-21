@@ -268,6 +268,18 @@ type recordTrees struct {
 	read  readTrees
 }
 
+// ReadRecords implements backup.RecordReader, keeping what it read.
+func (r recordTrees) ReadRecords(ctx context.Context, refs []*proto.Ref) ([]*proto.Object, error) {
+	objects, _ := backup.ReadObjects(ctx, r.store, refs)
+	for i, obj := range objects {
+		if obj != nil {
+			r.read[string(refs[i].Hash)] = obj
+		}
+	}
+
+	return objects, nil
+}
+
 func (r recordTrees) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
 	obj, err := r.store.Get(ctx, ref)
 	if err == nil {
@@ -359,6 +371,9 @@ func (v *versions) dir(ctx context.Context, dir string, t *proto.Tree) error {
 		return err
 	}
 
+	var below []string
+	var refs []*proto.Ref
+
 	for _, node := range t.GetNodes() {
 		info := node.GetStat()
 		child := proto.JoinPath(dir, info.GetName())
@@ -380,21 +395,48 @@ func (v *versions) dir(ctx context.Context, dir string, t *proto.Tree) error {
 			return err
 		}
 
-		if held {
-			continue
+		if !held {
+			below, refs = append(below, child), append(refs, node.GetRef())
+		}
+	}
+
+	objects, errs := backup.ReadObjects(ctx, v.store, refs)
+	read := readTrees{}
+
+	for i, ref := range refs {
+		if errs[i] != nil {
+			return fmt.Errorf("reading tree %x: %w", ref.GetHash(), errs[i])
 		}
 
-		sub, err := backup.LoadTree(ctx, v.store, node.GetRef())
+		read[string(ref.GetHash())] = objects[i]
+	}
+
+	for i, ref := range refs {
+		sub, err := backup.LoadTree(ctx, behindTrees{read, v.store}, ref)
 		if err != nil {
-			return fmt.Errorf("reading tree %x: %w", node.GetRef().GetHash(), err)
+			return fmt.Errorf("reading tree %x: %w", ref.GetHash(), err)
 		}
 
-		if err := v.dir(ctx, child, sub); err != nil {
+		if err := v.dir(ctx, below[i], sub); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// behindTrees serves the trees read ahead and gets the rest from store.
+type behindTrees struct {
+	read  readTrees
+	store backup.Getter
+}
+
+func (b behindTrees) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
+	if obj, ok := b.read[string(ref.GetHash())]; ok {
+		return obj, nil
+	}
+
+	return b.store.Get(ctx, ref)
 }
 
 // rows reads the rows of the directories and files that hold the revived

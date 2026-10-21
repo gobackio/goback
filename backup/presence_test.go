@@ -302,3 +302,64 @@ func TestMissingKeepsOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []*proto.Ref{b, c}, missing)
 }
+
+// batchStore reads records together and counts the objects asked for one
+// at a time.
+type batchStore struct {
+	*memStore
+	gets atomic.Int64
+}
+
+func (r *batchStore) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
+	r.gets.Add(1)
+	return r.memStore.Get(ctx, ref)
+}
+
+func (r *batchStore) ReadRecords(ctx context.Context, refs []*proto.Ref) ([]*proto.Object, error) {
+	out := make([]*proto.Object, len(refs))
+	for i, ref := range refs {
+		out[i], _ = r.memStore.Get(ctx, ref)
+	}
+
+	return out, nil
+}
+
+func TestAFilterIsCollectedInRecordReadsWithoutGettingObjectsOneByOne(t *testing.T) {
+	ctx := context.Background()
+	store := &batchStore{memStore: newMemStore()}
+	put := func(msg any) *proto.Ref {
+		obj := proto.NewObject(msg)
+		require.NoError(t, store.Put(ctx, obj))
+
+		return obj.Ref()
+	}
+
+	var blobs []*proto.Ref
+
+	fileIn := func(n int) *proto.TreeNode {
+		blob := put(&proto.Blob{Data: []byte("blob " + strconv.Itoa(n))})
+		blobs = append(blobs, blob)
+		file := put(&proto.File{Parts: []*proto.FilePart{{Ref: blob, Length: 6}}})
+
+		return &proto.TreeNode{Stat: &proto.FileInfo{Name: []byte("f" + strconv.Itoa(n)), Type: proto.NodeType_NODE_FILE}, Ref: file}
+	}
+
+	var dirs []*proto.TreeNode
+	for d := range 3 {
+		sub := put(&proto.Tree{Nodes: []*proto.TreeNode{fileIn(2 * d), fileIn(2*d + 1)}})
+		dirs = append(dirs, &proto.TreeNode{Stat: &proto.FileInfo{Name: []byte("d" + strconv.Itoa(d)), Type: proto.NodeType_NODE_DIRECTORY}, Ref: sub})
+	}
+
+	first := put(&proto.Tree{Nodes: append(dirs, fileIn(6))})
+	second := put(&proto.Tree{Nodes: []*proto.TreeNode{fileIn(7)}})
+	root := put(&proto.Tree{Splits: []*proto.Ref{first, second}})
+
+	filter, err := CollectPresence(ctx, store, root)
+	require.NoError(t, err)
+
+	for _, blob := range blobs {
+		require.True(t, filter.Test(blob.Hash), "every part of every file, a split tree's too")
+	}
+
+	require.Zero(t, store.gets.Load(), "every tree and file came from record reads")
+}

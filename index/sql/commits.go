@@ -656,9 +656,11 @@ func (d *treeDiff) flatten(ctx context.Context, dir string, ref *proto.Ref, t *p
 		return t, nil
 	}
 
+	objects, errs := backup.ReadObjects(ctx, d.store, t.Splits)
+
 	flat := &proto.Tree{}
-	for _, split := range t.Splits {
-		obj, err := d.store.Get(ctx, split)
+	for i, split := range t.Splits {
+		obj, err := objects[i], errs[i]
 		if d.missing(err) {
 			d.holes = append(d.holes, dir)
 			continue
@@ -684,17 +686,24 @@ func (d *treeDiff) flatten(ctx context.Context, dir string, ref *proto.Ref, t *p
 }
 
 // refLarge records the sub-file objects the large files name, reading
-// them in parallel.
+// the files together and their splits in parallel.
 func (d *treeDiff) refLarge(ctx context.Context, large []descent) error {
 	subs := make([][][]byte, len(large))
 	lost := make([]bool, len(large))
 
+	refs := make([]*proto.Ref, len(large))
+	for i, f := range large {
+		refs[i] = f.node.GetRef()
+	}
+
+	objects, errs := backup.ReadObjects(ctx, d.store, refs)
+
 	grp, gctx := errgroup.WithContext(ctx)
 	grp.SetLimit(diffWorkers)
 
-	for i, f := range large {
+	for i := range large {
 		grp.Go(func() error {
-			obj, err := d.store.Get(gctx, f.node.GetRef())
+			obj, err := objects[i], errs[i]
 			if d.missing(err) {
 				lost[i] = true
 				return nil
@@ -864,27 +873,22 @@ func (d *treeDiff) walk(ctx context.Context, root *proto.Tree) error {
 			return err
 		}
 
-		subtrees := make([]*proto.Object, len(descend))
-		grp, gctx := errgroup.WithContext(ctx)
-		grp.SetLimit(diffWorkers)
-
+		refs := make([]*proto.Ref, len(descend))
 		for i, sub := range descend {
-			grp.Go(func() error {
-				var err error
-				subtrees[i], err = d.store.Get(gctx, sub.node.GetRef())
-				if d.missing(err) {
-					return nil
-				}
-
-				if err == nil && subtrees[i].GetTree() == nil {
-					err = fmt.Errorf("%x is not a tree", sub.node.GetRef().GetHash())
-				}
-				return err
-			})
+			refs[i] = sub.node.GetRef()
 		}
 
-		if err := grp.Wait(); err != nil {
-			return err
+		subtrees, errs := backup.ReadObjects(ctx, d.store, refs)
+
+		for i, sub := range descend {
+			switch err := errs[i]; {
+			case d.missing(err):
+				subtrees[i] = nil
+			case err != nil:
+				return err
+			case subtrees[i].GetTree() == nil:
+				return fmt.Errorf("%x is not a tree", sub.node.GetRef().GetHash())
+			}
 		}
 
 		var unlisted []string

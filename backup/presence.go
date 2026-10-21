@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/gobackio/goback/backup/presence"
 	"github.com/gobackio/goback/backup/storekey"
@@ -138,52 +137,63 @@ func Missing(ctx context.Context, store ObjectStore, refs []*proto.Ref) ([]*prot
 }
 
 // CollectPresence walks a tree and returns a filter over every blob ref it
-// reaches.
+// reaches, reading each level of the tree and the files on it together.
 func CollectPresence(ctx context.Context, store ObjectStore, tree *proto.Ref) (*presence.Filter, error) {
-	root, err := LoadTree(ctx, store, tree)
-	if err != nil {
-		return nil, err
-	}
-
-	var (
-		mtx  sync.Mutex
-		refs = map[string]struct{}{}
-	)
-
-	collect := func(parts []*proto.FilePart) {
-		mtx.Lock()
+	refs := map[string]struct{}{}
+	add := func(parts []*proto.FilePart) {
 		for _, part := range parts {
 			refs[string(part.GetRef().GetHash())] = struct{}{}
 		}
-		mtx.Unlock()
 	}
 
-	err = TraverseTree(ctx, store, proto.NewObject(root), 32, func(_ string, node *proto.TreeNode) error {
-		if node.GetStat().GetType() != proto.NodeType_NODE_FILE || node.Ref == nil {
+	level := []*proto.Ref{tree}
+	for len(level) > 0 {
+		var next, files []*proto.Ref
+
+		err := readChunks(ctx, store, level, func(ref *proto.Ref, obj *proto.Object) error {
+			t := obj.GetTree()
+			if t == nil {
+				return fmt.Errorf("object %x is not a tree", ref.Hash)
+			}
+
+			next = append(next, t.Splits...)
+
+			for _, node := range t.GetNodes() {
+				switch {
+				case node.Ref == nil:
+				case node.GetStat().IsDir():
+					next = append(next, node.Ref)
+				case node.GetStat().GetType() == proto.NodeType_NODE_FILE:
+					files = append(files, node.Ref)
+				}
+			}
+
 			return nil
-		}
-
-		obj, err := store.Get(ctx, node.Ref)
+		})
 		if err != nil {
-			return fmt.Errorf("file %x: %w", node.Ref.Hash, err)
+			return nil, err
 		}
 
-		file := obj.GetFile()
-		if file == nil {
-			return fmt.Errorf("object %x is not a file", node.Ref.Hash)
-		}
+		err = readChunks(ctx, store, files, func(ref *proto.Ref, obj *proto.Object) error {
+			file := obj.GetFile()
+			if file == nil {
+				return fmt.Errorf("object %x is not a file", ref.Hash)
+			}
 
-		parts, err := FileParts(ctx, store, file)
+			parts, err := FileParts(ctx, store, file)
+			if err != nil {
+				return fmt.Errorf("file %x: %w", ref.Hash, err)
+			}
+
+			add(parts)
+
+			return nil
+		})
 		if err != nil {
-			return fmt.Errorf("file %x: %w", node.Ref.Hash, err)
+			return nil, err
 		}
 
-		collect(parts)
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		level = next
 	}
 
 	filter := presence.New(uint64(len(refs)))
@@ -192,4 +202,25 @@ func CollectPresence(ctx context.Context, store ObjectStore, tree *proto.Ref) (*
 	}
 
 	return filter, nil
+}
+
+// readChunks hands each of refs to fn with its object, in order, reading
+// them recordChunk at a time.
+func readChunks(ctx context.Context, store Getter, refs []*proto.Ref, fn func(*proto.Ref, *proto.Object) error) error {
+	for start := 0; start < len(refs); start += recordChunk {
+		chunk := refs[start:min(start+recordChunk, len(refs))]
+
+		objects, err := readObjects(ctx, store, chunk)
+		if err != nil {
+			return err
+		}
+
+		for i, ref := range chunk {
+			if err := fn(ref, objects[i]); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }

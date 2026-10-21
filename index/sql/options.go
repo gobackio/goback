@@ -68,6 +68,9 @@ type inFront struct {
 	behind backup.ObjectStore
 }
 
+// Unwrap returns the store in front.
+func (s inFront) Unwrap() backup.ObjectStore { return s.ObjectStore }
+
 func (s inFront) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
 	obj, err := s.ObjectStore.Get(ctx, ref)
 	if errors.Is(err, backup.ErrNotFound) {

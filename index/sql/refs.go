@@ -254,41 +254,8 @@ func (x *Index) walkLarge(ctx context.Context, files []*proto.Ref, failed func(e
 	return grp.Wait()
 }
 
-// getAll reads the objects of refs, together where the store reads many
-// records at once and diffWorkers at a time otherwise, with the error of
-// each that could not be read.
+// getAll reads the objects of refs together, with the error of each that
+// could not be read.
 func (x *Index) getAll(ctx context.Context, refs []*proto.Ref) ([]*proto.Object, []error) {
-	objects := make([]*proto.Object, len(refs))
-	errs := make([]error, len(refs))
-
-	if reader, ok := storeAs[backup.RecordReader](x.ObjectStore); ok {
-		for start := 0; start < len(refs); start += objectBatch {
-			end := min(start+objectBatch, len(refs))
-
-			read, err := reader.ReadRecords(ctx, refs[start:end])
-			if err == nil {
-				copy(objects[start:end], read)
-			}
-		}
-	}
-
-	var gets sync.WaitGroup
-	slots := make(chan struct{}, diffWorkers)
-
-	for i, ref := range refs {
-		if objects[i] != nil {
-			continue
-		}
-
-		slots <- struct{}{}
-		gets.Go(func() {
-			defer func() { <-slots }()
-
-			objects[i], errs[i] = x.ObjectStore.Get(ctx, ref)
-		})
-	}
-
-	gets.Wait()
-
-	return objects, errs
+	return backup.ReadObjects(ctx, x, refs)
 }

@@ -307,9 +307,7 @@ func (s *Store) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) 
 
 const (
 	// treeBatch is how many trees Tree reads at once.
-	treeBatch = 1024
-	// treeWorkers bounds the tree reads one Tree call has in flight.
-	treeWorkers = 16
+	treeBatch = 10_000
 )
 
 // Tree walks the tree at ref breadth-first, its splits, and the trees of
@@ -375,46 +373,19 @@ func (s *Store) Tree(ctx context.Context, ref *proto.Ref, maxDepth uint32, fn fu
 // run of neighbours where the index can. With root set, refs[0] is the
 // walk's root, which is answered like Get.
 func (s *Store) readTrees(ctx context.Context, refs []*proto.Ref, root bool) ([]*proto.Object, error) {
-	objects := make([]*proto.Object, len(refs))
-
-	if reader, ok := s.Index.(backup.RecordReader); ok {
-		read, err := reader.ReadRecords(ctx, refs)
-		if err != nil {
-			return nil, fmt.Errorf("reading trees: %w", err)
-		}
-
-		copy(objects, read)
-	}
-
-	grp, gctx := errgroup.WithContext(ctx)
-	grp.SetLimit(treeWorkers)
+	objects, errs := backup.ReadObjects(ctx, s.Index, refs)
 
 	for i, ref := range refs {
-		if objects[i] != nil {
-			continue
-		}
+		err := errs[i]
 
-		grp.Go(func() error {
-			obj, err := s.Index.Get(gctx, ref)
-			objects[i] = obj
-
-			switch {
-			case root && i == 0:
-				_, err = offered(ref, obj, err)
-			case errors.Is(err, backup.ErrNotFound):
-				err = fmt.Errorf("tree %x: %w", ref.GetHash(), backup.ErrNotFound)
+		switch {
+		case root && i == 0:
+			if _, err := offered(ref, objects[i], err); err != nil {
+				return nil, err
 			}
-
-			return err
-		})
-	}
-
-	if err := grp.Wait(); err != nil {
-		return nil, err
-	}
-
-	if root {
-		if _, err := offered(refs[0], objects[0], nil); err != nil {
+		case errors.Is(err, backup.ErrNotFound):
+			return nil, fmt.Errorf("tree %x: %w", ref.GetHash(), backup.ErrNotFound)
+		case err != nil:
 			return nil, err
 		}
 	}
@@ -510,11 +481,11 @@ func (s *Store) ReadFiles(ctx context.Context, files []*proto.ReadFilesEntry, ob
 	grp, gctx := errgroup.WithContext(ctx)
 	grp.SetLimit(readFileWorkers)
 
+	read, errs := backup.ReadObjects(ctx, s.Index, refs)
+
 	for i, ref := range refs {
 		grp.Go(func() error {
-			obj, err := s.Index.Get(gctx, ref)
-
-			obj, err = offered(ref, obj, err)
+			obj, err := offered(ref, read[i], errs[i])
 			if err != nil {
 				return err
 			}
