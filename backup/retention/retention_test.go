@@ -162,6 +162,59 @@ func TestEvaluatePartialCheckpoints(t *testing.T) {
 	require.True(t, got[2].Keep, "and does not use up a keep_last slot")
 }
 
+func TestAPeriodKeepsItsLastCompleteCommitOverANewerIncompleteOne(t *testing.T) {
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	yesterday := now.AddDate(0, 0, -1)
+
+	commits := []Commit{
+		{ReceivedAt: now},
+		{ReceivedAt: yesterday.Add(8 * time.Hour), Incomplete: true},
+		{ReceivedAt: yesterday},
+		{ReceivedAt: yesterday.Add(-time.Hour)},
+	}
+
+	got := Evaluate(commits, Policy{KeepLast: 1, Brackets: []Bracket{{Period: Daily, Count: 7}}}, now)
+	require.False(t, got[1].Keep, "the incomplete commit is retired")
+	require.Equal(t, []string{"daily"}, got[2].Reasons, "the day keeps its last complete commit")
+	require.False(t, got[3].Keep)
+}
+
+func TestAPeriodWithOnlyIncompleteCommitsKeepsTheLastOfThem(t *testing.T) {
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	yesterday := now.AddDate(0, 0, -1)
+
+	commits := []Commit{
+		{ReceivedAt: now},
+		{ReceivedAt: yesterday, Incomplete: true},
+		{ReceivedAt: yesterday.Add(-time.Hour), Incomplete: true},
+	}
+
+	got := Evaluate(commits, Policy{KeepLast: 1, Brackets: []Bracket{{Period: Daily, Count: 7}}}, now)
+	require.Equal(t, []string{"daily"}, got[1].Reasons)
+	require.False(t, got[2].Keep)
+}
+
+func TestKeepLastCountsCompleteCommitsBeforeIncompleteOnes(t *testing.T) {
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+
+	commits := []Commit{
+		{ReceivedAt: now, Incomplete: true},
+		{ReceivedAt: now.Add(-time.Hour), Incomplete: true},
+		{ReceivedAt: now.Add(-2 * time.Hour)},
+		{ReceivedAt: now.Add(-3 * time.Hour), Incomplete: true},
+	}
+
+	got := Evaluate(commits, Policy{KeepLast: 1}, now)
+	require.Equal(t, []string{"latest"}, got[0].Reasons, "the newest is kept but takes no slot")
+	require.False(t, got[1].Keep)
+	require.Equal(t, []string{"last"}, got[2].Reasons)
+	require.False(t, got[3].Keep)
+
+	got = Evaluate(commits, Policy{KeepLast: 3}, now)
+	require.Equal(t, []bool{true, true, true, false}, []bool{got[0].Keep, got[1].Keep, got[2].Keep, got[3].Keep},
+		"incomplete commits fill the slots complete ones leave, newest first")
+}
+
 func TestEvaluateKeepWithin(t *testing.T) {
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 

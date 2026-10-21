@@ -122,7 +122,7 @@ func (x *Index) evaluateSet(ctx context.Context, tx *ent.Tx, setID int64, now ti
 
 	commits := make([]retention.Commit, len(rows))
 	for i, row := range rows {
-		commits[i] = retention.Commit{ReceivedAt: row.ReceivedAt, Partial: row.Partial, Pinned: held[string(row.Ref)]}
+		commits[i] = retention.Commit{ReceivedAt: row.ReceivedAt, Partial: row.Partial, Incomplete: row.Incomplete, Pinned: held[string(row.Ref)]}
 	}
 
 	policy, err := json.Marshal(cfg.policy)

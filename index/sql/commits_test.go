@@ -159,6 +159,21 @@ func TestAStrayNewestCommitIsDeletedAndTheOneBeforeItIsLatestAgain(t *testing.T)
 	require.True(t, latest.Equal(stray))
 }
 
+func TestAnIncompleteNewestCommitDoesNotRetireTheCompleteOneBeforeIt(t *testing.T) {
+	f := newFixture(t)
+
+	complete := f.commit("world", f.tree(f.file("a.txt", "one")), false)
+	require.NoError(t, f.x.SetPolicy(f.ctx, "world", &retention.Policy{KeepLast: 1}))
+
+	f.advance(time.Hour)
+	incomplete := proto.NewObject(&proto.Commit{Timestamp: f.clock.Unix(), Tree: f.tree(f.file("a.txt", "two")).Ref(), BackupSet: "world", AgentId: "node-1", Incomplete: true})
+	require.NoError(t, f.x.Put(f.ctx, incomplete))
+
+	require.Equal(t, "latest", f.commitRow(incomplete.Ref()).RetainedBy)
+	require.Equal(t, "last", f.commitRow(complete).RetainedBy)
+	require.Nil(t, f.commitRow(complete).RetireAt)
+}
+
 func TestRetentionLifecycle(t *testing.T) {
 	f := newFixture(t)
 

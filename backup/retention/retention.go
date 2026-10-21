@@ -339,9 +339,11 @@ func Parse(data []byte) (Policy, error) {
 }
 
 // Commit is what evaluation needs to know about one commit of a set.
+// Incomplete marks a commit that lost entries.
 type Commit struct {
 	ReceivedAt time.Time
 	Partial    bool
+	Incomplete bool
 	Pinned     bool
 }
 
@@ -359,9 +361,10 @@ func (d Decision) RetainedBy() string {
 
 // Evaluate applies the policy to a set's commits and returns one decision
 // per commit, in input order. The newest commit is always kept. A partial
-// commit is kept only while it is the newest; it counts for no rule. A
-// pinned commit is kept and counts like any other. Commits within
-// KeepWithin of now are kept regardless of counts.
+// commit is kept only while it is the newest; it counts for no rule. An
+// incomplete commit counts for KeepLast and for a period only where too
+// few complete commits do. A pinned commit is kept and counts like any
+// other. Commits within KeepWithin of now are kept regardless of counts.
 func Evaluate(commits []Commit, p Policy, now time.Time) []Decision {
 	order := make([]int, len(commits))
 	for i := range order {
@@ -385,24 +388,32 @@ func Evaluate(commits []Commit, p Policy, now time.Time) []Decision {
 
 	bounds := p.bounds(now)
 
-	// lastOf says whether a commit is the last complete one of its hour,
-	// day, week or month; walking newest first, that is the first seen
+	// complete commits claim the newest keep_last slots and each period's
+	// last commit first, newest first; incomplete ones claim what is left
+	lastN := make([]bool, len(commits))
 	seen := map[Period]map[string]bool{}
 	lastOf := make([]map[Period]bool, len(commits))
-	for _, i := range order {
-		if commits[i].Partial {
-			continue
-		}
-
-		lastOf[i] = map[Period]bool{}
-		for period, name := range periods {
-			if seen[period] == nil {
-				seen[period] = map[string]bool{}
+	for _, incomplete := range []bool{false, true} {
+		for _, i := range order {
+			if commits[i].Partial || commits[i].Incomplete != incomplete {
+				continue
 			}
 
-			if at := name(commits[i].ReceivedAt); !seen[period][at] {
-				seen[period][at] = true
-				lastOf[i][period] = true
+			if last > 0 {
+				lastN[i] = true
+				last--
+			}
+
+			lastOf[i] = map[Period]bool{}
+			for period, name := range periods {
+				if seen[period] == nil {
+					seen[period] = map[string]bool{}
+				}
+
+				if at := name(commits[i].ReceivedAt); !seen[period][at] {
+					seen[period][at] = true
+					lastOf[i][period] = true
+				}
 			}
 		}
 	}
@@ -422,9 +433,8 @@ func Evaluate(commits []Commit, p Policy, now time.Time) []Decision {
 			continue
 		}
 
-		if last > 0 {
+		if lastN[i] {
 			keep(i, "last")
-			last--
 		}
 
 		if p.KeepWithin > 0 && !c.ReceivedAt.Before(now.Add(-p.KeepWithin)) {
