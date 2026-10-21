@@ -245,7 +245,7 @@ func TestPostgres(t *testing.T) {
 		"RootOwnerNamesTheSet":             TestRootOwnerNamesTheSetBehindACommitOrPin,
 		"RecordedSetSizes":                 TestRecordedSetSizesReplaceTheLastRuns,
 		"RecordedSetSizesInBatches":        TestRecordedSetSizesReachEverySetAcrossBatchesAndCountUnknownOnes,
-		"PendingPresence":                  TestPendingPresenceIsBuiltForEachSetWhoseNewestLiveCommitLacksIt,
+		"PendingPresence":                  TestPendingPresenceIsBuiltForEachSetWhoseNewestLiveCommitLacksItOnceItsFilterIsOld,
 		"EvaluationRetiresOnce":            TestEvaluationRetiresEachCommitOnceAndKeepsWhatAWiderPolicyCovers,
 		"IndexingRecordsEveryChange":       TestIndexingRecordsTheVersionsOfEveryKindOfChange,
 		"MarkingManyLost":                  TestMarkingManyVersionsLostReachesEachSetAndPath,

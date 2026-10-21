@@ -93,8 +93,14 @@ func (x *Index) BuildPresence(ctx context.Context, commit *proto.Ref) error {
 	return x.buildPresence(ctx, row.SetID, row.Edges.Set.Name, commit, &proto.Ref{Hash: row.Tree})
 }
 
+// PresenceEvery is how old the commit a set's filter was built for may get
+// before BuildPendingPresence builds one for a newer commit. Until then an
+// agent skips uploads by the older filter.
+const PresenceEvery = 6 * time.Hour
+
 // BuildPendingPresence builds the filter of every set whose newest live
-// commit has none and reports how many it built.
+// commit has none, unless the set has a filter of a commit received less
+// than PresenceEvery ago, and reports how many it built.
 func (x *Index) BuildPendingPresence(ctx context.Context) (int, error) {
 	d := entsql.Dialect(x.dialect)
 	c, s := d.Table(commitrow.Table).As("c"), d.Table(set.Table).As("s")
@@ -151,7 +157,18 @@ func (x *Index) BuildPendingPresence(ctx context.Context) (int, error) {
 
 	built := 0
 	for _, n := range pending {
-		err := x.buildPresence(ctx, n.set, n.name, &proto.Ref{Hash: n.ref}, &proto.Ref{Hash: n.tree})
+		recent, err := x.client.CommitRow.Query().
+			Where(commitrow.SetID(n.set), commitrow.PresenceNotNil(), commitrow.ReceivedAtGT(x.now().Add(-PresenceEvery)),
+				commitrow.TombstonedAtIsNil(), commitrow.RetireAtIsNil(), commitrow.DeletedAtIsNil()).Exist(ctx)
+		if err != nil {
+			return built, err
+		}
+
+		if recent {
+			continue
+		}
+
+		err = x.buildPresence(ctx, n.set, n.name, &proto.Ref{Hash: n.ref}, &proto.Ref{Hash: n.tree})
 		if err != nil {
 			return built, err
 		}

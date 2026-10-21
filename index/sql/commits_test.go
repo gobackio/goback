@@ -646,7 +646,7 @@ func TestPresenceFilterNeverLandsOnATombstonedCommit(t *testing.T) {
 	f := newFixture(t)
 
 	a := f.commit("world", f.tree(f.file("a.txt", "one")), false)
-	f.advance(time.Hour)
+	f.advance(PresenceEvery)
 	f.commit("world", f.tree(f.file("a.txt", "two")), false)
 
 	require.NoError(t, f.x.SetPolicy(f.ctx, "world", &retention.Policy{KeepLast: 1}))

@@ -631,7 +631,7 @@ func TestRecordedSetSizesReachEverySetAcrossBatchesAndCountUnknownOnes(t *testin
 	}
 }
 
-func TestPendingPresenceIsBuiltForEachSetWhoseNewestLiveCommitLacksIt(t *testing.T) {
+func TestPendingPresenceIsBuiltForEachSetWhoseNewestLiveCommitLacksItOnceItsFilterIsOld(t *testing.T) {
 	f := newFixture(t)
 
 	f.commit("a", f.tree(f.file("a.txt", "one")), false)
@@ -644,10 +644,35 @@ func TestPendingPresenceIsBuiltForEachSetWhoseNewestLiveCommitLacksIt(t *testing
 
 	built, err := f.x.BuildPendingPresence(f.ctx)
 	require.NoError(t, err)
+	require.Zero(t, built, "a's filter is of a commit received an hour ago")
+
+	f.advance(PresenceEvery)
+
+	built, err = f.x.BuildPendingPresence(f.ctx)
+	require.NoError(t, err)
 	require.Equal(t, 1, built, "only a's newest lacks a filter")
 	require.NotEmpty(t, f.commitRow(obj.Ref()).Presence)
 
 	built, err = f.x.BuildPendingPresence(f.ctx)
 	require.NoError(t, err)
 	require.Zero(t, built)
+}
+
+func TestASetWhoseRecentFilterWasRetiredGetsANewOne(t *testing.T) {
+	f := newFixture(t)
+
+	old := f.commit("a", f.tree(f.file("a.txt", "one")), false)
+	f.advance(time.Hour)
+	head := f.commit("a", f.tree(f.file("a.txt", "two")), false)
+	require.NotEmpty(t, f.commitRow(old).Presence)
+	require.Empty(t, f.commitRow(head).Presence, "the old filter is recent")
+
+	require.NoError(t, f.x.SetPolicy(f.ctx, "a", &retention.Policy{KeepLast: 1}))
+	_, err := f.x.Retire(f.ctx, f.clock.Add(15*24*time.Hour))
+	require.NoError(t, err)
+
+	built, err := f.x.BuildPendingPresence(f.ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, built)
+	require.NotEmpty(t, f.commitRow(head).Presence)
 }
