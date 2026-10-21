@@ -104,8 +104,10 @@ message UploadStatus {
     // again
     repeated Ref missing = 9;
     // the progress phase the store is in while ingesting, such as ingest,
-    // check or index; objects counts its units
+    // check or index; objects counts its units, of objects_total when the
+    // phase knows its total
     string phase = 10;
+    int64 objects_total = 11;
 }
 
 message UploadStatusResponse {

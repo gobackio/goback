@@ -56,9 +56,11 @@ const (
 	PhaseDamage   = "damage"
 	// ingest.
 	PhaseIngest = "ingest"
-	// commit: check, counting the session's objects walked, then index,
-	// counting the directories walked.
+	// commit: check, counting the session's objects walked, lost, counting
+	// the objects read above what the session lacks when it is stored
+	// incomplete, then index, counting the directories walked.
 	PhaseCheck = "check"
+	PhaseLost  = "lost"
 	PhaseIndex = "index"
 )
 

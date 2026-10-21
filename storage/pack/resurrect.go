@@ -430,7 +430,56 @@ func (ps *PackStorage) markLost(ctx context.Context, commit *proto.Object) (*pro
 		}
 	}
 
-	ps.logger.Info("a commit marks what its session lacks as lost", "session", ws.id, "lost", len(missing.Refs))
+	ps.logger.Info("a commit marks what its session lacks as lost", "session", ws.id, "lost", len(missing.Refs), "above", len(above))
 
-	return backup.MarkLost(ctx, ps, commit, missing.Refs, func(ref *proto.Ref) bool { return above[string(ref.Hash)] })
+	read, err := ps.readAbove(ctx, ws, commit, above)
+	if err != nil {
+		return nil, err
+	}
+
+	return backup.MarkLost(ctx, read, commit, missing.Refs, func(ref *proto.Ref) bool { return above[string(ref.Hash)] })
+}
+
+// readAbove reads the objects above a commit's gaps as the check reads,
+// checkChunk at a time, reporting them as progress.PhaseLost, and returns
+// the store MarkLost rewrites them in.
+func (ps *PackStorage) readAbove(ctx context.Context, ws *writeSession, commit *proto.Object, above map[string]bool) (backup.ObjectStore, error) {
+	refs := make([]*proto.Ref, 0, len(above))
+	for hash := range above {
+		refs = append(refs, &proto.Ref{Hash: []byte(hash)})
+	}
+
+	phase := progress.Start(ctx, progress.OpCommit, progress.PhaseLost, int64(len(refs)), 0)
+	defer phase.Finish()
+
+	read := &readAhead{ObjectStore: ps, objects: make(map[string]*proto.Object, len(refs))}
+
+	for chunk := range slices.Chunk(refs, checkChunk) {
+		objects, err := ps.readOwn(ctx, ws, commit, chunk)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, obj := range objects {
+			read.objects[string(obj.Ref().Hash)] = obj
+		}
+
+		phase.Add(int64(len(chunk)), 0)
+	}
+
+	return read, nil
+}
+
+// readAhead serves Get from the objects it read ahead.
+type readAhead struct {
+	backup.ObjectStore
+	objects map[string]*proto.Object
+}
+
+func (r *readAhead) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
+	if obj, ok := r.objects[string(ref.Hash)]; ok {
+		return obj, nil
+	}
+
+	return r.ObjectStore.Get(ctx, ref)
 }

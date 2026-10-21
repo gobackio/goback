@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/progress"
 	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
@@ -75,6 +76,41 @@ func TestACommitAskedToBeIncompleteIsStoredWithWhatTheStoreLacksMarkedLost(t *te
 	require.Nil(t, lost.Ref)
 	require.Equal(t, "gone.txt", string(lost.Stat.Name))
 	require.False(t, below.GetTree().Nodes[1].Stat.Lost)
+}
+
+func TestMarkingLostReportsTheObjectsAboveTheGapsItRead(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+
+	sctx, _ := beginSession(t, store, "agent")
+
+	blobs := makeTestData(t, 2)
+	kept, gone := blobs[0], blobs[1]
+	require.NoError(t, store.Put(sctx, kept))
+
+	keptFile := proto.NewObject(&proto.File{Parts: []*proto.FilePart{{Ref: kept.Ref(), Length: 1}}})
+	goneFile := proto.NewObject(&proto.File{Parts: []*proto.FilePart{{Ref: gone.Ref(), Length: 1}}})
+	sub := proto.NewObject(&proto.Tree{Nodes: []*proto.TreeNode{node("gone.txt", false, goneFile.Ref())}})
+	root := proto.NewObject(&proto.Tree{Nodes: []*proto.TreeNode{node("kept.txt", false, keptFile.Ref()), node("sub", true, sub.Ref())}})
+
+	for _, obj := range []*proto.Object{keptFile, goneFile, sub, root} {
+		require.NoError(t, store.Put(sctx, obj))
+	}
+
+	var updates []progress.Update
+
+	ctx := progress.NewContext(sctx, func(u progress.Update) {
+		if u.Op == progress.OpCommit && u.Phase == progress.PhaseLost {
+			updates = append(updates, u)
+		}
+	})
+
+	require.NoError(t, store.Put(ctx, proto.NewObject(&proto.Commit{Timestamp: 1, Tree: root.Ref(), BackupSet: "world", Incomplete: true})))
+
+	require.NotEmpty(t, updates)
+	last := updates[len(updates)-1]
+	require.EqualValues(t, 4, last.Total, "the commit, its tree, the tree below and the file over the gap")
+	require.Equal(t, last.Total, last.Done)
 }
 
 func TestACommitAskedToBeIncompleteThatLacksNothingIsStoredWhole(t *testing.T) {

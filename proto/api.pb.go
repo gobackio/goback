@@ -713,8 +713,10 @@ type UploadStatus struct {
 	// again
 	Missing []*Ref `protobuf:"bytes,9,rep,name=missing,proto3" json:"missing,omitempty"`
 	// the progress phase the store is in while ingesting, such as ingest,
-	// check or index; objects counts its units
+	// check or index; objects counts its units, of objects_total when the
+	// phase knows its total
 	Phase         string `protobuf:"bytes,10,opt,name=phase,proto3" json:"phase,omitempty"`
+	ObjectsTotal  int64  `protobuf:"varint,11,opt,name=objects_total,json=objectsTotal,proto3" json:"objects_total,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -817,6 +819,13 @@ func (x *UploadStatus) GetPhase() string {
 		return x.Phase
 	}
 	return ""
+}
+
+func (x *UploadStatus) GetObjectsTotal() int64 {
+	if x != nil {
+		return x.ObjectsTotal
+	}
+	return 0
 }
 
 type UploadStatusResponse struct {
@@ -4058,7 +4067,7 @@ const file_api_proto_rawDesc = "" +
 	"\x06status\x18\x03 \x01(\v2\x13.proto.UploadStatusR\x06status\"4\n" +
 	"\x13UploadStatusRequest\x12\x1d\n" +
 	"\n" +
-	"upload_ids\x18\x01 \x03(\tR\tuploadIds\"\xb7\x02\n" +
+	"upload_ids\x18\x01 \x03(\tR\tuploadIds\"\xdc\x02\n" +
 	"\fUploadStatus\x12\x1b\n" +
 	"\tupload_id\x18\x01 \x01(\tR\buploadId\x12(\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x12.proto.UploadStateR\x05state\x12\x18\n" +
@@ -4072,7 +4081,8 @@ const file_api_proto_rawDesc = "" +
 	"\amissing\x18\t \x03(\v2\n" +
 	".proto.RefR\amissing\x12\x14\n" +
 	"\x05phase\x18\n" +
-	" \x01(\tR\x05phase\"E\n" +
+	" \x01(\tR\x05phase\x12#\n" +
+	"\robjects_total\x18\v \x01(\x03R\fobjectsTotal\"E\n" +
 	"\x14UploadStatusResponse\x12-\n" +
 	"\auploads\x18\x01 \x03(\v2\x13.proto.UploadStatusR\auploads\"x\n" +
 	"\vPutResponse\x12\x1c\n" +

@@ -37,7 +37,8 @@ const (
 // objects ingested, Stored those of them the store didn't hold already, and
 // Bytes the file's bytes read of BytesTotal. While it is ingesting, Phase
 // names the progress phase the store is in, such as progress.PhaseIngest,
-// and Objects counts that phase's units. Error says why an upload failed.
+// and Objects counts that phase's units, of ObjectsTotal when the phase
+// knows its total. Error says why an upload failed.
 //
 // For a file that held a commit, Commit is the commit as the store stored
 // it once the upload is done. One that failed for what the commit
@@ -45,14 +46,15 @@ const (
 // MissingError would, and leaves the session open to send them and the
 // commit again.
 type UploadStatus struct {
-	ID         string
-	State      UploadState
-	Objects    int64
-	Stored     int64
-	Bytes      int64
-	BytesTotal int64
-	Error      string
-	Phase      string
-	Commit     *proto.Object
-	Missing    []*proto.Ref
+	ID           string
+	State        UploadState
+	Objects      int64
+	ObjectsTotal int64
+	Stored       int64
+	Bytes        int64
+	BytesTotal   int64
+	Error        string
+	Phase        string
+	Commit       *proto.Object
+	Missing      []*proto.Ref
 }
