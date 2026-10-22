@@ -203,6 +203,22 @@ var (
 				},
 			},
 			{
+				Name:    "files_open_sizes",
+				Unique:  false,
+				Columns: []*schema.Column{FilesColumns[14], FilesColumns[11], FilesColumns[10]},
+				Annotation: &entsql.IndexAnnotation{
+					Where: "valid_until IS NULL",
+				},
+			},
+			{
+				Name:    "files_open_lost",
+				Unique:  false,
+				Columns: []*schema.Column{FilesColumns[14]},
+				Annotation: &entsql.IndexAnnotation{
+					Where: "lost AND valid_until IS NULL",
+				},
+			},
+			{
 				Name:    "files_versions",
 				Unique:  false,
 				Columns: []*schema.Column{FilesColumns[14], FilesColumns[5], FilesColumns[10], FilesColumns[3], FilesColumns[4]},

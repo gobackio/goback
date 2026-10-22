@@ -174,6 +174,9 @@ func (File) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("set_id", "path", "valid_from").Unique(),
 		index.Fields("set_id", "dir").Annotations(entsql.IndexWhere("valid_until IS NULL")).StorageKey("files_open"),
+		// a set's size is summed from this index alone
+		index.Fields("set_id", "type", "size").Annotations(entsql.IndexWhere("valid_until IS NULL")).StorageKey("files_open_sizes"),
+		index.Fields("set_id").Annotations(entsql.IndexWhere("lost AND valid_until IS NULL")).StorageKey("files_open_lost"),
 		index.Fields("set_id", "ref", "size", "valid_from", "valid_until").Annotations(entsql.IndexWhere("ref IS NOT NULL")).
 			StorageKey("files_versions"),
 	}
