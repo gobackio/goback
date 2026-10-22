@@ -361,14 +361,28 @@ func cacheSize(key, value string) (int64, error) {
 	return int64(size), nil
 }
 
-// Caches is every cache a run uses; the blob cache unless
-// BlobCacheOnBackup turns it off.
-func (s Store) Caches() goback.Caches {
-	return goback.Caches{Stats: true, Objects: true, Trees: true, Blobs: s.BlobCacheOnBackup == nil || *s.BlobCacheOnBackup}
+// Caches is the caches backups use: a path backup's stat, object and blob
+// caches, the blob cache unless BlobCacheOnBackup turns it off, and a PITR
+// database backup's tree cache.
+func (s Store) Caches(backups []Backup) goback.Caches {
+	var c goback.Caches
+
+	for _, b := range backups {
+		switch {
+		case b.Path != nil:
+			c.Stats, c.Objects = true, true
+			c.Blobs = s.BlobCacheOnBackup == nil || *s.BlobCacheOnBackup
+		case b.Postgres != nil && b.Postgres.PITR, b.MySQL != nil && b.MySQL.PITR:
+			c.Trees = true
+		}
+	}
+
+	return c
 }
 
 // RestartSections names the sections of c that differ from old and that
-// a running agent keeps until it restarts.
+// a running agent keeps until it restarts; caches when c's backups use
+// other caches.
 func (c *Config) RestartSections(old *Config) []string {
 	var sections []string
 
@@ -378,6 +392,10 @@ func (c *Config) RestartSections(old *Config) []string {
 
 	if !reflect.DeepEqual(c.Schedule, old.Schedule) {
 		sections = append(sections, "schedule")
+	}
+
+	if c.Store.Caches(c.Backups) != old.Store.Caches(old.Backups) {
+		sections = append(sections, "caches")
 	}
 
 	return sections

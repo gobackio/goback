@@ -69,7 +69,7 @@ func TestAFlagOverridesTheFileAndIsNamed(t *testing.T) {
 	require.Equal(t, "node-1", s.store.AgentID)
 	require.Equal(t, "2GiB", s.store.MetadataCacheSize)
 	require.Equal(t, "4GB", s.store.BlobCacheSize)
-	require.True(t, s.store.Caches().Blobs)
+	require.True(t, s.store.Caches(s.cfg.Backups).Blobs)
 	require.Equal(t, filepath.Join("/cache", "schedule"), s.stateDir)
 
 	var keys []string
@@ -117,11 +117,11 @@ backups: [{name: a, every: 1h, path: {dir: /a}}]
 
 	s, err := load(path, cliDefaults(nil))
 	require.NoError(t, err)
-	require.False(t, s.store.Caches().Blobs)
+	require.False(t, s.store.Caches(s.cfg.Backups).Blobs)
 
 	s, err = load(path, cliDefaults(map[string]string{"blob-cache-on-backup": "true"}))
 	require.NoError(t, err)
-	require.True(t, s.store.Caches().Blobs)
+	require.True(t, s.store.Caches(s.cfg.Backups).Blobs)
 }
 
 func TestLoadRefuses(t *testing.T) {

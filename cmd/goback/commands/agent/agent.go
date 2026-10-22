@@ -134,7 +134,7 @@ func (s *setup) agent(logger *slog.Logger) *agent.Agent {
 	return &agent.Agent{
 		ID:          s.settings.AgentID,
 		Settings:    s.settings,
-		Caches:      s.store.Caches(),
+		Caches:      s.store.Caches(s.cfg.Backups),
 		Concurrency: s.cfg.Schedule.Concurrency,
 		Grace:       s.cfg.Schedule.ShutdownGrace,
 		StateDir:    s.stateDir,

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup/retention"
 
 	"github.com/stretchr/testify/require"
@@ -232,6 +233,48 @@ backups:
 	joined, ok := err.(interface{ Unwrap() []error })
 	require.True(t, ok)
 	require.Len(t, joined.Unwrap(), 2)
+}
+
+func TestBackupsOpenOnlyTheCachesTheirKindsUse(t *testing.T) {
+	caches := func(doc string) goback.Caches {
+		cfg, err := decode(t, doc)
+		require.NoError(t, err)
+
+		return cfg.Store.Caches(cfg.Backups)
+	}
+
+	require.Equal(t, goback.Caches{}, caches(`
+backups:
+  - {name: db, postgres: {pitr: false}}
+  - {name: shop, mysql: {pitr: false}}
+`))
+	require.Equal(t, goback.Caches{Trees: true}, caches(`
+backups:
+  - {name: shop, mysql: {}}
+`))
+	require.Equal(t, goback.Caches{Stats: true, Objects: true, Trees: true, Blobs: true}, caches(`
+backups:
+  - {name: db, postgres: {}}
+  - {name: files, every: 1h, path: {dir: /a}}
+`))
+	require.Equal(t, goback.Caches{Stats: true, Objects: true}, caches(`
+store: {blob-cache-on-backup: false}
+backups:
+  - {name: files, every: 1h, path: {dir: /a}}
+`))
+}
+
+func TestABackupNeedingOtherCachesTakesARestart(t *testing.T) {
+	old, err := decode(t, "backups: [{name: shop, mysql: {}}]")
+	require.NoError(t, err)
+
+	cfg, err := decode(t, "backups: [{name: shop, mysql: {}}, {name: files, every: 1h, path: {dir: /a}}]")
+	require.NoError(t, err)
+	require.Equal(t, []string{"caches"}, cfg.RestartSections(old))
+
+	cfg, err = decode(t, "backups: [{name: other, mysql: {}}]")
+	require.NoError(t, err)
+	require.Empty(t, cfg.RestartSections(old))
 }
 
 func TestStateDirDefaultsUnderTheCacheDir(t *testing.T) {

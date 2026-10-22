@@ -21,11 +21,7 @@ var ErrLocked = errors.New("another process has the store open")
 // New opens or creates a Store at path. It fails with ErrLocked while
 // another process has it open.
 func New(path string, with ...Option) (*Store, error) {
-	opts := badger.DefaultOptions(path).
-		WithCompression(options.Snappy).
-		WithLogger(Logger)
-
-	db, err := badger.Open(opts)
+	db, err := badger.Open(Options(path).WithLogger(Logger))
 	if err != nil && strings.Contains(err.Error(), "Another process is using this Badger database") {
 		return nil, fmt.Errorf("%w: %v", ErrLocked, err)
 	}
@@ -53,6 +49,16 @@ func New(path string, with ...Option) (*Store, error) {
 	}
 
 	return s, nil
+}
+
+// Options are the badger options a goback cache at path opens with: small
+// memtables and block cache, so an open cache holds about 40 MB.
+func Options(path string) badger.Options {
+	return badger.DefaultOptions(path).
+		WithCompression(options.Snappy).
+		WithMemTableSize(8 << 20).
+		WithNumMemtables(2).
+		WithBlockCacheSize(16 << 20)
 }
 
 // Store keeps objects in badger, keyed by ref. Each value is the object

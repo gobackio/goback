@@ -112,7 +112,7 @@ func TestTheAgentPlansFromTheStoreAcrossRestarts(t *testing.T) {
 	repo, err := goback.Open(context.Background(), s.settings)
 	require.NoError(t, err)
 
-	env, err := repo.Env(context.Background(), s.store.Caches())
+	env, err := repo.Env(context.Background(), s.store.Caches(s.cfg.Backups))
 	require.NoError(t, err)
 
 	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{AgentID: "node-1"})

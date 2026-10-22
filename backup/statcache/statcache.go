@@ -13,9 +13,9 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
+	gobadger "github.com/gobackio/goback/storage/badger"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/dgraph-io/badger/v4/options"
 )
 
 const (
@@ -42,7 +42,7 @@ var ErrLocked = errors.New("another process has the cache open")
 // Open opens or creates the cache in dir. It fails with ErrLocked while
 // another process has it open.
 func Open(dir string) (*Cache, error) {
-	db, err := badger.Open(badger.DefaultOptions(dir).WithCompression(options.Snappy).WithLogger(nil))
+	db, err := badger.Open(gobadger.Options(dir).WithLogger(nil))
 	if err != nil && strings.Contains(err.Error(), "Another process is using this Badger database") {
 		return nil, fmt.Errorf("%w: %v", ErrLocked, err)
 	}
