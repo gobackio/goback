@@ -656,6 +656,7 @@ func TestWalkerCommitsAStreamedFile(t *testing.T) {
 
 	result := f.run()
 	require.True(t, finished)
+	require.GreaterOrEqual(t, result.Uploaded, int64(len(content)), "the stream's chunks count as uploaded")
 
 	root := f.tree(result.Commit.Tree)
 	require.Len(t, root, 1)

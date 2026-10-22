@@ -98,7 +98,7 @@ func (w *Walker) putStream(ctx context.Context) ([]*proto.TreeNode, error) {
 			stat.Type = proto.NodeType_NODE_FILE
 			stat.Size = hdr.Size
 
-			ref, err := PutFile(ctx, w.Objects, w.Key, hdr.Size, content)
+			ref, err := w.putContent(ctx, hdr.Size, content)
 			if err != nil {
 				return nil, fmt.Errorf("storing %s: %w", name, err)
 			}
@@ -143,7 +143,7 @@ func (w *Walker) putStreamFile(ctx context.Context) ([]*proto.TreeNode, error) {
 
 	content := &countingReader{r: w.Stream.File}
 
-	ref, err := PutFile(ctx, w.Objects, w.Key, 0, content)
+	ref, err := w.putContent(ctx, 0, content)
 	if err != nil {
 		return nil, fmt.Errorf("storing %s: %w", name, err)
 	}
