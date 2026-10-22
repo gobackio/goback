@@ -327,8 +327,8 @@ type rewrite struct {
 	obsolete []*archive
 	done     int
 	// unmarked names the copied objects their input's last mark result
-	// left unreachable, and that result's generation
-	unmarked map[string]uint64
+	// left unreachable, with that result's generation and DeadSince
+	unmarked map[string]unmarkedIn
 	// open holds the outputs being written, by class, or by worker for
 	// what has none; class is the classes of the chunk being written
 	open  map[int64]*rewriteOutput
@@ -375,7 +375,7 @@ func (rw *rewrite) chunk(ctx context.Context, chunk []*archive, workers int) err
 		return err
 	}
 
-	rw.written, rw.unmarked = make(map[string]bool), make(map[string]uint64)
+	rw.written, rw.unmarked = make(map[string]bool), make(map[string]unmarkedIn)
 
 	rw.class = nil
 	if rw.group.classes != nil {
@@ -618,7 +618,7 @@ func (rw *rewrite) claim(hash []byte, mark *gcFile, pos int) bool {
 	rw.written[string(hash)] = true
 
 	if mark != nil && pos >= 0 && !mark.Current.Test(uint(pos)) {
-		rw.unmarked[string(hash)] = mark.Generation
+		rw.unmarked[string(hash)] = unmarkedIn{generation: mark.Generation, since: mark.DeadSince}
 	}
 
 	return true
@@ -921,29 +921,27 @@ func (o *rewriteOutput) abort() {
 	}
 }
 
+// unmarkedIn is the mark an object's input last gave it: the generation
+// that left it unreachable and that input's DeadSince.
+type unmarkedIn struct {
+	generation uint64
+	since      time.Time
+}
+
 // carryErasureClock seeds the outputs of a rewrite with the mark of the
 // newest generation among its inputs, so that an unreachable object keeps
-// counting towards its second unmarked generation, and with the earliest
-// DeadSince of the inputs, so the erasure bound keeps counting from when
-// the objects first went unmarked. An object whose input was last marked
-// in an older generation counts as reachable.
-func (ps *PackStorage) carryErasureClock(inputs, outputs []*archive, unmarked map[string]uint64) error {
-	var since time.Time
+// counting towards its second unmarked generation. An output's DeadSince
+// is the earliest its unreachable objects carry: their input's, but no
+// earlier than the object's own version, which it cannot have outlived.
+// An output without unreachable objects has none. An object whose input
+// was last marked in an older generation counts as reachable.
+func (ps *PackStorage) carryErasureClock(inputs, outputs []*archive, unmarked map[string]unmarkedIn) error {
 	var generation uint64
 	var snapshot time.Time
 
 	for _, a := range inputs {
-		g := a.gcResult()
-		if g == nil {
-			continue
-		}
-
-		if g.Generation > generation {
+		if g := a.gcResult(); g != nil && g.Generation > generation {
 			generation, snapshot = g.Generation, g.Snapshot
-		}
-
-		if !g.DeadSince.IsZero() && (since.IsZero() || g.DeadSince.Before(since)) {
-			since = g.DeadSince
 		}
 	}
 
@@ -964,7 +962,8 @@ func (ps *PackStorage) carryErasureClock(inputs, outputs []*archive, unmarked ma
 		}
 
 		for pos, rec := range idx {
-			if g, ok := unmarked[string(rec.Sum[:])]; !ok || g != generation {
+			in, ok := unmarked[string(rec.Sum[:])]
+			if !ok || in.generation != generation {
 				continue
 			}
 
@@ -972,18 +971,22 @@ func (ps *PackStorage) carryErasureClock(inputs, outputs []*archive, unmarked ma
 			seed.DeadObjects++
 			seed.DeadBytes += uint64(rec.Length)
 			seed.Dead = append(seed.Dead, prefixOf(rec.Sum[:]))
-		}
 
-		if seed.DeadObjects > 0 {
-			sort.Slice(seed.Dead, func(i, j int) bool { return seed.Dead[i] < seed.Dead[j] })
-
-			seed.DeadSince = since
-			if seed.DeadSince.IsZero() {
-				seed.DeadSince = snapshot
+			since := in.since
+			if since.IsZero() {
+				since = snapshot
 			}
-		} else if !since.IsZero() {
-			seed.DeadSince = since
+
+			if written := a.version(rec).Time; written.After(since) {
+				since = written
+			}
+
+			if seed.DeadSince.IsZero() || since.Before(seed.DeadSince) {
+				seed.DeadSince = since
+			}
 		}
+
+		sort.Slice(seed.Dead, func(i, j int) bool { return seed.Dead[i] < seed.Dead[j] })
 
 		if err := writeGCFile(ps.storage, a.name, seed); err != nil {
 			return errors.Wrapf(err, "writing gc result of %s", a.name)

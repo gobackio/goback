@@ -589,6 +589,45 @@ func TestCollectCarriesTheErasureClockThroughARewrite(t *testing.T) {
 	require.NoError(t, store.Close())
 }
 
+func TestARewriteOutputTakesTheErasureClockOfTheDeadObjectsItHolds(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+
+	objects := makeChain(makeTestData(t, 3))
+	putAll(t, store, objects)
+	require.NoError(t, store.Flush())
+
+	out := store.archives[0]
+	idx, err := out.getIndex()
+	require.NoError(t, err)
+	require.NotEmpty(t, idx)
+
+	dead := idx[0].Sum[:]
+	written := out.version(idx[0]).Time
+
+	carry := func(since time.Time, unmarked map[string]unmarkedIn) *gcFile {
+		out.setGCResult(&gcFile{Generation: 5, Snapshot: written, Current: bitset.New(uint(len(idx))), DeadSince: since})
+		require.NoError(t, store.carryErasureClock([]*archive{out}, []*archive{out}, unmarked))
+
+		return out.gcResult()
+	}
+
+	old := written.Add(-30 * 24 * time.Hour)
+
+	seed := carry(old, map[string]unmarkedIn{string(dead): {generation: 5, since: old}})
+	require.EqualValues(t, 1, seed.DeadObjects)
+	require.Equal(t, written, seed.DeadSince, "an object goes unmarked no earlier than it was written")
+
+	later := written.Add(time.Hour)
+	seed = carry(old, map[string]unmarkedIn{string(dead): {generation: 5, since: later}})
+	require.Equal(t, later, seed.DeadSince)
+
+	seed = carry(old, map[string]unmarkedIn{})
+	require.Zero(t, seed.DeadObjects)
+	require.True(t, seed.DeadSince.IsZero(), "an output without unreachable objects has no clock")
+
+	require.NoError(t, store.Close())
+}
+
 func TestCollectKeepsRestoreSessionTargets(t *testing.T) {
 	store := newGCStore(t, t.TempDir())
 	ctx := context.Background()
