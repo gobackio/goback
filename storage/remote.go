@@ -102,6 +102,7 @@ func dialStore(addr string, creds auth.Credentials, transport credentials.Transp
 		grpc.WithStreamInterceptor(jar.stream()),
 		grpc.WithStatsHandler(received),
 		replies,
+		exactRequests,
 	}, downloadWindows...)
 
 	base := http.DefaultTransport.(*http.Transport).Clone()
