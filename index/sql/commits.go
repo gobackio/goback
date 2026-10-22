@@ -25,6 +25,7 @@ import (
 	"github.com/gobackio/goback/index/sql/mapping/gen"
 	"github.com/gobackio/goback/progress"
 	"github.com/gobackio/goback/proto"
+	"github.com/gobackio/goback/telemetry/laps"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
@@ -99,6 +100,11 @@ func (x *Index) seedStamp(ctx context.Context) error {
 func (x *Index) Put(ctx context.Context, object *proto.Object) error {
 	var err error
 
+	var steps *laps.Laps
+	if object.Type() == proto.ObjectType_COMMIT {
+		steps = laps.Start()
+	}
+
 	if x.checks(ctx) {
 		if err = backup.CheckReferences(ctx, x.ObjectStore, object); err != nil {
 			return err
@@ -117,14 +123,18 @@ func (x *Index) Put(ctx context.Context, object *proto.Object) error {
 		return err
 	}
 
+	steps.Lap("stamp")
+
 	err = x.ObjectStore.Put(ctx, object)
 	if err != nil {
 		return err
 	}
 
+	steps.Lap("store")
+
 	switch object.Type() {
 	case proto.ObjectType_COMMIT:
-		_, err := x.indexCommit(ctx, object.GetCommit(), object.Ref(), true, true)
+		_, err := x.indexCommit(ctx, object.GetCommit(), object.Ref(), true, true, steps)
 		return err
 	case proto.ObjectType_PIN:
 		return x.indexPin(ctx, object.GetPin(), object.Ref(), true)
@@ -204,7 +214,7 @@ func (x *Index) ensureSet(ctx context.Context, c *ent.Client, commit *proto.Comm
 // longer list is read in full by its next run. Commits of a set are
 // indexed one at a time, in receipt order: strict mode fails a commit
 // received before the set's newest, which otherwise is left out.
-func (x *Index) indexCommit(ctx context.Context, commit *proto.Commit, ref *proto.Ref, strict, evaluate bool) (placement, error) {
+func (x *Index) indexCommit(ctx context.Context, commit *proto.Commit, ref *proto.Ref, strict, evaluate bool, steps *laps.Laps) (placement, error) {
 	treeObj, err := x.reads().Get(ctx, commit.Tree)
 	if errors.Is(err, backup.ErrNotFound) && strict {
 		return unplaced, fmt.Errorf("%w: root tree %x", backup.ErrDanglingRef, commit.Tree.GetHash())
@@ -222,15 +232,17 @@ func (x *Index) indexCommit(ctx context.Context, commit *proto.Commit, ref *prot
 		return unplaced, err
 	}
 
+	steps.Lap("root")
+
 	start := time.Now()
 
 	for attempt := 1; ; attempt++ {
-		plan, err := x.planCommit(ctx, commit, ref, treeObj, setID, strict)
+		plan, err := x.planCommit(ctx, commit, ref, treeObj, setID, strict, steps)
 		if err != nil || plan.diff == nil {
 			return plan.placement, err
 		}
 
-		indexed, err := x.applyCommit(ctx, commit, ref, setID, strict, evaluate, plan)
+		indexed, err := x.applyCommit(ctx, commit, ref, setID, strict, evaluate, plan, steps)
 		if errors.Is(err, errSetMoved) && attempt < planAttempts {
 			continue
 		}
@@ -239,7 +251,7 @@ func (x *Index) indexCommit(ctx context.Context, commit *proto.Commit, ref *prot
 			return unplaced, err
 		}
 
-		x.logger().Info("indexed commit", "set", commit.GetBackupSet(), "took", time.Since(start))
+		x.logger().Info("indexed commit", append([]any{"set", commit.GetBackupSet(), "took", time.Since(start)}, steps.Attrs()...)...)
 
 		return plan.placement, nil
 	}
@@ -285,7 +297,7 @@ var errSetMoved = errors.New("the set moved on while the commit was planned")
 // any transaction, so reading the store holds no lock and no connection,
 // and returns its plan. It returns no diff for a commit there is nothing
 // to do for.
-func (x *Index) planCommit(ctx context.Context, commit *proto.Commit, ref *proto.Ref, treeObj *proto.Object, setID int64, strict bool) (commitPlan, error) {
+func (x *Index) planCommit(ctx context.Context, commit *proto.Commit, ref *proto.Ref, treeObj *proto.Object, setID int64, strict bool, steps *laps.Laps) (commitPlan, error) {
 	c := x.client
 	plan := commitPlan{placement: inOrder, at: time.Unix(0, commit.ReceivedAtNs).UTC()}
 
@@ -298,6 +310,8 @@ func (x *Index) planCommit(ctx context.Context, commit *proto.Commit, ref *proto
 	if err != nil {
 		return commitPlan{}, err
 	}
+
+	steps.Lap("plan")
 
 	switch received := plan.at.Truncate(receiptGrain); {
 	case newest == nil || received.After(newest.ReceivedAt.Truncate(receiptGrain)):
@@ -331,6 +345,8 @@ func (x *Index) planCommit(ctx context.Context, commit *proto.Commit, ref *proto
 	if err == nil {
 		err = diff.walk(ctx, root)
 	}
+
+	steps.Lap("walk")
 
 	if err != nil {
 		if strict {
@@ -424,7 +440,7 @@ func newestCommit(ctx context.Context, c *ent.Client, setID int64) (*ent.CommitR
 // applyCommit writes a planned commit under its set's lock, provided the
 // set's newest commit is still the one the plan assumed, and reports
 // whether it indexed it.
-func (x *Index) applyCommit(ctx context.Context, commit *proto.Commit, ref *proto.Ref, setID int64, strict, evaluate bool, plan commitPlan) (bool, error) {
+func (x *Index) applyCommit(ctx context.Context, commit *proto.Commit, ref *proto.Ref, setID int64, strict, evaluate bool, plan commitPlan, steps *laps.Laps) (bool, error) {
 	indexed := false
 	diff, at, newestID := plan.diff, plan.at, plan.newest
 
@@ -434,6 +450,8 @@ func (x *Index) applyCommit(ctx context.Context, commit *proto.Commit, ref *prot
 		if _, err := x.lockSet(ctx, tx, setID); err != nil {
 			return err
 		}
+
+		steps.Lap("lock")
 
 		skip, err := x.skipCommit(ctx, c, commit, ref, setID, strict)
 		if err != nil || skip {
@@ -449,15 +467,21 @@ func (x *Index) applyCommit(ctx context.Context, commit *proto.Commit, ref *prot
 			return errSetMoved
 		}
 
+		steps.Lap("recheck")
+
 		if err := diff.apply(ctx, c); err != nil {
 			return err
 		}
+
+		steps.Lap("writes")
 
 		// the commit is the set's newest, received after every other
 		size, files, err := openSize(ctx, c, setID)
 		if err != nil {
 			return err
 		}
+
+		steps.Lap("size")
 
 		row := c.CommitRow.Create().SetRef(ref.Hash).SetTimestamp(time.Unix(commit.Timestamp, 0).UTC()).SetReceivedAt(at).
 			SetTree(commit.Tree.Hash).SetParent(commit.GetParent().GetHash()).SetAgentID(commit.GetAgentId()).
@@ -478,10 +502,14 @@ func (x *Index) applyCommit(ctx context.Context, commit *proto.Commit, ref *prot
 			return err
 		}
 
+		steps.Lap("row")
+
 		err = x.clearDamage(ctx, tx, setID, commit.Partial, commit.GetScanStartNs())
 		if err != nil {
 			return err
 		}
+
+		steps.Lap("damage")
 
 		if len(diff.holes)+len(diff.gaps) > 0 {
 			x.logger().Warn("indexed commit around objects the store lost", "ref", fmt.Sprintf("%x", ref.Hash),
@@ -500,12 +528,16 @@ func (x *Index) applyCommit(ctx context.Context, commit *proto.Commit, ref *prot
 			if err != nil {
 				return err
 			}
+
+			steps.Lap("retention")
 		}
 
 		indexed = true
 
 		return nil
 	})
+
+	steps.Lap("commit")
 
 	return indexed, err
 }

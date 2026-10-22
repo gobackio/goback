@@ -17,6 +17,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
+	"github.com/gobackio/goback/telemetry/laps"
 
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
@@ -485,6 +486,11 @@ func (ps *PackStorage) Put(ctx context.Context, object *proto.Object) error {
 }
 
 func (ps *PackStorage) put(ctx context.Context, object *proto.Object) error {
+	var steps *laps.Laps
+	if object.Type() == proto.ObjectType_COMMIT {
+		steps = laps.Start()
+	}
+
 	hdr, stored, err := proto.HeaderFor(object)
 	if err != nil {
 		return err
@@ -547,7 +553,9 @@ func (ps *PackStorage) put(ctx context.Context, object *proto.Object) error {
 	ps.touchSession(ws)
 
 	if object.Type() == proto.ObjectType_COMMIT {
-		err := ps.commit(ctx, ws, object)
+		steps.Lap("write")
+
+		err := ps.commit(ctx, ws, object, steps)
 		if err != nil {
 			ps.refuse(ctx, ws, object.Ref(), err)
 
@@ -559,6 +567,9 @@ func (ps *PackStorage) put(ctx context.Context, object *proto.Object) error {
 		if err := ps.AdvanceHead(object); err != nil {
 			ps.logger.Warn("pointing the set at its new commit failed", "commit", fmt.Sprintf("%x", object.Ref().Hash), "err", err)
 		}
+
+		steps.Lap("head")
+		ps.logger.Info("committed session", append([]any{"session", ws.id}, steps.Attrs()...)...)
 	}
 
 	return nil
@@ -590,7 +601,7 @@ func (ps *PackStorage) refuse(ctx context.Context, ws *writeSession, ref *proto.
 // archive is finalized and its archives flip to committed. A session with
 // an archive that failed to finalize cannot commit: the objects it
 // acknowledged are in no index. A commit ends the session.
-func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *proto.Object) error {
+func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *proto.Object, steps *laps.Laps) error {
 	if err := ws.failed(); err != nil {
 		return fmt.Errorf("session %s lost an archive: %w", ws.id, err)
 	}
@@ -601,6 +612,8 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 		return err
 	}
 
+	steps.Lap("flush")
+
 	if ws.session == nil {
 		return nil
 	}
@@ -609,6 +622,8 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 		if err := ps.settle(ws.id); err != nil {
 			return err
 		}
+
+		steps.Lap("settle")
 	}
 
 	// a commit missing anything is refused before it takes anything back,
@@ -617,6 +632,8 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 	if err != nil {
 		return err
 	}
+
+	steps.Lap("check")
 
 	// the commit's un-tombstone keeps everything the commit reaches; it is
 	// stored before resurrect reads the seals
@@ -632,10 +649,14 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 		return err
 	}
 
+	steps.Lap("untombstone")
+
 	if ps.claims != nil {
 		if err := ps.kept(ctx, ws, commit.Ref()); err != nil {
 			return err
 		}
+
+		steps.Lap("kept")
 	}
 
 	if err := ps.resurrect(ctx, ws, skipped); err != nil {
@@ -650,6 +671,8 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 		return err
 	}
 
+	steps.Lap("resurrect")
+
 	if commitAfterResurrect != nil {
 		commitAfterResurrect()
 	}
@@ -663,10 +686,14 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 		return fmt.Errorf("session %s ended before it committed: %w", ws.id, backup.ErrNoSession)
 	}
 
+	steps.Lap("ended")
+
 	err = ps.index.CommitSession(ws.id)
 	if err != nil {
 		return err
 	}
+
+	steps.Lap("index")
 
 	if x, ok := ps.index.(IncompleteIndex); ok && len(whole) > 0 {
 		if err := x.ClearIncomplete(whole); err != nil {
@@ -684,7 +711,10 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 	}
 	ps.mtx.RUnlock()
 
-	return ps.closeSession(ws.id, sessionCommitted)
+	err = ps.closeSession(ws.id, sessionCommitted)
+	steps.Lap("close")
+
+	return err
 }
 
 // releasePending drops the pending entries of an archive once the archive

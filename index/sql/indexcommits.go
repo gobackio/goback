@@ -229,7 +229,7 @@ func (x *Index) indexGroup(ctx context.Context, target index.IndexedSet, group [
 		}
 
 		// the caller counts the commits; their walks are no commit operation
-		placed, err := x.indexCommit(progress.NewContext(ctx, nil), commit, c.ref, false, false)
+		placed, err := x.indexCommit(progress.NewContext(ctx, nil), commit, c.ref, false, false, nil)
 		if err != nil {
 			return counts, err
 		}

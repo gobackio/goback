@@ -175,7 +175,7 @@ func TestIndexingRecordsTheVersionsOfEveryKindOfChange(t *testing.T) {
 	commit := proto.NewObject(&proto.Commit{Timestamp: f.clock.Unix(), Tree: root.Ref(), BackupSet: "world", AgentId: "node-1", ReceivedAtNs: f.clock.UnixNano()})
 	require.NoError(t, f.store.Put(f.ctx, commit))
 
-	placed, err := f.x.indexCommit(f.ctx, commit.GetCommit(), commit.Ref(), false, true)
+	placed, err := f.x.indexCommit(f.ctx, commit.GetCommit(), commit.Ref(), false, true, nil)
 	require.NoError(t, err)
 	require.Equal(t, inOrder, placed)
 	require.True(t, f.commitRow(commit.Ref()).Incomplete)
