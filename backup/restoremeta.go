@@ -27,6 +27,10 @@ func (r *Restorer) placeMeta(ctx context.Context, fsys WriteFS, path string, sta
 		return err
 	}
 
+	if err := r.putOwner(ctx, fsys, path, stat); err != nil {
+		return err
+	}
+
 	if err := setMeta(ctx, fsys, path, fileMode(stat), mtimeOf(stat)); err != nil {
 		return err
 	}

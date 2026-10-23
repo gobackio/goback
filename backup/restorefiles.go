@@ -37,7 +37,7 @@ type FileToRestore struct {
 // file with its outcome or error, possibly from several goroutines at
 // once; an error it returns stops the restore.
 func (r *Restorer) RestoreFiles(ctx context.Context, files []FileToRestore, done func(i int, outcome Outcome, err error) error) error {
-	if err := r.checkVerify(); err != nil {
+	if err := r.check(); err != nil {
 		return err
 	}
 
@@ -472,6 +472,10 @@ func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.File
 		_, err := fsys.WriteFile(ctx, partial, bytes.NewReader(buf))
 		if err == nil {
 			err = r.putStreams(ctx, fsys, partial, stat)
+		}
+
+		if err == nil {
+			err = r.putOwner(ctx, fsys, partial, stat)
 		}
 
 		if err == nil {

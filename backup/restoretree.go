@@ -68,7 +68,7 @@ type RestoredFile struct {
 // back its mode. A restore session holds the commit while it runs when the
 // store keeps sessions. It refuses a tree naming a path outside dir.
 func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir string, opts TreeOptions) error {
-	if err := r.checkVerify(); err != nil {
+	if err := r.check(); err != nil {
 		return err
 	}
 
@@ -154,6 +154,10 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 		}
 
 		if err := r.putStreams(ctx, r.fs(), e.path, e.stat); err != nil {
+			return err
+		}
+
+		if err := r.putOwner(ctx, r.fs(), e.path, e.stat); err != nil {
 			return err
 		}
 
@@ -377,7 +381,7 @@ func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts
 				continue
 			}
 
-			err := r.restoreSymlink(ctx, e.path, string(e.stat.GetLinkTarget()))
+			err := r.restoreSymlink(ctx, e.path, e.stat)
 			if errors.Is(err, errors.ErrUnsupported) {
 				atomic.AddInt64(&r.stats.Unsupported, 1)
 				continue
@@ -438,11 +442,12 @@ func (r *Restorer) restoreDir(ctx context.Context, path string, mode os.FileMode
 // restoreSymlink recreates a link as recorded and never follows it. The
 // link is made beside path and renamed over it, so a tree that cannot hold
 // links loses nothing that is there.
-func (r *Restorer) restoreSymlink(ctx context.Context, path, target string) error {
+func (r *Restorer) restoreSymlink(ctx context.Context, path string, stat *proto.FileInfo) error {
 	fsys := r.fs()
+	target := string(stat.GetLinkTarget())
 
 	if existing, err := fsys.Readlink(ctx, path); err == nil && existing == target {
-		return nil
+		return r.putOwner(ctx, fsys, path, stat)
 	}
 
 	partial := r.partial(path)
@@ -451,6 +456,10 @@ func (r *Restorer) restoreSymlink(ctx context.Context, path, target string) erro
 	}
 
 	if err := fsys.Symlink(ctx, target, partial); err != nil {
+		return err
+	}
+
+	if err := r.putOwner(ctx, fsys, partial, stat); err != nil {
 		return err
 	}
 

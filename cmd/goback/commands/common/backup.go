@@ -85,10 +85,22 @@ var SalvageFlag = cli.BoolFlag{
 	Usage: "write the readable parts when parts are missing; leave holes for the rest and report them",
 }
 
+// OwnerFlag sets --owner on a restore command.
+var OwnerFlag = cli.StringFlag{
+	Name:  "owner",
+	Usage: "who owns what is restored, on Unix as root: none leaves it to you; recorded gives each entry the user and group it was backed up with, by name; USER[:GROUP] gives everything to that account",
+	Value: "none",
+}
+
 // Restorer is a restorer of repo set up from the restore flags shared by
 // commit restore and file restore, or exits.
 func Restorer(c *cli.Context, repo *goback.Repo) *backup.Restorer {
 	overwrite, err := backup.ParseOverwriteMode(c.String("overwrite"))
+	if err != nil {
+		Fatal(err)
+	}
+
+	owner, err := backup.ParseOwner(c.String("owner"))
 	if err != nil {
 		Fatal(err)
 	}
@@ -105,6 +117,7 @@ func Restorer(c *cli.Context, repo *goback.Repo) *backup.Restorer {
 		DryRun:    c.Bool("dry-run"),
 		Rechunk:   c.Bool("rechunk"),
 		Salvage:   c.Bool("salvage"),
+		Owner:     owner,
 	}
 
 	if restorer.Salvage {

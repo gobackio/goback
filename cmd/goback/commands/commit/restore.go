@@ -249,6 +249,14 @@ func logStats(stats backup.RestoreStats) {
 	if stats.StreamsLeftOut > 0 {
 		log.Printf("%d alternate data streams left out: the destination cannot hold them", stats.StreamsLeftOut)
 	}
+
+	if stats.Owned > 0 {
+		log.Printf("%d entries given their owner", stats.Owned)
+	}
+
+	if stats.OwnersLeftOut > 0 {
+		log.Printf("%d entries kept the restoring user as owner: their recorded user or group has no account here", stats.OwnersLeftOut)
+	}
 }
 
 func restoreAction(c *cli.Context) {
@@ -332,6 +340,7 @@ var restoreFlags = []cli.Flag{
 		Value: backup.DefaultRestoreWorkers(),
 	},
 	common.SalvageFlag,
+	common.OwnerFlag,
 }
 
 var restoreCmd = cli.Command{

@@ -132,6 +132,11 @@ type RestoreStats struct {
 	// StreamsLeftOut the alternate data streams left out on such a tree.
 	SecurityLeftOut int64 `json:"security_left_out"`
 	StreamsLeftOut  int64 `json:"streams_left_out"`
+	// Owned counts the entries given the owner Owner says, and
+	// OwnersLeftOut those that kept the restoring user's because their
+	// recorded user or group has no account here.
+	Owned         int64 `json:"owned"`
+	OwnersLeftOut int64 `json:"owners_left_out"`
 	// CloudOnly counts the files left out because their content was only
 	// in a cloud sync service when they were backed up.
 	CloudOnly int64 `json:"cloud_only"`
@@ -210,9 +215,17 @@ type Restorer struct {
 	// OnHole, when set, is called for every hole a salvaged file was left
 	// with, possibly from several goroutines at once.
 	OnHole func(Hole)
+	// Owner says whose the entries the restore writes become; the zero
+	// Owner leaves them to whoever runs it.
+	Owner Owner
 
 	stats       RestoreStats
 	descriptors restoredDescriptors
+
+	accounts  accounts
+	ownerOnce sync.Once
+	owners    *owners
+	ownerErr  error
 
 	budgetOnce sync.Once
 	budget     *semaphore.Weighted
@@ -231,6 +244,8 @@ func (r *Restorer) Stats() RestoreStats {
 		Unsupported:          atomic.LoadInt64(&r.stats.Unsupported),
 		SecurityLeftOut:      atomic.LoadInt64(&r.stats.SecurityLeftOut),
 		StreamsLeftOut:       atomic.LoadInt64(&r.stats.StreamsLeftOut),
+		Owned:                atomic.LoadInt64(&r.stats.Owned),
+		OwnersLeftOut:        atomic.LoadInt64(&r.stats.OwnersLeftOut),
 		CloudOnly:            atomic.LoadInt64(&r.stats.CloudOnly),
 		Lost:                 atomic.LoadInt64(&r.stats.Lost),
 		BytesFromDestination: atomic.LoadInt64(&r.stats.BytesFromDestination),
@@ -283,12 +298,16 @@ func (r *Restorer) fs() WriteFS {
 	return r.FS
 }
 
-func (r *Restorer) checkVerify() error {
+// check refuses, before anything is written, what the tree restored into
+// cannot honour.
+func (r *Restorer) check() error {
 	if _, ok := r.fs().(RandomWriteFS); r.Verify && !ok {
 		return errors.Errorf("verifying needs a tree that is read back, which %T is not", r.fs())
 	}
 
-	return nil
+	r.ownerOnce.Do(func() { r.owners, r.ownerErr = r.resolveOwners() })
+
+	return r.ownerErr
 }
 
 func (r *Restorer) workers() int {
@@ -320,7 +339,7 @@ func (r *Restorer) readBudget() (*semaphore.Weighted, int64) {
 // is no RandomWriteFS, the file is written front to back and neither the
 // destination nor a partial file is read.
 func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.FileInfo, ref *proto.Ref) (Outcome, error) {
-	if err := r.checkVerify(); err != nil {
+	if err := r.check(); err != nil {
 		return 0, err
 	}
 
@@ -476,6 +495,10 @@ func (r *Restorer) settle(ctx context.Context, fsys RandomWriteFS, tmp RandomFil
 
 	if err == nil {
 		err = r.putStreams(ctx, fsys, partial, stat)
+	}
+
+	if err == nil {
+		err = r.putOwner(ctx, fsys, partial, stat)
 	}
 
 	if err == nil {

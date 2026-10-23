@@ -46,6 +46,10 @@ func (f *file) restore() error {
 		if stats.StreamsLeftOut > 0 {
 			log.Printf("%d alternate data streams left out: the destination cannot hold them", stats.StreamsLeftOut)
 		}
+
+		if stats.OwnersLeftOut > 0 {
+			log.Print("it kept the restoring user as owner: its recorded user or group has no account here")
+		}
 	})
 
 	return nil
@@ -128,5 +132,6 @@ var restoreCmd = cli.Command{
 		},
 		common.SalvageFlag,
 		common.RechunkFlag,
+		common.OwnerFlag,
 	},
 }

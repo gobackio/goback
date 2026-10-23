@@ -55,6 +55,13 @@ type MetadataWriteFS interface {
 	SetAttributes(ctx context.Context, path string, birth time.Time, attributes uint32) error
 }
 
+// OwnerWriteFS is a WriteFS whose entries take a Unix owner, as a
+// Restorer's Owner gives them. LocalFS is one on Unix.
+type OwnerWriteFS interface {
+	// Lchown sets path's uid and gid without following a symlink.
+	Lchown(ctx context.Context, path string, uid, gid int) error
+}
+
 // ErrNotPrivileged is returned for a security descriptor the process may
 // not set, which needs an elevated administrator.
 var ErrNotPrivileged = errors.New("setting a security descriptor needs an elevated administrator")

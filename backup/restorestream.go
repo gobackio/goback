@@ -30,6 +30,10 @@ func (r *Restorer) streamFile(ctx context.Context, fsys WriteFS, path string, st
 	}
 
 	if err == nil {
+		err = r.putOwner(ctx, fsys, partial, stat)
+	}
+
+	if err == nil {
 		err = setMeta(ctx, fsys, partial, fileMode(stat), mtimeOf(stat))
 	}
 
