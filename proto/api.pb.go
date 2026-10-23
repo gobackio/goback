@@ -3069,14 +3069,19 @@ func (x *CountCommitsRequest) GetDeleted() bool {
 	return false
 }
 
-// CommitCount is how many commits a period holds.
+// CommitCount is how many commits a period holds and the newest of them.
 type CommitCount struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// the period's first instant
-	StartNs       int64 `protobuf:"varint,1,opt,name=start_ns,json=startNs,proto3" json:"start_ns,omitempty"`
-	Count         int64 `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	StartNs int64 `protobuf:"varint,1,opt,name=start_ns,json=startNs,proto3" json:"start_ns,omitempty"`
+	Count   int64 `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	// the newest commit counted in the period: the one received last, and
+	// of those received at one instant the one indexed last
+	Newest *Ref `protobuf:"bytes,3,opt,name=newest,proto3" json:"newest,omitempty"`
+	// when the store received the newest
+	NewestReceivedAtNs int64 `protobuf:"varint,4,opt,name=newest_received_at_ns,json=newestReceivedAtNs,proto3" json:"newest_received_at_ns,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *CommitCount) Reset() {
@@ -3119,6 +3124,20 @@ func (x *CommitCount) GetStartNs() int64 {
 func (x *CommitCount) GetCount() int64 {
 	if x != nil {
 		return x.Count
+	}
+	return 0
+}
+
+func (x *CommitCount) GetNewest() *Ref {
+	if x != nil {
+		return x.Newest
+	}
+	return nil
+}
+
+func (x *CommitCount) GetNewestReceivedAtNs() int64 {
+	if x != nil {
+		return x.NewestReceivedAtNs
 	}
 	return 0
 }
@@ -4242,10 +4261,13 @@ const file_api_proto_rawDesc = "" +
 	"\afrom_ns\x18\x03 \x01(\x03R\x06fromNs\x12\x13\n" +
 	"\x05to_ns\x18\x04 \x01(\x03R\x04toNs\x12\x1b\n" +
 	"\ttime_zone\x18\x05 \x01(\tR\btimeZone\x12\x18\n" +
-	"\adeleted\x18\x06 \x01(\bR\adeleted\">\n" +
+	"\adeleted\x18\x06 \x01(\bR\adeleted\"\x95\x01\n" +
 	"\vCommitCount\x12\x19\n" +
 	"\bstart_ns\x18\x01 \x01(\x03R\astartNs\x12\x14\n" +
-	"\x05count\x18\x02 \x01(\x03R\x05count\"B\n" +
+	"\x05count\x18\x02 \x01(\x03R\x05count\x12\"\n" +
+	"\x06newest\x18\x03 \x01(\v2\n" +
+	".proto.RefR\x06newest\x121\n" +
+	"\x15newest_received_at_ns\x18\x04 \x01(\x03R\x12newestReceivedAtNs\"B\n" +
 	"\x14CountCommitsResponse\x12*\n" +
 	"\x06counts\x18\x01 \x03(\v2\x12.proto.CommitCountR\x06counts\"4\n" +
 	"\x13GetRetentionRequest\x12\x1d\n" +
@@ -4502,85 +4524,86 @@ var file_api_proto_depIdxs = []int32{
 	32, // 47: proto.TrashedCommit.size:type_name -> proto.CommitSize
 	51, // 48: proto.ListTrashResponse.commits:type_name -> proto.TrashedCommit
 	1,  // 49: proto.CountCommitsRequest.period:type_name -> proto.Period
-	54, // 50: proto.CountCommitsResponse.counts:type_name -> proto.CommitCount
-	82, // 51: proto.GetRetentionResponse.policy:type_name -> proto.RetentionPolicy
-	82, // 52: proto.GetRetentionResponse.effective:type_name -> proto.RetentionPolicy
-	82, // 53: proto.SetRetentionRequest.policy:type_name -> proto.RetentionPolicy
-	78, // 54: proto.UnpinRequest.pin:type_name -> proto.Ref
-	66, // 55: proto.EscrowedKeysResponse.keys:type_name -> proto.EscrowedKey
-	78, // 56: proto.PinInfo.ref:type_name -> proto.Ref
-	78, // 57: proto.PinInfo.target:type_name -> proto.Ref
-	76, // 58: proto.PinInfo.metadata:type_name -> proto.PinInfo.MetadataEntry
-	70, // 59: proto.ListPinsResponse.pins:type_name -> proto.PinInfo
-	78, // 60: proto.GetTreeRequest.ref:type_name -> proto.Ref
-	78, // 61: proto.GetTreeResponse.ref:type_name -> proto.Ref
-	77, // 62: proto.GetTreeResponse.object:type_name -> proto.Object
-	21, // 63: proto.GetTreeResponse.runs:type_name -> proto.LocatedRun
-	2,  // 64: proto.Store.Put:input_type -> proto.PutRequest
-	3,  // 65: proto.Store.Missing:input_type -> proto.MissingRequest
-	5,  // 66: proto.Store.PutObjects:input_type -> proto.PutObjectsRequest
-	7,  // 67: proto.Store.BeginUpload:input_type -> proto.BeginUploadRequest
-	10, // 68: proto.Store.SendUpload:input_type -> proto.SendUploadRequest
-	12, // 69: proto.Store.UploadStatus:input_type -> proto.UploadStatusRequest
-	16, // 70: proto.Store.Get:input_type -> proto.GetRequest
-	19, // 71: proto.Store.ReadFile:input_type -> proto.ReadFileRequest
-	23, // 72: proto.Store.ReadFiles:input_type -> proto.ReadFilesRequest
-	26, // 73: proto.Store.FileInfo:input_type -> proto.FileInfoRequest
-	28, // 74: proto.Store.ReadDir:input_type -> proto.ReadDirRequest
-	30, // 75: proto.Store.CommitInfo:input_type -> proto.CommitInfoRequest
-	33, // 76: proto.Store.LatestCommit:input_type -> proto.LatestCommitRequest
-	72, // 77: proto.Store.GetTree:input_type -> proto.GetTreeRequest
-	35, // 78: proto.Store.BeginCommit:input_type -> proto.BeginCommitRequest
-	38, // 79: proto.Store.BeginSession:input_type -> proto.BeginSessionRequest
-	40, // 80: proto.Store.EndSession:input_type -> proto.EndSessionRequest
-	42, // 81: proto.Store.TouchSession:input_type -> proto.TouchSessionRequest
-	44, // 82: proto.Store.GetPresence:input_type -> proto.GetPresenceRequest
-	46, // 83: proto.Store.DeleteCommit:input_type -> proto.DeleteCommitRequest
-	48, // 84: proto.Store.UndeleteCommit:input_type -> proto.UndeleteCommitRequest
-	50, // 85: proto.Store.ListTrash:input_type -> proto.ListTrashRequest
-	53, // 86: proto.Store.CountCommits:input_type -> proto.CountCommitsRequest
-	56, // 87: proto.Store.GetRetention:input_type -> proto.GetRetentionRequest
-	58, // 88: proto.Store.SetRetention:input_type -> proto.SetRetentionRequest
-	60, // 89: proto.Store.DeleteSet:input_type -> proto.DeleteSetRequest
-	62, // 90: proto.Store.UndeleteSet:input_type -> proto.UndeleteSetRequest
-	64, // 91: proto.Store.Unpin:input_type -> proto.UnpinRequest
-	69, // 92: proto.Store.ListPins:input_type -> proto.ListPinsRequest
-	67, // 93: proto.Store.EscrowedKeys:input_type -> proto.EscrowedKeysRequest
-	15, // 94: proto.Store.Put:output_type -> proto.PutResponse
-	4,  // 95: proto.Store.Missing:output_type -> proto.MissingResponse
-	6,  // 96: proto.Store.PutObjects:output_type -> proto.PutObjectsResponse
-	8,  // 97: proto.Store.BeginUpload:output_type -> proto.BeginUploadResponse
-	11, // 98: proto.Store.SendUpload:output_type -> proto.SendUploadResponse
-	14, // 99: proto.Store.UploadStatus:output_type -> proto.UploadStatusResponse
-	17, // 100: proto.Store.Get:output_type -> proto.GetResponse
-	20, // 101: proto.Store.ReadFile:output_type -> proto.ReadFileResponse
-	25, // 102: proto.Store.ReadFiles:output_type -> proto.ReadFilesResponse
-	27, // 103: proto.Store.FileInfo:output_type -> proto.FileInfoResponse
-	29, // 104: proto.Store.ReadDir:output_type -> proto.ReadDirResponse
-	31, // 105: proto.Store.CommitInfo:output_type -> proto.CommitInfoResponse
-	34, // 106: proto.Store.LatestCommit:output_type -> proto.LatestCommitResponse
-	73, // 107: proto.Store.GetTree:output_type -> proto.GetTreeResponse
-	36, // 108: proto.Store.BeginCommit:output_type -> proto.BeginCommitResponse
-	39, // 109: proto.Store.BeginSession:output_type -> proto.BeginSessionResponse
-	41, // 110: proto.Store.EndSession:output_type -> proto.EndSessionResponse
-	43, // 111: proto.Store.TouchSession:output_type -> proto.TouchSessionResponse
-	45, // 112: proto.Store.GetPresence:output_type -> proto.GetPresenceResponse
-	47, // 113: proto.Store.DeleteCommit:output_type -> proto.DeleteCommitResponse
-	49, // 114: proto.Store.UndeleteCommit:output_type -> proto.UndeleteCommitResponse
-	52, // 115: proto.Store.ListTrash:output_type -> proto.ListTrashResponse
-	55, // 116: proto.Store.CountCommits:output_type -> proto.CountCommitsResponse
-	57, // 117: proto.Store.GetRetention:output_type -> proto.GetRetentionResponse
-	59, // 118: proto.Store.SetRetention:output_type -> proto.SetRetentionResponse
-	61, // 119: proto.Store.DeleteSet:output_type -> proto.DeleteSetResponse
-	63, // 120: proto.Store.UndeleteSet:output_type -> proto.UndeleteSetResponse
-	65, // 121: proto.Store.Unpin:output_type -> proto.UnpinResponse
-	71, // 122: proto.Store.ListPins:output_type -> proto.ListPinsResponse
-	68, // 123: proto.Store.EscrowedKeys:output_type -> proto.EscrowedKeysResponse
-	94, // [94:124] is the sub-list for method output_type
-	64, // [64:94] is the sub-list for method input_type
-	64, // [64:64] is the sub-list for extension type_name
-	64, // [64:64] is the sub-list for extension extendee
-	0,  // [0:64] is the sub-list for field type_name
+	78, // 50: proto.CommitCount.newest:type_name -> proto.Ref
+	54, // 51: proto.CountCommitsResponse.counts:type_name -> proto.CommitCount
+	82, // 52: proto.GetRetentionResponse.policy:type_name -> proto.RetentionPolicy
+	82, // 53: proto.GetRetentionResponse.effective:type_name -> proto.RetentionPolicy
+	82, // 54: proto.SetRetentionRequest.policy:type_name -> proto.RetentionPolicy
+	78, // 55: proto.UnpinRequest.pin:type_name -> proto.Ref
+	66, // 56: proto.EscrowedKeysResponse.keys:type_name -> proto.EscrowedKey
+	78, // 57: proto.PinInfo.ref:type_name -> proto.Ref
+	78, // 58: proto.PinInfo.target:type_name -> proto.Ref
+	76, // 59: proto.PinInfo.metadata:type_name -> proto.PinInfo.MetadataEntry
+	70, // 60: proto.ListPinsResponse.pins:type_name -> proto.PinInfo
+	78, // 61: proto.GetTreeRequest.ref:type_name -> proto.Ref
+	78, // 62: proto.GetTreeResponse.ref:type_name -> proto.Ref
+	77, // 63: proto.GetTreeResponse.object:type_name -> proto.Object
+	21, // 64: proto.GetTreeResponse.runs:type_name -> proto.LocatedRun
+	2,  // 65: proto.Store.Put:input_type -> proto.PutRequest
+	3,  // 66: proto.Store.Missing:input_type -> proto.MissingRequest
+	5,  // 67: proto.Store.PutObjects:input_type -> proto.PutObjectsRequest
+	7,  // 68: proto.Store.BeginUpload:input_type -> proto.BeginUploadRequest
+	10, // 69: proto.Store.SendUpload:input_type -> proto.SendUploadRequest
+	12, // 70: proto.Store.UploadStatus:input_type -> proto.UploadStatusRequest
+	16, // 71: proto.Store.Get:input_type -> proto.GetRequest
+	19, // 72: proto.Store.ReadFile:input_type -> proto.ReadFileRequest
+	23, // 73: proto.Store.ReadFiles:input_type -> proto.ReadFilesRequest
+	26, // 74: proto.Store.FileInfo:input_type -> proto.FileInfoRequest
+	28, // 75: proto.Store.ReadDir:input_type -> proto.ReadDirRequest
+	30, // 76: proto.Store.CommitInfo:input_type -> proto.CommitInfoRequest
+	33, // 77: proto.Store.LatestCommit:input_type -> proto.LatestCommitRequest
+	72, // 78: proto.Store.GetTree:input_type -> proto.GetTreeRequest
+	35, // 79: proto.Store.BeginCommit:input_type -> proto.BeginCommitRequest
+	38, // 80: proto.Store.BeginSession:input_type -> proto.BeginSessionRequest
+	40, // 81: proto.Store.EndSession:input_type -> proto.EndSessionRequest
+	42, // 82: proto.Store.TouchSession:input_type -> proto.TouchSessionRequest
+	44, // 83: proto.Store.GetPresence:input_type -> proto.GetPresenceRequest
+	46, // 84: proto.Store.DeleteCommit:input_type -> proto.DeleteCommitRequest
+	48, // 85: proto.Store.UndeleteCommit:input_type -> proto.UndeleteCommitRequest
+	50, // 86: proto.Store.ListTrash:input_type -> proto.ListTrashRequest
+	53, // 87: proto.Store.CountCommits:input_type -> proto.CountCommitsRequest
+	56, // 88: proto.Store.GetRetention:input_type -> proto.GetRetentionRequest
+	58, // 89: proto.Store.SetRetention:input_type -> proto.SetRetentionRequest
+	60, // 90: proto.Store.DeleteSet:input_type -> proto.DeleteSetRequest
+	62, // 91: proto.Store.UndeleteSet:input_type -> proto.UndeleteSetRequest
+	64, // 92: proto.Store.Unpin:input_type -> proto.UnpinRequest
+	69, // 93: proto.Store.ListPins:input_type -> proto.ListPinsRequest
+	67, // 94: proto.Store.EscrowedKeys:input_type -> proto.EscrowedKeysRequest
+	15, // 95: proto.Store.Put:output_type -> proto.PutResponse
+	4,  // 96: proto.Store.Missing:output_type -> proto.MissingResponse
+	6,  // 97: proto.Store.PutObjects:output_type -> proto.PutObjectsResponse
+	8,  // 98: proto.Store.BeginUpload:output_type -> proto.BeginUploadResponse
+	11, // 99: proto.Store.SendUpload:output_type -> proto.SendUploadResponse
+	14, // 100: proto.Store.UploadStatus:output_type -> proto.UploadStatusResponse
+	17, // 101: proto.Store.Get:output_type -> proto.GetResponse
+	20, // 102: proto.Store.ReadFile:output_type -> proto.ReadFileResponse
+	25, // 103: proto.Store.ReadFiles:output_type -> proto.ReadFilesResponse
+	27, // 104: proto.Store.FileInfo:output_type -> proto.FileInfoResponse
+	29, // 105: proto.Store.ReadDir:output_type -> proto.ReadDirResponse
+	31, // 106: proto.Store.CommitInfo:output_type -> proto.CommitInfoResponse
+	34, // 107: proto.Store.LatestCommit:output_type -> proto.LatestCommitResponse
+	73, // 108: proto.Store.GetTree:output_type -> proto.GetTreeResponse
+	36, // 109: proto.Store.BeginCommit:output_type -> proto.BeginCommitResponse
+	39, // 110: proto.Store.BeginSession:output_type -> proto.BeginSessionResponse
+	41, // 111: proto.Store.EndSession:output_type -> proto.EndSessionResponse
+	43, // 112: proto.Store.TouchSession:output_type -> proto.TouchSessionResponse
+	45, // 113: proto.Store.GetPresence:output_type -> proto.GetPresenceResponse
+	47, // 114: proto.Store.DeleteCommit:output_type -> proto.DeleteCommitResponse
+	49, // 115: proto.Store.UndeleteCommit:output_type -> proto.UndeleteCommitResponse
+	52, // 116: proto.Store.ListTrash:output_type -> proto.ListTrashResponse
+	55, // 117: proto.Store.CountCommits:output_type -> proto.CountCommitsResponse
+	57, // 118: proto.Store.GetRetention:output_type -> proto.GetRetentionResponse
+	59, // 119: proto.Store.SetRetention:output_type -> proto.SetRetentionResponse
+	61, // 120: proto.Store.DeleteSet:output_type -> proto.DeleteSetResponse
+	63, // 121: proto.Store.UndeleteSet:output_type -> proto.UndeleteSetResponse
+	65, // 122: proto.Store.Unpin:output_type -> proto.UnpinResponse
+	71, // 123: proto.Store.ListPins:output_type -> proto.ListPinsResponse
+	68, // 124: proto.Store.EscrowedKeys:output_type -> proto.EscrowedKeysResponse
+	95, // [95:125] is the sub-list for method output_type
+	65, // [65:95] is the sub-list for method input_type
+	65, // [65:65] is the sub-list for extension type_name
+	65, // [65:65] is the sub-list for extension extendee
+	0,  // [0:65] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_init() }

@@ -401,11 +401,16 @@ message CountCommitsRequest {
     bool deleted = 6;
 }
 
-// CommitCount is how many commits a period holds.
+// CommitCount is how many commits a period holds and the newest of them.
 message CommitCount {
     // the period's first instant
     int64 start_ns = 1;
     int64 count = 2;
+    // the newest commit counted in the period: the one received last, and
+    // of those received at one instant the one indexed last
+    Ref newest = 3;
+    // when the store received the newest
+    int64 newest_received_at_ns = 4;
 }
 
 message CountCommitsResponse {

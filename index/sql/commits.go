@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -1641,6 +1642,47 @@ func (x *Index) GetTrashedCommit(ctx context.Context, backupSet string, ref *pro
 	}
 
 	return m.TrashedCommit(row), nil
+}
+
+// GetCommitDetails returns those of refs that name a live, complete
+// commit of the set, as GetCommitDetail does, in no particular order; the
+// others are left out.
+func (x *Index) GetCommitDetails(ctx context.Context, backupSet string, refs ...*proto.Ref) ([]index.CommitDetail, error) {
+	rows, err := x.commitsOf(ctx, backupSet, refs, liveCommit())
+	if err != nil {
+		return nil, err
+	}
+
+	return mapAll(rows, m.CommitDetail), nil
+}
+
+// GetTrashedCommits returns those of refs that name a commit of the set
+// waiting in the trash, as GetTrashedCommit does, in no particular order;
+// the others are left out.
+func (x *Index) GetTrashedCommits(ctx context.Context, backupSet string, refs ...*proto.Ref) ([]*proto.TrashedCommit, error) {
+	rows, err := x.commitsOf(ctx, backupSet, refs, commitrow.DeletedAtNotNil(), commitrow.TombstonedAtIsNil())
+	if err != nil {
+		return nil, err
+	}
+
+	return mapAll(rows, m.TrashedCommit), nil
+}
+
+// commitsOf is the set's complete commits refs name that also pass where.
+func (x *Index) commitsOf(ctx context.Context, backupSet string, refs []*proto.Ref, where ...predicate.CommitRow) ([]*ent.CommitRow, error) {
+	var rows []*ent.CommitRow
+	for chunk := range slices.Chunk(refs, objectBatch) {
+		found, err := x.client.CommitRow.Query().
+			Where(commitrow.RefIn(refHashes(chunk)...), commitrow.Partial(false), commitrow.HasSetWith(set.Name(backupSet))).
+			Where(where...).WithSet().All(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		rows = append(rows, found...)
+	}
+
+	return rows, nil
 }
 
 // commitOf is the set's complete commit ref names that also passes where.

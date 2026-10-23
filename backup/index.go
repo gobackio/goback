@@ -169,7 +169,9 @@ type Retention interface {
 	// [from, to), or with deleted the ones TrashedCommits lists, per period
 	// as it falls in the IANA zone, "" for UTC. It returns the non-empty
 	// periods oldest first, each starting at its first instant; the first
-	// may start before from.
+	// may start before from. Each names its newest commit, the one
+	// received last and of those received at one instant the one indexed
+	// last.
 	CountCommits(ctx context.Context, set string, period proto.Period, from, to time.Time, zone string, deleted bool) ([]*proto.CommitCount, error)
 	// DeleteSet closes a set and retires every commit; erase uses a zero
 	// window.

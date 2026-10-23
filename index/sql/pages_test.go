@@ -250,6 +250,48 @@ func TestGetCommitDetailFindsOnlyTheSetsLiveCommit(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestGetCommitDetailsFindsTheSetsCommitsAmongRefs(t *testing.T) {
+	f := newFixture(t)
+
+	a := f.commit("world", f.tree(f.file("a.txt", "one")), false)
+	f.advance(time.Hour)
+	b := f.commit("world", f.tree(f.file("a.txt", "two")), false)
+	f.advance(time.Hour)
+	c := f.commit("world", f.tree(f.file("a.txt", "three")), false)
+	other := f.commit("logs", f.tree(f.file("b.txt", "four")), false)
+
+	require.NoError(t, f.x.DeleteCommit(f.ctx, b))
+
+	refsOf := func(refs ...*proto.Ref) []string {
+		out := make([]string, len(refs))
+		for i, ref := range refs {
+			out[i] = fmt.Sprintf("%x", ref.GetHash())
+		}
+
+		return out
+	}
+
+	live, err := f.x.GetCommitDetails(f.ctx, "world", a, b, c, other)
+	require.NoError(t, err)
+
+	got := make([]*proto.Ref, len(live))
+	for i, d := range live {
+		got[i] = d.Ref
+		require.Equal(t, "world", d.Commit.BackupSet)
+	}
+	require.ElementsMatch(t, refsOf(a, c), refsOf(got...), "a deleted commit and another set's are left out")
+
+	trashed, err := f.x.GetTrashedCommits(f.ctx, "world", a, b, c, other)
+	require.NoError(t, err)
+	require.Len(t, trashed, 1)
+	require.True(t, trashed[0].Ref.Equal(b))
+	require.NotZero(t, trashed[0].DeletedAtNs)
+
+	none, err := f.x.GetCommitDetails(f.ctx, "world")
+	require.NoError(t, err)
+	require.Empty(t, none)
+}
+
 func TestPinsOfListsThePinsOfTheTargets(t *testing.T) {
 	f := newFixture(t)
 

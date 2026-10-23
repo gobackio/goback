@@ -270,6 +270,7 @@ func TestPostgres(t *testing.T) {
 		"QuerySetsBySize":                  TestQuerySetsPagesBySize,
 		"GetSet":                           TestGetSetFindsOneSetByName,
 		"GetCommitDetail":                  TestGetCommitDetailFindsOnlyTheSetsLiveCommit,
+		"GetCommitDetails":                 TestGetCommitDetailsFindsTheSetsCommitsAmongRefs,
 		"PinsOf":                           TestPinsOfListsThePinsOfTheTargets,
 		"CommitInfoSkipsCheckpoints":       TestCommitInfoSkipsCheckpoints,
 		"IndexesASplitRoot":                TestIndexesASplitRoot,

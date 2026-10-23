@@ -25,6 +25,22 @@ func counted(counts []*proto.CommitCount) map[time.Time]int64 {
 	return out
 }
 
+// newest reads counts as period starts in UTC with the ref and receipt
+// instant of their newest commit.
+func newest(counts []*proto.CommitCount) map[time.Time]periodNewest {
+	out := map[time.Time]periodNewest{}
+	for _, c := range counts {
+		out[time.Unix(0, c.StartNs).UTC()] = periodNewest{fmt.Sprintf("%x", c.Newest.GetHash()), time.Unix(0, c.NewestReceivedAtNs).UTC()}
+	}
+
+	return out
+}
+
+type periodNewest struct {
+	ref      string
+	received time.Time
+}
+
 func TestCountCommitsPerPeriodInAZone(t *testing.T) {
 	f := newFixture(t)
 
@@ -41,10 +57,13 @@ func TestCountCommitsPerPeriodInAZone(t *testing.T) {
 		utcAt(2026, 10, 25, 22, 30), // 23:30 CET, the 25th hour of the day
 	}
 
+	refs := make([]string, len(received))
 	for i, at := range received {
 		f.clock = at
-		f.commit("world", f.tree(f.file("a.txt", fmt.Sprint(i))), false)
+		refs[i] = fmt.Sprintf("%x", f.commit("world", f.tree(f.file("a.txt", fmt.Sprint(i))), false).GetHash())
 	}
+
+	newestOf := func(i int) periodNewest { return periodNewest{refs[i], received[i]} }
 
 	berlin, err := time.LoadLocation("Europe/Berlin")
 	require.NoError(t, err)
@@ -77,6 +96,20 @@ func TestCountCommitsPerPeriodInAZone(t *testing.T) {
 		utcAt(2026, 3, 31, 22, 0):  1,
 		utcAt(2026, 9, 30, 22, 0):  3,
 	}, count(proto.Period_PERIOD_MONTH, local(2026, 1, 1), local(2027, 1, 1), "Europe/Berlin"))
+
+	months, err := f.x.CountCommits(f.ctx, "world", proto.Period_PERIOD_MONTH, local(2026, 1, 1), local(2027, 1, 1), "Europe/Berlin", false)
+	require.NoError(t, err)
+	require.Equal(t, map[time.Time]periodNewest{
+		utcAt(2025, 12, 31, 23, 0): newestOf(0),
+		utcAt(2026, 2, 28, 23, 0):  newestOf(5),
+		utcAt(2026, 3, 31, 22, 0):  newestOf(6),
+		utcAt(2026, 9, 30, 22, 0):  newestOf(9),
+	}, newest(months), "each period names the commit received last")
+
+	march, err := f.x.CountCommits(f.ctx, "world", proto.Period_PERIOD_MONTH, local(2026, 3, 1), utcAt(2026, 3, 30, 0, 0), "Europe/Berlin", false)
+	require.NoError(t, err)
+	require.Equal(t, map[time.Time]periodNewest{utcAt(2026, 2, 28, 23, 0): newestOf(4)}, newest(march),
+		"the newest is the newest within the range")
 
 	require.Equal(t, map[time.Time]int64{
 		utcAt(2026, 3, 28, 23, 0): 3,
@@ -136,7 +169,12 @@ func TestCountCommitsLiveOrDeleted(t *testing.T) {
 	require.Equal(t, map[time.Time]int64{day.Add(24 * time.Hour): 1}, count(false))
 	require.Equal(t, map[time.Time]int64{day: 1}, count(true))
 
-	_, err := f.x.Retire(f.ctx, f.clock.Add(15*24*time.Hour))
+	trashed, err := f.x.CountCommits(f.ctx, "world", proto.Period_PERIOD_DAY, day, day.Add(48*time.Hour), "", true)
+	require.NoError(t, err)
+	require.Equal(t, map[time.Time]periodNewest{day: {fmt.Sprintf("%x", a.GetHash()), day.Add(time.Hour)}}, newest(trashed),
+		"a deleted period names its newest deleted commit")
+
+	_, err = f.x.Retire(f.ctx, f.clock.Add(15*24*time.Hour))
 	require.NoError(t, err)
 	require.Empty(t, count(true), "a tombstoned commit is not counted")
 }

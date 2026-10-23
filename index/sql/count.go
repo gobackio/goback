@@ -10,6 +10,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/index/sql/ent/commitrow"
+	"github.com/gobackio/goback/index/sql/mapping"
 	"github.com/gobackio/goback/proto"
 
 	entsql "entgo.io/ent/dialect/sql"
@@ -39,7 +40,8 @@ func (x *Index) CountCommits(ctx context.Context, backupSet string, period proto
 	}
 
 	received := t.C(commitrow.FieldReceivedAt)
-	inner := d.Select().AppendSelectExpr(periodOf(received, starts)).From(t).Where(entsql.And(
+	inner := d.Select().AppendSelectExpr(periodOf(received, starts)).
+		AppendSelect(t.C(commitrow.FieldID), t.C(commitrow.FieldRef), received).From(t).Where(entsql.And(
 		entsql.EQ(t.C(commitrow.FieldSetID), setID),
 		entsql.EQ(t.C(commitrow.FieldPartial), false),
 		state,
@@ -47,8 +49,11 @@ func (x *Index) CountCommits(ctx context.Context, backupSet string, period proto
 		entsql.LT(received, to.UTC()),
 	)).As("received")
 
-	query, args := d.Select("period", entsql.Count("*")).From(inner).
-		GroupBy("period").OrderBy("period").Query()
+	ranked := d.Select("period", commitrow.FieldRef, commitrow.FieldReceivedAt).
+		AppendSelectExpr(newestFirst("nth"), periodSize("n")).From(inner).As("ranked")
+
+	query, args := d.Select("period", "n", commitrow.FieldRef, commitrow.FieldReceivedAt).From(ranked).
+		Where(entsql.EQ("nth", 1)).OrderBy("period").Query()
 
 	rows, err := x.client.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -59,14 +64,36 @@ func (x *Index) CountCommits(ctx context.Context, backupSet string, period proto
 	var counts []*proto.CommitCount
 	for rows.Next() {
 		var i, n int64
-		if err := rows.Scan(&i, &n); err != nil {
+		var ref []byte
+		var at time.Time
+		if err := rows.Scan(&i, &n, &ref, &at); err != nil {
 			return nil, err
 		}
 
-		counts = append(counts, &proto.CommitCount{StartNs: starts[i].UnixNano(), Count: n})
+		counts = append(counts, &proto.CommitCount{
+			StartNs: starts[i].UnixNano(), Count: n,
+			Newest: mapping.Ref(ref), NewestReceivedAtNs: at.UnixNano(),
+		})
 	}
 
 	return counts, rows.Err()
+}
+
+// newestFirst numbers the rows of each period from its newest, as the
+// column as.
+func newestFirst(as string) entsql.Querier {
+	return entsql.ExprFunc(func(b *entsql.Builder) {
+		b.WriteString("ROW_NUMBER() OVER (PARTITION BY ").Ident("period").
+			WriteString(" ORDER BY ").Ident(commitrow.FieldReceivedAt).WriteString(" DESC, ").
+			Ident(commitrow.FieldID).WriteString(" DESC) AS ").Ident(as)
+	})
+}
+
+// periodSize is how many rows each period holds, as the column as.
+func periodSize(as string) entsql.Querier {
+	return entsql.ExprFunc(func(b *entsql.Builder) {
+		b.WriteString("COUNT(*) OVER (PARTITION BY ").Ident("period").WriteString(") AS ").Ident(as)
+	})
 }
 
 // periodOf is the index into starts of the period a receipt instant
