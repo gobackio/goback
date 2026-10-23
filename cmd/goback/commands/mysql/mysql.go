@@ -58,7 +58,7 @@ func withClient(flags ...cli.Flag) []cli.Flag {
 // Command is the mysql command.
 var Command = cli.Command{
 	Name:        "mysql",
-	Usage:       "Back up and restore MySQL servers",
+	Usage:       "Back up and restore MySQL servers (beta)",
 	Description: "goback works with MySQL 5.5 through 8.4. Dumps and the binary log go into separate sets.",
 	Subcommands: []cli.Command{
 		receiveCmd,
