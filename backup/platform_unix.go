@@ -94,3 +94,8 @@ func localReadDir(dir string) ([]os.DirEntry, error) {
 // recordPlatform adds what a stat holds beyond the portable fields, which
 // on Unix is nothing yet.
 func recordPlatform(*proto.FileInfo, os.FileInfo) {}
+
+// openShared opens path to read.
+func openShared(path string) (*os.File, error) {
+	return os.Open(path)
+}

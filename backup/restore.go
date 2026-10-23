@@ -145,8 +145,11 @@ type RestoreStats struct {
 
 	BytesFromDestination int64 `json:"bytes_from_destination"`
 	BytesFromSeeds       int64 `json:"bytes_from_seeds"`
-	BytesFromCache       int64 `json:"bytes_from_cache"`
-	BytesFromStore       int64 `json:"bytes_from_store"`
+	// BytesFromRestored counts the bytes copied from files the restore
+	// had already written rather than fetched again.
+	BytesFromRestored int64 `json:"bytes_from_restored"`
+	BytesFromCache    int64 `json:"bytes_from_cache"`
+	BytesFromStore    int64 `json:"bytes_from_store"`
 }
 
 // DefaultRestoreWorkers is how much of a restore runs at once when nothing
@@ -181,14 +184,17 @@ func mustInstrument[T any](instrument T, err error) T {
 }
 
 // Restorer writes files from the store, taking every part it can from the
-// destination file, the seeds and the blob cache before the network. Local
-// bytes are used only after they hash to the recorded ref.
+// destination file, the seeds, the files it has already written and the
+// blob cache before the network, so a part many files hold is fetched once.
+// Local bytes are used only after they hash to the recorded ref.
 type Restorer struct {
 	Store ObjectStore
 	Key   *storekey.Key
 	// FS is the tree restored into; nil is the local disk.
 	FS WriteFS
 
+	// Seeds, when set, also records what the restore writes; without it
+	// the restorer keeps a map of its own.
 	Seeds *SeedMap
 	Cache *blobcache.Cache
 
@@ -222,10 +228,12 @@ type Restorer struct {
 	stats       RestoreStats
 	descriptors restoredDescriptors
 
-	accounts  accounts
-	ownerOnce sync.Once
-	owners    *owners
-	ownerErr  error
+	accounts accounts
+	once     sync.Once
+	owners   *owners
+	ownerErr error
+	// parts locates every part the restore can copy rather than fetch
+	parts *SeedMap
 
 	budgetOnce sync.Once
 	budget     *semaphore.Weighted
@@ -250,6 +258,7 @@ func (r *Restorer) Stats() RestoreStats {
 		Lost:                 atomic.LoadInt64(&r.stats.Lost),
 		BytesFromDestination: atomic.LoadInt64(&r.stats.BytesFromDestination),
 		BytesFromSeeds:       atomic.LoadInt64(&r.stats.BytesFromSeeds),
+		BytesFromRestored:    atomic.LoadInt64(&r.stats.BytesFromRestored),
 		BytesFromCache:       atomic.LoadInt64(&r.stats.BytesFromCache),
 		BytesFromStore:       atomic.LoadInt64(&r.stats.BytesFromStore),
 	}
@@ -305,7 +314,14 @@ func (r *Restorer) check() error {
 		return errors.Errorf("verifying needs a tree that is read back, which %T is not", r.fs())
 	}
 
-	r.ownerOnce.Do(func() { r.owners, r.ownerErr = r.resolveOwners() })
+	r.once.Do(func() {
+		r.owners, r.ownerErr = r.resolveOwners()
+
+		r.parts = r.Seeds
+		if r.parts == nil {
+			r.parts = NewSeedMap(r.Key)
+		}
+	})
 
 	return r.ownerErr
 }
@@ -408,6 +424,8 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 				if err := r.placeMeta(ctx, fsys, path, stat); err != nil {
 					return 0, err
 				}
+
+				r.recordWhole(path, reader, ref)
 			}
 
 			r.countBytes(ctx, &r.stats.BytesFromDestination, "destination", reader.size())
@@ -435,7 +453,9 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 		held = r.verifyParts(tmp, info.Size(), reader)
 	}
 
-	missing, err := r.assemble(ctx, tmp, source, reader, matched, held, local, ref)
+	dst := r.target(tmp, partial)
+
+	missing, err := r.assemble(ctx, dst, source, reader, matched, held, local, ref)
 	if err == nil {
 		err = r.settle(ctx, random, tmp, source, partial, path, stat, reader, missing)
 	} else {
@@ -445,6 +465,8 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 	if err != nil {
 		return 0, errors.Wrapf(err, "restoring %s", path)
 	}
+
+	r.settled(dst, path, ref)
 
 	if len(missing) > 0 {
 		r.reportHoles(path, reader, missing)
@@ -706,16 +728,18 @@ func (r *Restorer) rechunked(path string, hasFile bool, matched []bool) *SeedMap
 
 // assemble writes every part at its offset that dst does not already hold:
 // matched parts are copied from source, the rest come from the re-cut
-// destination, the seeds, the cache or the store. It returns the parts no
-// source held, which is empty unless Salvage is set.
-func (r *Restorer) assemble(ctx context.Context, dst io.WriterAt, source io.ReaderAt, reader *fileReader, matched, held []bool, local *SeedMap, ref *proto.Ref) ([]int, error) {
+// destination, the seeds, the files already restored, the cache or the
+// store. A part another file of the restore is fetching is waited for and
+// copied from that file once it lands. It returns the parts no source
+// held, which is empty unless Salvage is set.
+func (r *Restorer) assemble(ctx context.Context, dst target, source io.ReaderAt, reader *fileReader, matched, held []bool, local *SeedMap, ref *proto.Ref) ([]int, error) {
 	var fromStore []int
 
 	for i, part := range reader.parts {
 		offset := int64(part.Offset)
 
 		if part.Ref == nil {
-			if _, err := dst.WriteAt(reader.inline, 0); err != nil {
+			if err := r.put(dst, reader, i, reader.inline); err != nil {
 				return nil, err
 			}
 
@@ -725,6 +749,7 @@ func (r *Restorer) assemble(ctx context.Context, dst io.WriterAt, source io.Read
 		}
 
 		if held[i] {
+			r.record(dst, reader, i)
 			r.countBytes(ctx, &r.stats.BytesFromDestination, "partial", int64(part.Length))
 
 			continue
@@ -736,7 +761,7 @@ func (r *Restorer) assemble(ctx context.Context, dst io.WriterAt, source io.Read
 				return nil, errors.Wrapf(err, "rereading part %d of the destination", i)
 			}
 
-			if _, err := dst.WriteAt(buf, offset); err != nil {
+			if err := r.put(dst, reader, i, buf); err != nil {
 				return nil, err
 			}
 
@@ -746,7 +771,7 @@ func (r *Restorer) assemble(ctx context.Context, dst io.WriterAt, source io.Read
 		}
 
 		if data, counter, source, ok := r.localCopy(reader, i, local); ok {
-			if _, err := dst.WriteAt(data, offset); err != nil {
+			if err := r.put(dst, reader, i, data); err != nil {
 				return nil, err
 			}
 
@@ -758,11 +783,47 @@ func (r *Restorer) assemble(ctx context.Context, dst io.WriterAt, source io.Read
 		fromStore = append(fromStore, i)
 	}
 
-	if len(fromStore) == 0 {
-		return nil, nil
+	copies := copiesOf(reader, fromStore)
+	if dst.file == nil {
+		return r.fetch(ctx, dst, reader, copies, ref)
 	}
 
-	copies := copiesOf(reader, fromStore)
+	own, theirs, claims := r.claim(reader, copies)
+
+	missing, err := r.fetch(ctx, dst, reader, own, ref)
+
+	// released before waiting, or two files each waiting for a part the
+	// other could not read would wait forever
+	for _, c := range claims {
+		r.parts.release(c.hash, c.ch)
+	}
+
+	if err != nil || len(theirs) == 0 {
+		return missing, err
+	}
+
+	again, err := r.await(ctx, dst, reader, theirs)
+	if err != nil {
+		return nil, err
+	}
+
+	more, err := r.fetch(ctx, dst, reader, again, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	missing = append(missing, more...)
+	sort.Ints(missing)
+
+	return missing, nil
+}
+
+// fetch writes every part in copies from the store, each once at all the
+// offsets that hold it, and returns the parts a salvage goes without.
+func (r *Restorer) fetch(ctx context.Context, dst target, reader *fileReader, copies map[int][]int, ref *proto.Ref) ([]int, error) {
+	if len(copies) == 0 {
+		return nil, nil
+	}
 
 	// a stream reports the file, not the part, so salvage asks for each
 	// part on its own and learns exactly which ones are gone
@@ -804,9 +865,74 @@ func (r *Restorer) assemble(ctx context.Context, dst io.WriterAt, source io.Read
 	return missing, nil
 }
 
+type claimed struct {
+	hash string
+	ch   chan struct{}
+}
+
+// awaited is a part another fetch brings, wanted at every index in at.
+type awaited struct {
+	at []int
+	ch chan struct{}
+}
+
+// claim splits copies into the parts this file fetches, claimed for it,
+// and those another file of the restore already brings.
+func (r *Restorer) claim(reader *fileReader, copies map[int][]int) (map[int][]int, map[int]awaited, []claimed) {
+	own := make(map[int][]int, len(copies))
+	theirs := map[int]awaited{}
+
+	var claims []claimed
+
+	for i, at := range copies {
+		hash := string(reader.parts[i].Ref.Hash)
+
+		ch, mine := r.parts.claim(hash)
+		if !mine {
+			theirs[i] = awaited{at: at, ch: ch}
+			continue
+		}
+
+		own[i] = at
+		claims = append(claims, claimed{hash: hash, ch: ch})
+	}
+
+	return own, theirs, claims
+}
+
+// await waits for each part another file brings and copies it from there,
+// returning the parts it could not copy after all.
+func (r *Restorer) await(ctx context.Context, dst target, reader *fileReader, theirs map[int]awaited) (map[int][]int, error) {
+	again := map[int][]int{}
+
+	for i, w := range theirs {
+		select {
+		case <-w.ch:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+
+		data, counter, source, ok := r.localCopy(reader, i, nil)
+		if !ok {
+			again[i] = w.at
+			continue
+		}
+
+		for _, j := range w.at {
+			if err := r.put(dst, reader, j, data); err != nil {
+				return nil, err
+			}
+
+			r.countBytes(ctx, counter, source, int64(len(data)))
+		}
+	}
+
+	return again, nil
+}
+
 // getPart writes part i at every offset in at, from obj or, when that is
 // nil, from the store; it reports a part a salvage goes without as lost.
-func (r *Restorer) getPart(ctx context.Context, dst io.WriterAt, reader *fileReader, i int, at []int, obj *proto.Object) (bool, error) {
+func (r *Restorer) getPart(ctx context.Context, dst target, reader *fileReader, i int, at []int, obj *proto.Object) (bool, error) {
 	part := reader.parts[i]
 
 	if obj == nil {
@@ -827,7 +953,7 @@ func (r *Restorer) getPart(ctx context.Context, dst io.WriterAt, reader *fileRea
 // together in batches of up to recordBatch bytes, as many batches at once
 // as the restore's read budget allows; a part a batch did not return is
 // read on its own.
-func (r *Restorer) readRecords(ctx context.Context, records RecordReader, dst io.WriterAt, reader *fileReader, copies map[int][]int) ([]int, error) {
+func (r *Restorer) readRecords(ctx context.Context, records RecordReader, dst target, reader *fileReader, copies map[int][]int) ([]int, error) {
 	leaders := make([]int, 0, len(copies))
 	for i := range copies {
 		leaders = append(leaders, i)
@@ -910,21 +1036,28 @@ func (r *Restorer) readRecords(ctx context.Context, records RecordReader, dst io
 	return missing, nil
 }
 
-// localCopy returns part i from the re-cut destination, the seeds or the
-// cache, whichever holds it first, with the counter and source it is
+// localCopy returns part i from the re-cut destination, the seeds, the
+// files already restored or the cache, whichever holds it first, with the counter and source it is
 // counted under.
 func (r *Restorer) localCopy(reader *fileReader, i int, local *SeedMap) ([]byte, *int64, string, bool) {
 	part := reader.parts[i]
 
 	if local != nil {
-		if buf, ok := local.read(part); ok && r.matches(reader, i, buf) {
+		if buf, _, ok := local.read(part); ok && r.matches(reader, i, buf) {
 			return buf, &r.stats.BytesFromDestination, "destination", true
 		}
 	}
 
-	if r.Seeds != nil {
-		if buf, ok := r.Seeds.read(part); ok && r.matches(reader, i, buf) {
-			return buf, &r.stats.BytesFromSeeds, "seed", true
+	if r.parts != nil {
+		if buf, restored, ok := r.parts.read(part); ok {
+			switch {
+			case !r.matches(reader, i, buf):
+				r.parts.forget(part)
+			case restored:
+				return buf, &r.stats.BytesFromRestored, "restored", true
+			default:
+				return buf, &r.stats.BytesFromSeeds, "seed", true
+			}
 		}
 	}
 
@@ -974,7 +1107,7 @@ const (
 // stream fetches one copy of every wanted part through ReadParts calls
 // that each ask for a contiguous stripe of them, skipping every other
 // part, so a server that can locate parts still finds them side by side.
-func (r *Restorer) stream(ctx context.Context, parts PartReader, dst io.WriterAt, reader *fileReader, copies map[int][]int, ref *proto.Ref) error {
+func (r *Restorer) stream(ctx context.Context, parts PartReader, dst target, reader *fileReader, copies map[int][]int, ref *proto.Ref) error {
 	leaders := make([]int, 0, len(copies))
 	for i := range copies {
 		leaders = append(leaders, i)
@@ -1037,7 +1170,7 @@ func (r *Restorer) stream(ctx context.Context, parts PartReader, dst io.WriterAt
 
 // writePart opens a part's stored object, writes it at the offset of
 // every part in at, which all hold it, and caches it.
-func (r *Restorer) writePart(ctx context.Context, dst io.WriterAt, reader *fileReader, at []int, obj *proto.Object) error {
+func (r *Restorer) writePart(ctx context.Context, dst target, reader *fileReader, at []int, obj *proto.Object) error {
 	part := reader.parts[at[0]]
 
 	data, err := reader.openPart(at[0], part, obj)
@@ -1046,7 +1179,7 @@ func (r *Restorer) writePart(ctx context.Context, dst io.WriterAt, reader *fileR
 	}
 
 	for _, i := range at {
-		if _, err := dst.WriteAt(data, int64(reader.parts[i].Offset)); err != nil {
+		if err := r.put(dst, reader, i, data); err != nil {
 			return err
 		}
 
@@ -1058,4 +1191,75 @@ func (r *Restorer) writePart(ctx context.Context, dst io.WriterAt, reader *fileR
 	}
 
 	return nil
+}
+
+// target is a file a restore assembles. When file is set, every part that
+// lands in it is recorded, so the rest of the restore copies the part from
+// there rather than fetch it again.
+type target struct {
+	io.WriterAt
+	file *seedFile
+}
+
+// recording reports whether the restore records where it writes parts:
+// only on the local disk, where the map reads them back.
+func (r *Restorer) recording() bool {
+	return !r.DryRun && isLocalWrite(r.fs())
+}
+
+func (r *Restorer) target(w io.WriterAt, partial string) target {
+	if !r.recording() {
+		return target{WriterAt: w}
+	}
+
+	return target{WriterAt: w, file: r.parts.restoring(partial)}
+}
+
+// put writes data, the content of part i, at the part's offset.
+func (r *Restorer) put(dst target, reader *fileReader, i int, data []byte) error {
+	if _, err := dst.WriteAt(data, int64(reader.parts[i].Offset)); err != nil {
+		return err
+	}
+
+	r.record(dst, reader, i)
+
+	return nil
+}
+
+// record notes that dst holds part i.
+func (r *Restorer) record(dst target, reader *fileReader, i int) {
+	if part := reader.parts[i]; dst.file != nil && part.Ref != nil {
+		r.parts.landed(string(part.Ref.Hash), dst.file, int64(part.Offset), int64(part.Length))
+	}
+}
+
+// settled records that the file ref names was renamed from dst to path.
+func (r *Restorer) settled(dst target, path string, ref *proto.Ref) {
+	if dst.file != nil {
+		r.parts.moved(dst.file, path)
+		r.parts.wrote(ref)
+	}
+}
+
+// recordWhole records every part of the file ref names, which path holds
+// whole.
+func (r *Restorer) recordWhole(path string, reader *fileReader, ref *proto.Ref) {
+	if !r.recording() {
+		return
+	}
+
+	dst := target{file: r.parts.restoring(path)}
+	for i := range reader.parts {
+		r.record(dst, reader, i)
+	}
+
+	r.parts.wrote(ref)
+}
+
+// guess reads the seeds most likely to hold the parts of the file about to
+// be restored at rel, as stat records it.
+func (r *Restorer) guess(rel string, stat *proto.FileInfo) {
+	if !r.DryRun {
+		r.parts.guess(rel, stat)
+	}
 }

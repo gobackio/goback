@@ -29,6 +29,10 @@ type FileToRestore struct {
 	// Written, when set, is handed the size of each part as it lands in
 	// the file, as WithWritten does for RestoreFile.
 	Written func(n int64)
+	// Rel, when set, is the file's slash-separated path under the
+	// directory restored into, which a seed directory read with SeedGuess
+	// is searched at first.
+	Rel string
 }
 
 // RestoreFiles restores files as RestoreFile does, Workers at a time,
@@ -109,6 +113,8 @@ func (r *Restorer) restoreOne(ctx context.Context, i int, file FileToRestore, do
 		ctx = WithWritten(ctx, file.Written)
 	}
 
+	r.guess(file.Rel, file.Stat)
+
 	outcome, err := r.RestoreFile(ctx, file.Path, file.Stat, file.Ref)
 
 	return done(i, outcome, err)
@@ -139,6 +145,9 @@ type member struct {
 	// landed is counted once the file is in place
 	landed   []landed
 	finished bool
+	// fresh is set for a member read in one call with its parts, which
+	// takes none of them from anywhere else
+	fresh bool
 }
 
 type landed struct {
@@ -172,6 +181,7 @@ func (r *Restorer) restoreGroup(ctx context.Context, files FilesReader, all []Fi
 		}
 
 		members = append(members, m)
+		r.guess(m.file.Rel, m.file.Stat)
 
 		existing, err := fsys.Lstat(ctx, m.file.Path)
 		hasFile := err == nil && existing.Mode().IsRegular()
@@ -185,9 +195,10 @@ func (r *Restorer) restoreGroup(ctx context.Context, files FilesReader, all []Fi
 		}
 
 		_, err = fsys.Lstat(ctx, r.partial(m.file.Path))
-		if (readBack && (hasFile || !errors.Is(err, fs.ErrNotExist))) || r.Seeds != nil || r.Cache != nil {
+		if (readBack && (hasFile || !errors.Is(err, fs.ErrNotExist))) || r.Seeds != nil || r.Cache != nil || r.parts.wasWritten(m.file.Ref) {
 			inspect = append(inspect, m)
 		} else {
+			m.fresh = true
 			fresh = append(fresh, m)
 		}
 	}
@@ -295,6 +306,10 @@ func (g *group) plan(writes *errgroup.Group, m *member, obj *proto.Object) error
 					err = r.placeMeta(m.ctx, fsys, path, m.file.Stat)
 				}
 
+				if err == nil {
+					r.recordWhole(path, reader, m.file.Ref)
+				}
+
 				return g.finish(m, OutcomeUnchanged, err)
 			})
 
@@ -321,6 +336,11 @@ func (g *group) plan(writes *errgroup.Group, m *member, obj *proto.Object) error
 		case matched != nil && matched[i]:
 			m.landed = append(m.landed, landed{&r.stats.BytesFromDestination, "destination", int64(part.Length)})
 		default:
+			if m.fresh {
+				fromStore = append(fromStore, i)
+				continue
+			}
+
 			data, counter, source, ok := r.localCopy(reader, i, local)
 			if !ok {
 				fromStore = append(fromStore, i)
@@ -433,7 +453,7 @@ func (g *group) land(waiters []waiter, data []byte) ([]*member, error) {
 
 // write puts a whole member in place through its partial file.
 func (g *group) write(m *member) error {
-	err := g.r.writeWhole(m.ctx, m.file.Path, m.file.Stat, m.reader, m.buf)
+	err := g.r.writeWhole(m.ctx, m.file.Path, m.file.Stat, m.file.Ref, m.reader, m.buf)
 	if err != nil {
 		err = errors.Wrapf(err, "restoring %s", m.file.Path)
 	}
@@ -462,7 +482,7 @@ func (g *group) finish(m *member, outcome Outcome, err error) error {
 
 // writeWhole puts a file whose content is all in buf at path through its
 // partial file.
-func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.FileInfo, reader *fileReader, buf []byte) error {
+func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.FileInfo, ref *proto.Ref, reader *fileReader, buf []byte) error {
 	partial := r.partial(path)
 
 	random, ok := r.fs().(RandomWriteFS)
@@ -503,7 +523,13 @@ func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.File
 		return err
 	}
 
-	return r.settle(ctx, random, tmp, nil, partial, path, stat, reader, nil)
+	if err := r.settle(ctx, random, tmp, nil, partial, path, stat, reader, nil); err != nil {
+		return err
+	}
+
+	r.recordWhole(path, reader, ref)
+
+	return nil
 }
 
 // fill copies into buf every part the file at name holds at its offset,

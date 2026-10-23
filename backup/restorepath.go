@@ -14,6 +14,10 @@ import (
 // it restored; a path the set never held at notAfter fails with
 // ErrNotFound.
 func (r *Restorer) RestorePath(ctx context.Context, idx Index, set, path string, notAfter time.Time, dest string) (*proto.TreeNode, Outcome, error) {
+	if err := r.check(); err != nil {
+		return nil, 0, err
+	}
+
 	found, err := FindFile(ctx, idx, r.Key, set, path, notAfter, 1)
 	if err != nil {
 		return nil, 0, err
@@ -37,6 +41,8 @@ func (r *Restorer) RestorePath(ctx context.Context, idx Index, set, path string,
 			return nil, 0, err
 		}
 	}
+
+	r.guess(path, node.Stat)
 
 	outcome, err := r.RestoreFile(ctx, dest, node.Stat, node.Ref)
 

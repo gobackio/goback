@@ -109,7 +109,7 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 		}
 
 		l.into = []string{dir}
-		err = l.add(ctx, tree, parent, dir, "")
+		err = l.add(ctx, tree, parent, dir, "", "")
 	}
 
 	if err != nil {
@@ -202,6 +202,8 @@ func topPaths(paths []string) ([]string, error) {
 
 type treeEntry struct {
 	path string
+	// rel is the slash-separated path under the directory restored into
+	rel  string
 	info os.FileInfo
 	stat *proto.FileInfo
 	ref  *proto.Ref
@@ -252,13 +254,13 @@ func (l *treeList) addPaths(ctx context.Context, root *proto.Ref, dir string, to
 
 		node := tree.GetNodes()[i]
 
-		path, err := l.entry(top, into, node.GetStat(), node.GetRef())
+		path, rel, err := l.entry(top, into, strings.Join(parents, "/"), node.GetStat(), node.GetRef())
 		if err != nil {
 			return err
 		}
 
 		if node.GetStat().IsDir() && !node.GetStat().GetLost() {
-			if err := l.add(ctx, node.GetRef(), NameToken(l.reader.key, token, node.GetStat().GetName()), path, top); err != nil {
+			if err := l.add(ctx, node.GetRef(), NameToken(l.reader.key, token, node.GetStat().GetName()), path, rel, top); err != nil {
 				return err
 			}
 		}
@@ -267,10 +269,11 @@ func (l *treeList) addPaths(ctx context.Context, root *proto.Ref, dir string, to
 	return nil
 }
 
-// add lists everything the tree at ref holds under dir, renaming the
-// entries it holds directly when Name is set and named is empty; named is
-// the tree's path when it is itself an entry Paths names.
-func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, named string) error {
+// add lists everything the tree at ref holds under dir, which is at under
+// in the directory restored into, renaming the entries it holds directly
+// when Name is set and named is empty; named is the tree's path when it is
+// itself an entry Paths names.
+func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, under, named string) error {
 	renamed := map[string]string{}
 
 	return l.reader.WalkTree(ctx, ref, parent, func(rel string, info os.FileInfo, ref *proto.Ref) error {
@@ -303,33 +306,40 @@ func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, 
 			path = l.fsys.Join(path, part)
 		}
 
-		l.append(path, info, stat, ref)
+		l.append(path, relPath(under, parts...), info, stat, ref)
 
 		return nil
 	})
 }
 
-// entry lists the node at the tree path top in the directory into, under
-// the name Name gives it, and returns the path it is written at.
-func (l *treeList) entry(top, into string, stat *proto.FileInfo, ref *proto.Ref) (string, error) {
+// entry lists the node at the tree path top in the directory into, which
+// is at under in the directory restored into, under the name Name gives
+// it, and returns the path it is written at and its path under the
+// directory restored into.
+func (l *treeList) entry(top, into, under string, stat *proto.FileInfo, ref *proto.Ref) (string, string, error) {
 	info := proto.GetOSFileInfo(stat)
 
 	name := string(stat.GetName())
 	if !filepath.IsLocal(name) {
-		return "", fmt.Errorf("the tree holds %q, outside the directory restored into", name)
+		return "", "", fmt.Errorf("the tree holds %q, outside the directory restored into", name)
 	}
 
 	if l.name != nil {
 		var err error
 		if name, err = l.rename(top, info); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 
-	path := l.fsys.Join(into, name)
-	l.append(path, info, stat, ref)
+	path, rel := l.fsys.Join(into, name), relPath(under, name)
+	l.append(path, rel, info, stat, ref)
 
-	return path, nil
+	return path, rel, nil
+}
+
+// relPath joins the slash-separated path under and the names below it.
+func relPath(under string, names ...string) string {
+	return path.Join(append([]string{under}, names...)...)
 }
 
 func (l *treeList) rename(path string, info os.FileInfo) (string, error) {
@@ -341,8 +351,8 @@ func (l *treeList) rename(path string, info os.FileInfo) (string, error) {
 	return name, nil
 }
 
-func (l *treeList) append(path string, info os.FileInfo, stat *proto.FileInfo, ref *proto.Ref) {
-	l.entries = append(l.entries, treeEntry{path: path, info: info, stat: stat, ref: ref})
+func (l *treeList) append(path, rel string, info os.FileInfo, stat *proto.FileInfo, ref *proto.Ref) {
+	l.entries = append(l.entries, treeEntry{path: path, rel: rel, info: info, stat: stat, ref: ref})
 
 	if !info.IsDir() && stat.GetType() != proto.NodeType_NODE_SYMLINK {
 		l.files++
@@ -393,7 +403,7 @@ func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts
 		default:
 			landed := &atomic.Int64{}
 			written = append(written, landed)
-			files = append(files, FileToRestore{Path: e.path, Stat: e.stat, Ref: e.ref, Written: func(n int64) {
+			files = append(files, FileToRestore{Path: e.path, Rel: e.rel, Stat: e.stat, Ref: e.ref, Written: func(n int64) {
 				landed.Add(n)
 
 				if opts.Written != nil {

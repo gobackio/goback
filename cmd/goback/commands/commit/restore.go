@@ -225,10 +225,11 @@ func (c *commit) restore() error {
 }
 
 func logStats(stats backup.RestoreStats) {
-	log.Printf("%d files: %d written, %d unchanged, %d skipped by stat; bytes from destination %s, seeds %s, cache %s, store %s",
+	log.Printf("%d files: %d written, %d unchanged, %d skipped by stat; bytes from destination %s, seeds %s, files already restored %s, cache %s, store %s",
 		stats.Files, stats.Written, stats.Unchanged, stats.Skipped,
 		humanize.Bytes(uint64(stats.BytesFromDestination)), humanize.Bytes(uint64(stats.BytesFromSeeds)),
-		humanize.Bytes(uint64(stats.BytesFromCache)), humanize.Bytes(uint64(stats.BytesFromStore)))
+		humanize.Bytes(uint64(stats.BytesFromRestored)), humanize.Bytes(uint64(stats.BytesFromCache)),
+		humanize.Bytes(uint64(stats.BytesFromStore)))
 
 	if stats.Salvaged > 0 {
 		log.Printf("%d files salvaged with %s missing", stats.Salvaged, humanize.Bytes(uint64(stats.MissingBytes)))
@@ -340,6 +341,7 @@ var restoreFlags = []cli.Flag{
 		Value: backup.DefaultRestoreWorkers(),
 	},
 	common.SalvageFlag,
+	common.SeedModeFlag,
 	common.OwnerFlag,
 }
 

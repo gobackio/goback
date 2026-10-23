@@ -213,3 +213,21 @@ func (i *identified) ModTime() time.Time { return time.Unix(0, filetimeNs(i.stat
 func (i *identified) IsDir() bool { return i.Mode().IsDir() }
 
 func (i *identified) Sys() any { return &i.stat }
+
+// openShared opens path to read without keeping a restore from renaming
+// it meanwhile.
+func openShared(path string) (*os.File, error) {
+	name, err := windows.UTF16PtrFromString(extended(path))
+	if err != nil {
+		return nil, err
+	}
+
+	share := uint32(windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE)
+
+	handle, err := windows.CreateFile(name, windows.GENERIC_READ, share, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+
+	return os.NewFile(uintptr(handle), path), nil
+}

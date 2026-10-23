@@ -92,6 +92,13 @@ var OwnerFlag = cli.StringFlag{
 	Value: "none",
 }
 
+// SeedModeFlag sets --seed-mode on a restore command.
+var SeedModeFlag = cli.StringFlag{
+	Name:  "seed-mode",
+	Usage: "how a --seed directory is read: guess lists it and reads, as each file is restored, the files most likely to hold its parts, by path, name, then extension and size; full reads every file in it up front",
+	Value: backup.DefaultSeedMode.String(),
+}
+
 // Restorer is a restorer of repo set up from the restore flags shared by
 // commit restore and file restore, or exits.
 func Restorer(c *cli.Context, repo *goback.Repo) *backup.Restorer {
@@ -127,14 +134,23 @@ func Restorer(c *cli.Context, repo *goback.Repo) *backup.Restorer {
 	}
 
 	if seeds := c.StringSlice("seed"); len(seeds) > 0 {
+		mode := backup.DefaultSeedMode
+		if name := c.String("seed-mode"); name != "" {
+			if mode, err = backup.ParseSeedMode(name); err != nil {
+				Fatal(err)
+			}
+		}
+
 		restorer.Seeds = backup.NewSeedMap(key)
 		for _, seed := range seeds {
-			if err := restorer.Seeds.Add(seed); err != nil {
+			if err := restorer.Seeds.AddSeed(seed, mode); err != nil {
 				Fatalf("indexing seed %s: %v", seed, err)
 			}
 		}
 
-		log.Printf("Indexed %d chunks from %d seeds", restorer.Seeds.Len(), len(seeds))
+		if n := restorer.Seeds.Len(); n > 0 {
+			log.Printf("Indexed %d chunks from %d seeds", n, len(seeds))
+		}
 	}
 
 	return restorer

@@ -132,6 +132,7 @@ var restoreCmd = cli.Command{
 		},
 		common.SalvageFlag,
 		common.RechunkFlag,
+		common.SeedModeFlag,
 		common.OwnerFlag,
 	},
 }
