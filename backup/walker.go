@@ -1287,7 +1287,7 @@ func (w *Walker) readFile(ctx context.Context, path string, known map[string]str
 		writer.window = w.window
 	}
 
-	_, err = io.Copy(writer, file)
+	_, err = io.Copy(writer, contentReader(file, info))
 	if err != nil {
 		if IsLockError(err) {
 			return nil, fmt.Errorf("%w: %v", errUnreadable, err)
@@ -1533,7 +1533,7 @@ func HashFileFS(ctx context.Context, fsys FS, path string, key *storekey.Key) (*
 
 	writer := newFileWriter(ctx, discardStore{}, key, info.Size())
 
-	_, err = io.Copy(writer, file)
+	_, err = io.Copy(writer, contentReader(file, info))
 	if err != nil {
 		return nil, err
 	}
