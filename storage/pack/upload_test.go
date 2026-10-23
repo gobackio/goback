@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"io"
+	"io/fs"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -69,6 +70,43 @@ func TestAnArchiveTheStorageDidNotKeepIsRefused(t *testing.T) {
 
 	store, err := NewPackStorage(
 		WithArchiveStorage(wrongSum{newLocal(t.TempDir())}),
+		WithArchiveIndex(NewInMemoryIndex()),
+	)
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	t.Cleanup(func() { _ = store.Close() })
+
+	require.NoError(t, store.Put(ctx, makeTestData(t, 1)[0]))
+	require.ErrorIs(t, store.Flush(), ErrUploadMismatch)
+}
+
+// wrongUpload answers each upload with a checksum of bytes nobody wrote.
+type wrongUpload struct {
+	ArchiveStorage
+}
+
+func (s wrongUpload) Create(name string) (File, error) {
+	file, err := s.ArchiveStorage.Create(name)
+
+	return wrongUploadFile{File: file, name: name}, err
+}
+
+type wrongUploadFile struct {
+	File
+	name string
+}
+
+func (f wrongUploadFile) Stored() (fs.FileInfo, []byte, bool) {
+	sum := md5.Sum([]byte("not what was written"))
+
+	return memInfo{name: f.name}, sum[:], true
+}
+
+func TestAnUploadTheStorageAnsweredWithOtherBytesIsRefused(t *testing.T) {
+	ctx := context.Background()
+
+	store, err := NewPackStorage(
+		WithArchiveStorage(wrongUpload{newLocal(t.TempDir())}),
 		WithArchiveIndex(NewInMemoryIndex()),
 	)
 	require.NoError(t, err)

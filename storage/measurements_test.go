@@ -36,6 +36,13 @@ func counted(t *testing.T, name string, fn func(*storage.BucketStore)) (map[stri
 
 	defer bucket.Close()
 
+	return countedOn(t, name, bucket, fn)
+}
+
+// countedOn is counted over bucket.
+func countedOn(t *testing.T, name string, bucket *blob.Bucket, fn func(*storage.BucketStore)) (map[string]int64, map[string]int64) {
+	t.Helper()
+
 	fn(storage.NewBucketStore(bucket, storage.WithStoreName(name)))
 
 	var collected metricdata.ResourceMetrics

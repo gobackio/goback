@@ -93,6 +93,9 @@ type archive struct {
 	// created versions the archive's records, zero until its index file
 	// is stored
 	created time.Time
+	// indexModified is when the storage said it stored the index file this
+	// process wrote, zero when it did not say
+	indexModified time.Time
 
 	// rows indexes the objects of a claimed archive as they are written,
 	// nil for an archive no claim was taken on; opened is when the claim
@@ -339,6 +342,14 @@ func (a *archive) newerThan(rec IndexRecord, v Version) bool {
 // indexCreated returns when the storage created the archive's index file,
 // or the archive itself when the index file is gone.
 func (a *archive) indexCreated() (time.Time, error) {
+	a.mtx.RLock()
+	modified := a.indexModified
+	a.mtx.RUnlock()
+
+	if !modified.IsZero() {
+		return modified, nil
+	}
+
 	file, err := a.storage.Open(a.indexName())
 	if notExist(err) {
 		file, err = a.storage.Open(a.archiveName())
@@ -813,7 +824,7 @@ func (a *archive) readAll() ([]byte, error) {
 }
 
 // storeReadIndex writes idx as the archive's index file and returns the
-// bytes it took.
+// bytes it took. The caller holds the archive's lock.
 func (a *archive) storeReadIndex(idx IndexFile) (int64, error) {
 	sort.Sort(idx)
 
@@ -827,7 +838,16 @@ func (a *archive) storeReadIndex(idx IndexFile) (int64, error) {
 		return 0, errors.Wrap(err, "Couldn't encode index file")
 	}
 
-	return n, errors.Wrap(idxFile.Close(), "Failed closing index file")
+	if err := idxFile.Close(); err != nil {
+		return n, errors.Wrap(err, "Failed closing index file")
+	}
+
+	if info, _, ok := storedInfo(idxFile); ok {
+		// every index keeps it to the microsecond
+		a.indexModified = info.ModTime().Truncate(time.Microsecond)
+	}
+
+	return n, nil
 }
 
 func (a *archive) storeIndex() (IndexFile, int64, error) {

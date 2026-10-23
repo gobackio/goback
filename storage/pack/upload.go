@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"hash"
 	"io"
+	"io/fs"
 
 	"github.com/pkg/errors"
 )
@@ -19,6 +20,23 @@ var ErrUploadMismatch = errors.New("stored archive does not match what was writt
 // it back. An empty sum means the backend has none for that file.
 type Checksummer interface {
 	Checksum(name string) ([]byte, error)
+}
+
+// StoredFile is implemented by a File created for writing whose storage
+// answers the upload with what it stored. Once the file is closed, Stored
+// returns that file's info, as Stat of an Open of it would, and its MD5;
+// ok is false when the storage did not say.
+type StoredFile interface {
+	Stored() (info fs.FileInfo, md5 []byte, ok bool)
+}
+
+func storedInfo(file any) (fs.FileInfo, []byte, bool) {
+	stored, ok := file.(StoredFile)
+	if !ok {
+		return nil, nil, false
+	}
+
+	return stored.Stored()
 }
 
 // hashedWriter hashes everything on its way to the storage, so what was
@@ -55,14 +73,19 @@ func (a *archive) verifyUpload() error {
 		return nil
 	}
 
-	sums, ok := a.storage.(Checksummer)
+	_, stored, ok := storedInfo(written.to)
 	if !ok {
-		return nil
-	}
+		sums, ok := a.storage.(Checksummer)
+		if !ok {
+			return nil
+		}
 
-	stored, err := sums.Checksum(a.archiveName())
-	if err != nil {
-		return errors.Wrapf(err, "reading the checksum of archive %s", a.name)
+		var err error
+
+		stored, err = sums.Checksum(a.archiveName())
+		if err != nil {
+			return errors.Wrapf(err, "reading the checksum of archive %s", a.name)
+		}
 	}
 
 	if len(stored) == 0 {

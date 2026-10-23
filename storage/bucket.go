@@ -14,6 +14,7 @@ import (
 	"github.com/gobackio/goback/storage/badger"
 	"github.com/gobackio/goback/storage/pack"
 
+	gcs "cloud.google.com/go/storage"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"gocloud.dev/blob"
@@ -28,6 +29,7 @@ const (
 var _ io.ReadSeeker = (*bucketFile)(nil)
 var _ io.WriterTo = (*bucketFile)(nil)
 var _ io.ReaderAt = (*bucketFile)(nil)
+var _ pack.StoredFile = (*bucketFile)(nil)
 var _ os.FileInfo = (*bucketFileInfo)(nil)
 var _ pack.ArchiveStorage = (*BucketStore)(nil)
 var _ pack.InfoLister = (*BucketStore)(nil)
@@ -167,6 +169,10 @@ type bucketFile struct {
 
 	writer  *blob.Writer
 	written int64
+	// upload is the Cloud Storage writer under writer, whose answer says
+	// what the bucket stored; stored is that answer once writer is closed
+	upload *gcs.Writer
+	stored *blob.Attributes
 
 	readOnly bool
 	offset   int64
@@ -192,11 +198,32 @@ func (s *bucketFile) Close() error {
 		return err
 	}
 	s.writer = nil
+
+	if s.upload != nil {
+		if attrs := s.upload.Attrs(); attrs != nil {
+			// as the bucket's Attributes answers for the object
+			s.stored = &blob.Attributes{Size: attrs.Size, ModTime: attrs.Updated, CreateTime: attrs.Created, MD5: attrs.MD5}
+		}
+	}
+
 	if s.onClose != nil {
 		s.onClose()
 	}
 
 	return nil
+}
+
+// Stored implements pack.StoredFile with what Cloud Storage answered the
+// upload with; other buckets do not say.
+func (s *bucketFile) Stored() (os.FileInfo, []byte, bool) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	if s.stored == nil {
+		return nil, nil, false
+	}
+
+	return &bucketFileInfo{attrs: s.stored, key: s.key}, s.stored.MD5, true
 }
 
 func (s *bucketFile) Write(buf []byte) (int, error) {
@@ -289,23 +316,34 @@ func (c *BucketStore) openFile(key string) (pack.File, error) {
 }
 
 func (c *BucketStore) newWriteFile(key string) (pack.File, error) {
-	writer, err := c.bucket.NewWriter(context.Background(), key, nil)
-	if err != nil {
-		c.count(OpPut, 0)
-
-		return nil, err
-	}
-
 	file := &bucketFile{
-		writer: writer,
-		store:  c,
-		key:    key,
+		store: c,
+		key:   key,
 		onClose: func() {
 			c.openFilesMtx.Lock()
 			delete(c.openFiles, key)
 			c.openFilesMtx.Unlock()
 		},
 	}
+
+	writer, err := c.bucket.NewWriter(context.Background(), key, &blob.WriterOptions{
+		// runs under the file's lock, from the Write or Close that starts the upload
+		BeforeWrite: func(as func(any) bool) error {
+			var upload *gcs.Writer
+			if as(&upload) {
+				file.upload = upload
+			}
+
+			return nil
+		},
+	})
+	if err != nil {
+		c.count(OpPut, 0)
+
+		return nil, err
+	}
+
+	file.writer = writer
 
 	c.openFilesMtx.Lock()
 	c.openFiles[key] = file

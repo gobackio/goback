@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,16 +90,19 @@ func (c *indexCache) Create(name string) (File, error) {
 		return file, nil
 	}
 
-	return &teeFile{File: file, copied: copied, path: path}, nil
+	return &teeFile{File: file, copied: copied, path: path, cached: c.path(name)}, nil
 }
 
 // teeFile writes a copy of a file to the cache beside the storage, and
-// keeps it once the storage took the whole file.
+// keeps it once the storage took the whole file: as the cached file when
+// the storage said when it stored it, else to be stamped on first read.
 type teeFile struct {
 	File
-	copied *os.File
-	path   string
-	failed bool
+	copied  *os.File
+	path    string
+	cached  string
+	written int64
+	failed  bool
 }
 
 func (t *teeFile) Write(p []byte) (int, error) {
@@ -106,6 +110,7 @@ func (t *teeFile) Write(p []byte) (int, error) {
 	if !t.failed {
 		_, copyErr := t.copied.Write(p[:n])
 		t.failed = copyErr != nil
+		t.written += int64(n)
 	}
 
 	return n, err
@@ -115,11 +120,29 @@ func (t *teeFile) Close() error {
 	err := t.File.Close()
 
 	copyErr := t.copied.Close()
-	if err != nil || copyErr != nil || t.failed || os.Rename(t.copied.Name(), t.path) != nil {
+	if err != nil || copyErr != nil || t.failed {
+		_ = os.Remove(t.copied.Name())
+		return err
+	}
+
+	target := t.path
+	if info, _, ok := t.Stored(); ok && info.Size() == t.written {
+		modified := info.ModTime().Truncate(time.Microsecond)
+		if os.Chtimes(t.copied.Name(), modified, modified) == nil {
+			target = t.cached
+		}
+	}
+
+	if os.Rename(t.copied.Name(), target) != nil {
 		_ = os.Remove(t.copied.Name())
 	}
 
-	return err
+	return nil
+}
+
+// Stored implements StoredFile when the storage's file does.
+func (t *teeFile) Stored() (fs.FileInfo, []byte, bool) {
+	return storedInfo(t.File)
 }
 
 // keep copies src under the cache and closes it, from what this process

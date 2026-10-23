@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
+	"io/fs"
 	"path"
 	"sort"
 	"strings"
@@ -25,6 +26,10 @@ import (
 // every ranged read a get, a closed writer a put.
 type requestCounting struct {
 	*memView
+
+	// reports has a closed writer tell what it stored, as Cloud Storage
+	// answers an upload
+	reports bool
 
 	mtx    sync.Mutex
 	counts map[string]int
@@ -141,6 +146,7 @@ type countedFile struct {
 	storage   *requestCounting
 	name      string
 	writer    bool
+	closed    bool
 	streaming bool
 }
 
@@ -168,9 +174,27 @@ func (f *countedFile) ReadAt(p []byte, off int64) (int, error) {
 func (f *countedFile) Close() error {
 	if f.writer {
 		f.storage.count("put", f.name)
+		f.closed = true
 	}
 
 	return f.File.Close()
+}
+
+func (f *countedFile) Stored() (fs.FileInfo, []byte, bool) {
+	if !f.writer || !f.closed || !f.storage.reports {
+		return nil, nil, false
+	}
+
+	file, err := f.storage.memBucket.Open(f.name)
+	if err != nil {
+		return nil, nil, false
+	}
+
+	info, _ := file.Stat()
+	sum := md5.New()
+	_, _ = io.Copy(sum, file)
+
+	return info, sum.Sum(nil), true
 }
 
 func formatCounts(counts map[string]int) string {
@@ -193,54 +217,72 @@ func formatCounts(counts map[string]int) string {
 // small commit that deduplicates against the one before it costs a store
 // with a metadata and an index cache, as a server runs it.
 func TestACommitAsksTheBucketForLittleBeyondWhatItWrites(t *testing.T) {
-	bucket := newMemBucket()
-	storage := newRequestCounting(bucket)
+	for _, reports := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reports=%v", reports), func(t *testing.T) {
+			bucket := newMemBucket()
+			storage := newRequestCounting(bucket)
+			storage.reports = reports
 
-	cache, err := badger.New(t.TempDir())
-	require.NoError(t, err)
+			cache, err := badger.New(t.TempDir())
+			require.NoError(t, err)
 
-	store, err := NewPackStorage(
-		WithArchiveStorage(storage),
-		WithArchiveIndex(NewInMemoryIndex()),
-		WithMetadataCache(cache),
-		WithIndexCache(t.TempDir()),
-		WithCloseBeforeRead(true),
-	)
-	require.NoError(t, err)
-	require.NoError(t, store.Open())
-	t.Cleanup(func() { _ = store.Close() })
+			index := NewInMemoryIndex()
+			store, err := NewPackStorage(
+				WithArchiveStorage(storage),
+				WithArchiveIndex(index),
+				WithMetadataCache(cache),
+				WithIndexCache(t.TempDir()),
+				WithCloseBeforeRead(true),
+			)
+			require.NoError(t, err)
+			require.NoError(t, store.Open())
+			t.Cleanup(func() { _ = store.Close() })
 
-	previous := makeChain(makeTestData(t, 10))
-	commit := func(objects []*proto.Object) {
-		ctx, err := store.BeginSession(context.Background(), &backup.Session{AgentID: "agent", Set: "world"})
-		require.NoError(t, err)
+			previous := makeChain(makeTestData(t, 10))
+			commit := func(objects []*proto.Object) {
+				ctx, err := store.BeginSession(context.Background(), &backup.Session{AgentID: "agent", Set: "world"})
+				require.NoError(t, err)
 
-		for _, obj := range objects {
-			require.NoError(t, store.Put(ctx, obj))
-		}
-	}
+				for _, obj := range objects {
+					require.NoError(t, store.Put(ctx, obj))
+				}
+			}
 
-	commit(previous)
-	storage.take()
+			commit(previous)
+			storage.take()
 
-	// one new file beside the trees the previous commit stored
-	blob := makeTestData(t, 1)
-	file := makeGCFiles(blob)
-	root := treeOf(append(file, previous[len(previous)-3]))
-	commit(append(append(blob, file...), root, proto.NewObject(&proto.Commit{Tree: root.Ref(), Timestamp: 2, BackupSet: "world"})))
+			// one new file beside the trees the previous commit stored
+			blob := makeTestData(t, 1)
+			file := makeGCFiles(blob)
+			root := treeOf(append(file, previous[len(previous)-3]))
+			commit(append(append(blob, file...), root, proto.NewObject(&proto.Commit{Tree: root.Ref(), Timestamp: 2, BackupSet: "world"})))
 
-	// the session's archive, and one with the commit's un-tombstone
-	most := map[string]int{
-		"put archive": 2, "put .idx": 2, "put .begin": 1, "put .end": 1,
-		// what an upload kept, and when the storage stamped each index
-		"head archive": 2, "head .idx": 2,
-		// the seals at begin and at commit
-		"list .seal": 2,
-	}
+			// the session's archive, and one with the commit's un-tombstone
+			most := map[string]int{
+				"put archive": 2, "put .idx": 2, "put .begin": 1, "put .end": 1,
+				// the seals at begin and at commit
+				"list .seal": 2,
+			}
 
-	counts := storage.take()
-	for request, n := range counts {
-		require.LessOrEqualf(t, n, most[request], "%s in %s", request, formatCounts(counts))
+			if !reports {
+				// what an upload kept, and when the storage stamped each index
+				most["head archive"], most["head .idx"] = 2, 2
+			}
+
+			counts := storage.take()
+			for request, n := range counts {
+				require.LessOrEqualf(t, n, most[request], "%s in %s", request, formatCounts(counts))
+			}
+
+			for name, obj := range bucket.files {
+				if archive, ok := strings.CutSuffix(name, IndexExt); ok {
+					info, known, err := index.LookupArchive(archive)
+					require.NoError(t, err)
+					require.True(t, known)
+					require.True(t, obj.created.Equal(info.Created), "an archive is versioned by when the bucket stored its index")
+				}
+			}
+		})
 	}
 }
 
