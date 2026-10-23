@@ -518,7 +518,7 @@ func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.File
 		return err
 	}
 
-	if _, err := tmp.WriteAt(buf, 0); err != nil {
+	if err := writeSparse(tmp, reader, buf); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -528,6 +528,28 @@ func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.File
 	}
 
 	r.recordWhole(path, reader, ref)
+
+	return nil
+}
+
+// writeSparse writes buf into tmp, leaving a hole for each part that is
+// all zeroes when tmp is empty.
+func writeSparse(tmp RandomFile, reader *fileReader, buf []byte) error {
+	if info, err := tmp.Stat(); err != nil || info.Size() > 0 || len(reader.parts) == 0 || reader.parts[0].Ref == nil {
+		_, err := tmp.WriteAt(buf, 0)
+		return err
+	}
+
+	for _, part := range reader.parts {
+		data := buf[part.Offset : part.Offset+part.Length]
+		if allZero(data) {
+			continue
+		}
+
+		if _, err := tmp.WriteAt(data, int64(part.Offset)); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

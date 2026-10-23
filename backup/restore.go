@@ -449,11 +449,14 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 	}
 
 	held := make([]bool, len(reader.parts))
+	empty := false
+
 	if info, err := tmp.Stat(); err == nil {
 		held = r.verifyParts(tmp, info.Size(), reader)
+		empty = info.Size() == 0
 	}
 
-	dst := r.target(tmp, partial)
+	dst := r.target(tmp, partial, empty)
 
 	missing, err := r.assemble(ctx, dst, source, reader, matched, held, local, ref)
 	if err == nil {
@@ -1195,10 +1198,13 @@ func (r *Restorer) writePart(ctx context.Context, dst target, reader *fileReader
 
 // target is a file a restore assembles. When file is set, every part that
 // lands in it is recorded, so the rest of the restore copies the part from
-// there rather than fetch it again.
+// there rather than fetch it again. A target that started out empty is
+// left a hole where a part is all zeroes, which settle's truncate to the
+// file's size reads back as zeroes.
 type target struct {
 	io.WriterAt
-	file *seedFile
+	file  *seedFile
+	empty bool
 }
 
 // recording reports whether the restore records where it writes parts:
@@ -1207,16 +1213,21 @@ func (r *Restorer) recording() bool {
 	return !r.DryRun && isLocalWrite(r.fs())
 }
 
-func (r *Restorer) target(w io.WriterAt, partial string) target {
+func (r *Restorer) target(w io.WriterAt, partial string, empty bool) target {
 	if !r.recording() {
-		return target{WriterAt: w}
+		return target{WriterAt: w, empty: empty}
 	}
 
-	return target{WriterAt: w, file: r.parts.restoring(partial)}
+	return target{WriterAt: w, file: r.parts.restoring(partial), empty: empty}
 }
 
 // put writes data, the content of part i, at the part's offset.
 func (r *Restorer) put(dst target, reader *fileReader, i int, data []byte) error {
+	if dst.empty && allZero(data) {
+		r.record(dst, reader, i)
+		return nil
+	}
+
 	if _, err := dst.WriteAt(data, int64(reader.parts[i].Offset)); err != nil {
 		return err
 	}
@@ -1262,4 +1273,19 @@ func (r *Restorer) guess(rel string, stat *proto.FileInfo) {
 	if !r.DryRun {
 		r.parts.guess(rel, stat)
 	}
+}
+
+var zeroes = make([]byte, 64<<10)
+
+func allZero(data []byte) bool {
+	for len(data) > 0 {
+		n := min(len(data), len(zeroes))
+		if !bytes.Equal(data[:n], zeroes[:n]) {
+			return false
+		}
+
+		data = data[n:]
+	}
+
+	return true
 }
