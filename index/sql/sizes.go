@@ -48,10 +48,9 @@ func (x *Index) MeasureSets(ctx context.Context) ([]index.SetInfo, error) {
 			continue
 		}
 
-		var latest, kept int64
-		for _, c := range live {
-			latest = deref(c.LogicalSize)
-			kept += latest
+		var latest int64
+		if len(live) > 0 {
+			latest = deref(live[len(live)-1].LogicalSize)
 		}
 
 		unique, err := x.uniqueSize(ctx, row.ID, live)
@@ -59,7 +58,7 @@ func (x *Index) MeasureSets(ctx context.Context) ([]index.SetInfo, error) {
 			return measured, err
 		}
 
-		updated, err := x.client.Set.UpdateOneID(row.ID).SetLogicalSize(latest).SetKeptLogicalSize(kept).SetUniqueSize(unique).
+		updated, err := x.client.Set.UpdateOneID(row.ID).SetLogicalSize(latest).SetUniqueSize(unique).
 			SetSizesDigest(digest).Save(ctx)
 		if ent.IsNotFound(err) {
 			continue

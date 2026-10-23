@@ -381,7 +381,6 @@ func TestLogicalSizeIsKnownBeforeMaintenanceRuns(t *testing.T) {
 	sets, err := f.x.ListSets(f.ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 10, sets[0].LogicalSize)
-	require.EqualValues(t, 18, sets[0].KeptLogicalSize)
 }
 
 func TestLogicalSizeLeavesOutWhatHoldsNoContent(t *testing.T) {
@@ -425,7 +424,6 @@ func TestUniqueSizeCountsEachFileVersionOnce(t *testing.T) {
 	sets, err = f.x.ListSets(f.ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 7+4, sets[0].UniqueSize, "a version only a tombstoned commit held is gone")
-	require.EqualValues(t, 7+4+4, sets[0].KeptLogicalSize)
 }
 
 func TestUniqueSizeLeavesOutVersionsOnlyARetiringCommitHolds(t *testing.T) {
@@ -444,7 +442,6 @@ func TestUniqueSizeLeavesOutVersionsOnlyARetiringCommitHolds(t *testing.T) {
 	sets, err := f.x.ListSets(f.ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 7, sets[0].UniqueSize, "the version only the retiring commit holds is left out")
-	require.LessOrEqual(t, sets[0].UniqueSize, sets[0].KeptLogicalSize)
 }
 
 func TestListingReadsTheSizesMeasureSetsStored(t *testing.T) {
@@ -475,7 +472,6 @@ func TestListingReadsTheSizesMeasureSetsStored(t *testing.T) {
 	set, err = f.x.GetSet(f.ctx, "world")
 	require.NoError(t, err)
 	require.EqualValues(t, 7, set.LogicalSize)
-	require.EqualValues(t, 5+7, set.KeptLogicalSize)
 	require.EqualValues(t, 5+7, set.UniqueSize)
 }
 

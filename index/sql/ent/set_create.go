@@ -185,20 +185,6 @@ func (_c *SetCreate) SetNillableLogicalSize(v *int64) *SetCreate {
 	return _c
 }
 
-// SetKeptLogicalSize sets the "kept_logical_size" field.
-func (_c *SetCreate) SetKeptLogicalSize(v int64) *SetCreate {
-	_c.mutation.SetKeptLogicalSize(v)
-	return _c
-}
-
-// SetNillableKeptLogicalSize sets the "kept_logical_size" field if the given value is not nil.
-func (_c *SetCreate) SetNillableKeptLogicalSize(v *int64) *SetCreate {
-	if v != nil {
-		_c.SetKeptLogicalSize(*v)
-	}
-	return _c
-}
-
 // SetUniqueSize sets the "unique_size" field.
 func (_c *SetCreate) SetUniqueSize(v int64) *SetCreate {
 	_c.mutation.SetUniqueSize(v)
@@ -440,10 +426,6 @@ func (_c *SetCreate) createSpec() (*Set, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.LogicalSize(); ok {
 		_spec.SetField(set.FieldLogicalSize, field.TypeInt64, value)
 		_node.LogicalSize = &value
-	}
-	if value, ok := _c.mutation.KeptLogicalSize(); ok {
-		_spec.SetField(set.FieldKeptLogicalSize, field.TypeInt64, value)
-		_node.KeptLogicalSize = &value
 	}
 	if value, ok := _c.mutation.UniqueSize(); ok {
 		_spec.SetField(set.FieldUniqueSize, field.TypeInt64, value)
@@ -788,30 +770,6 @@ func (u *SetUpsert) AddLogicalSize(v int64) *SetUpsert {
 // ClearLogicalSize clears the value of the "logical_size" field.
 func (u *SetUpsert) ClearLogicalSize() *SetUpsert {
 	u.SetNull(set.FieldLogicalSize)
-	return u
-}
-
-// SetKeptLogicalSize sets the "kept_logical_size" field.
-func (u *SetUpsert) SetKeptLogicalSize(v int64) *SetUpsert {
-	u.Set(set.FieldKeptLogicalSize, v)
-	return u
-}
-
-// UpdateKeptLogicalSize sets the "kept_logical_size" field to the value that was provided on create.
-func (u *SetUpsert) UpdateKeptLogicalSize() *SetUpsert {
-	u.SetExcluded(set.FieldKeptLogicalSize)
-	return u
-}
-
-// AddKeptLogicalSize adds v to the "kept_logical_size" field.
-func (u *SetUpsert) AddKeptLogicalSize(v int64) *SetUpsert {
-	u.Add(set.FieldKeptLogicalSize, v)
-	return u
-}
-
-// ClearKeptLogicalSize clears the value of the "kept_logical_size" field.
-func (u *SetUpsert) ClearKeptLogicalSize() *SetUpsert {
-	u.SetNull(set.FieldKeptLogicalSize)
 	return u
 }
 
@@ -1161,34 +1119,6 @@ func (u *SetUpsertOne) UpdateLogicalSize() *SetUpsertOne {
 func (u *SetUpsertOne) ClearLogicalSize() *SetUpsertOne {
 	return u.Update(func(s *SetUpsert) {
 		s.ClearLogicalSize()
-	})
-}
-
-// SetKeptLogicalSize sets the "kept_logical_size" field.
-func (u *SetUpsertOne) SetKeptLogicalSize(v int64) *SetUpsertOne {
-	return u.Update(func(s *SetUpsert) {
-		s.SetKeptLogicalSize(v)
-	})
-}
-
-// AddKeptLogicalSize adds v to the "kept_logical_size" field.
-func (u *SetUpsertOne) AddKeptLogicalSize(v int64) *SetUpsertOne {
-	return u.Update(func(s *SetUpsert) {
-		s.AddKeptLogicalSize(v)
-	})
-}
-
-// UpdateKeptLogicalSize sets the "kept_logical_size" field to the value that was provided on create.
-func (u *SetUpsertOne) UpdateKeptLogicalSize() *SetUpsertOne {
-	return u.Update(func(s *SetUpsert) {
-		s.UpdateKeptLogicalSize()
-	})
-}
-
-// ClearKeptLogicalSize clears the value of the "kept_logical_size" field.
-func (u *SetUpsertOne) ClearKeptLogicalSize() *SetUpsertOne {
-	return u.Update(func(s *SetUpsert) {
-		s.ClearKeptLogicalSize()
 	})
 }
 
@@ -1711,34 +1641,6 @@ func (u *SetUpsertBulk) UpdateLogicalSize() *SetUpsertBulk {
 func (u *SetUpsertBulk) ClearLogicalSize() *SetUpsertBulk {
 	return u.Update(func(s *SetUpsert) {
 		s.ClearLogicalSize()
-	})
-}
-
-// SetKeptLogicalSize sets the "kept_logical_size" field.
-func (u *SetUpsertBulk) SetKeptLogicalSize(v int64) *SetUpsertBulk {
-	return u.Update(func(s *SetUpsert) {
-		s.SetKeptLogicalSize(v)
-	})
-}
-
-// AddKeptLogicalSize adds v to the "kept_logical_size" field.
-func (u *SetUpsertBulk) AddKeptLogicalSize(v int64) *SetUpsertBulk {
-	return u.Update(func(s *SetUpsert) {
-		s.AddKeptLogicalSize(v)
-	})
-}
-
-// UpdateKeptLogicalSize sets the "kept_logical_size" field to the value that was provided on create.
-func (u *SetUpsertBulk) UpdateKeptLogicalSize() *SetUpsertBulk {
-	return u.Update(func(s *SetUpsert) {
-		s.UpdateKeptLogicalSize()
-	})
-}
-
-// ClearKeptLogicalSize clears the value of the "kept_logical_size" field.
-func (u *SetUpsertBulk) ClearKeptLogicalSize() *SetUpsertBulk {
-	return u.Update(func(s *SetUpsert) {
-		s.ClearKeptLogicalSize()
 	})
 }
 

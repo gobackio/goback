@@ -28,16 +28,15 @@ const (
 )
 
 // SetInfo is a set with, as the last measurement of its sets found them,
-// the size of its newest live commit and the sizes of all its live
-// commits added up, and, as of the last garbage collection, what its
-// objects take up in the store and the size of the distinct content they
-// carry before compression. A set never measured reports zero sizes.
+// the size of its newest live commit, and, as of the last garbage
+// collection, what its objects take up in the store and the size of the
+// distinct content they carry before compression. A set never measured
+// reports zero sizes.
 type SetInfo struct {
 	ID               int64
 	Name             string
 	State            string
 	LogicalSize      int64
-	KeptLogicalSize  int64
 	PhysicalSize     int64
 	DeduplicatedSize int64
 	// UniqueSize is the size of every distinct file version a live commit

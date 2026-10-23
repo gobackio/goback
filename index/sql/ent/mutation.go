@@ -7657,8 +7657,6 @@ type SetMutation struct {
 	adddeduplicated_alone_size *int64
 	logical_size               *int64
 	addlogical_size            *int64
-	kept_logical_size          *int64
-	addkept_logical_size       *int64
 	unique_size                *int64
 	addunique_size             *int64
 	sizes_digest               *[]byte
@@ -8433,76 +8431,6 @@ func (m *SetMutation) ResetLogicalSize() {
 	delete(m.clearedFields, set.FieldLogicalSize)
 }
 
-// SetKeptLogicalSize sets the "kept_logical_size" field.
-func (m *SetMutation) SetKeptLogicalSize(i int64) {
-	m.kept_logical_size = &i
-	m.addkept_logical_size = nil
-}
-
-// KeptLogicalSize returns the value of the "kept_logical_size" field in the mutation.
-func (m *SetMutation) KeptLogicalSize() (r int64, exists bool) {
-	v := m.kept_logical_size
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldKeptLogicalSize returns the old "kept_logical_size" field's value of the Set entity.
-// If the Set object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *SetMutation) OldKeptLogicalSize(ctx context.Context) (v *int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldKeptLogicalSize is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldKeptLogicalSize requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldKeptLogicalSize: %w", err)
-	}
-	return oldValue.KeptLogicalSize, nil
-}
-
-// AddKeptLogicalSize adds i to the "kept_logical_size" field.
-func (m *SetMutation) AddKeptLogicalSize(i int64) {
-	if m.addkept_logical_size != nil {
-		*m.addkept_logical_size += i
-	} else {
-		m.addkept_logical_size = &i
-	}
-}
-
-// AddedKeptLogicalSize returns the value that was added to the "kept_logical_size" field in this mutation.
-func (m *SetMutation) AddedKeptLogicalSize() (r int64, exists bool) {
-	v := m.addkept_logical_size
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ClearKeptLogicalSize clears the value of the "kept_logical_size" field.
-func (m *SetMutation) ClearKeptLogicalSize() {
-	m.kept_logical_size = nil
-	m.addkept_logical_size = nil
-	m.clearedFields[set.FieldKeptLogicalSize] = struct{}{}
-}
-
-// KeptLogicalSizeCleared returns if the "kept_logical_size" field was cleared in this mutation.
-func (m *SetMutation) KeptLogicalSizeCleared() bool {
-	_, ok := m.clearedFields[set.FieldKeptLogicalSize]
-	return ok
-}
-
-// ResetKeptLogicalSize resets all changes to the "kept_logical_size" field.
-func (m *SetMutation) ResetKeptLogicalSize() {
-	m.kept_logical_size = nil
-	m.addkept_logical_size = nil
-	delete(m.clearedFields, set.FieldKeptLogicalSize)
-}
-
 // SetUniqueSize sets the "unique_size" field.
 func (m *SetMutation) SetUniqueSize(i int64) {
 	m.unique_size = &i
@@ -8872,7 +8800,7 @@ func (m *SetMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SetMutation) Fields() []string {
-	fields := make([]string, 0, 15)
+	fields := make([]string, 0, 14)
 	if m.name != nil {
 		fields = append(fields, set.FieldName)
 	}
@@ -8908,9 +8836,6 @@ func (m *SetMutation) Fields() []string {
 	}
 	if m.logical_size != nil {
 		fields = append(fields, set.FieldLogicalSize)
-	}
-	if m.kept_logical_size != nil {
-		fields = append(fields, set.FieldKeptLogicalSize)
 	}
 	if m.unique_size != nil {
 		fields = append(fields, set.FieldUniqueSize)
@@ -8950,8 +8875,6 @@ func (m *SetMutation) Field(name string) (ent.Value, bool) {
 		return m.DeduplicatedAloneSize()
 	case set.FieldLogicalSize:
 		return m.LogicalSize()
-	case set.FieldKeptLogicalSize:
-		return m.KeptLogicalSize()
 	case set.FieldUniqueSize:
 		return m.UniqueSize()
 	case set.FieldSizesDigest:
@@ -8989,8 +8912,6 @@ func (m *SetMutation) OldField(ctx context.Context, name string) (ent.Value, err
 		return m.OldDeduplicatedAloneSize(ctx)
 	case set.FieldLogicalSize:
 		return m.OldLogicalSize(ctx)
-	case set.FieldKeptLogicalSize:
-		return m.OldKeptLogicalSize(ctx)
 	case set.FieldUniqueSize:
 		return m.OldUniqueSize(ctx)
 	case set.FieldSizesDigest:
@@ -9088,13 +9009,6 @@ func (m *SetMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetLogicalSize(v)
 		return nil
-	case set.FieldKeptLogicalSize:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetKeptLogicalSize(v)
-		return nil
 	case set.FieldUniqueSize:
 		v, ok := value.(int64)
 		if !ok {
@@ -9135,9 +9049,6 @@ func (m *SetMutation) AddedFields() []string {
 	if m.addlogical_size != nil {
 		fields = append(fields, set.FieldLogicalSize)
 	}
-	if m.addkept_logical_size != nil {
-		fields = append(fields, set.FieldKeptLogicalSize)
-	}
 	if m.addunique_size != nil {
 		fields = append(fields, set.FieldUniqueSize)
 	}
@@ -9161,8 +9072,6 @@ func (m *SetMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedDeduplicatedAloneSize()
 	case set.FieldLogicalSize:
 		return m.AddedLogicalSize()
-	case set.FieldKeptLogicalSize:
-		return m.AddedKeptLogicalSize()
 	case set.FieldUniqueSize:
 		return m.AddedUniqueSize()
 	}
@@ -9216,13 +9125,6 @@ func (m *SetMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddLogicalSize(v)
 		return nil
-	case set.FieldKeptLogicalSize:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddKeptLogicalSize(v)
-		return nil
 	case set.FieldUniqueSize:
 		v, ok := value.(int64)
 		if !ok {
@@ -9258,9 +9160,6 @@ func (m *SetMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(set.FieldLogicalSize) {
 		fields = append(fields, set.FieldLogicalSize)
-	}
-	if m.FieldCleared(set.FieldKeptLogicalSize) {
-		fields = append(fields, set.FieldKeptLogicalSize)
 	}
 	if m.FieldCleared(set.FieldUniqueSize) {
 		fields = append(fields, set.FieldUniqueSize)
@@ -9302,9 +9201,6 @@ func (m *SetMutation) ClearField(name string) error {
 		return nil
 	case set.FieldLogicalSize:
 		m.ClearLogicalSize()
-		return nil
-	case set.FieldKeptLogicalSize:
-		m.ClearKeptLogicalSize()
 		return nil
 	case set.FieldUniqueSize:
 		m.ClearUniqueSize()
@@ -9355,9 +9251,6 @@ func (m *SetMutation) ResetField(name string) error {
 		return nil
 	case set.FieldLogicalSize:
 		m.ResetLogicalSize()
-		return nil
-	case set.FieldKeptLogicalSize:
-		m.ResetKeptLogicalSize()
 		return nil
 	case set.FieldUniqueSize:
 		m.ResetUniqueSize()

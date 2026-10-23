@@ -283,33 +283,6 @@ func (_u *SetUpdate) ClearLogicalSize() *SetUpdate {
 	return _u
 }
 
-// SetKeptLogicalSize sets the "kept_logical_size" field.
-func (_u *SetUpdate) SetKeptLogicalSize(v int64) *SetUpdate {
-	_u.mutation.ResetKeptLogicalSize()
-	_u.mutation.SetKeptLogicalSize(v)
-	return _u
-}
-
-// SetNillableKeptLogicalSize sets the "kept_logical_size" field if the given value is not nil.
-func (_u *SetUpdate) SetNillableKeptLogicalSize(v *int64) *SetUpdate {
-	if v != nil {
-		_u.SetKeptLogicalSize(*v)
-	}
-	return _u
-}
-
-// AddKeptLogicalSize adds value to the "kept_logical_size" field.
-func (_u *SetUpdate) AddKeptLogicalSize(v int64) *SetUpdate {
-	_u.mutation.AddKeptLogicalSize(v)
-	return _u
-}
-
-// ClearKeptLogicalSize clears the value of the "kept_logical_size" field.
-func (_u *SetUpdate) ClearKeptLogicalSize() *SetUpdate {
-	_u.mutation.ClearKeptLogicalSize()
-	return _u
-}
-
 // SetUniqueSize sets the "unique_size" field.
 func (_u *SetUpdate) SetUniqueSize(v int64) *SetUpdate {
 	_u.mutation.ResetUniqueSize()
@@ -621,15 +594,6 @@ func (_u *SetUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.LogicalSizeCleared() {
 		_spec.ClearField(set.FieldLogicalSize, field.TypeInt64)
-	}
-	if value, ok := _u.mutation.KeptLogicalSize(); ok {
-		_spec.SetField(set.FieldKeptLogicalSize, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedKeptLogicalSize(); ok {
-		_spec.AddField(set.FieldKeptLogicalSize, field.TypeInt64, value)
-	}
-	if _u.mutation.KeptLogicalSizeCleared() {
-		_spec.ClearField(set.FieldKeptLogicalSize, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.UniqueSize(); ok {
 		_spec.SetField(set.FieldUniqueSize, field.TypeInt64, value)
@@ -1098,33 +1062,6 @@ func (_u *SetUpdateOne) ClearLogicalSize() *SetUpdateOne {
 	return _u
 }
 
-// SetKeptLogicalSize sets the "kept_logical_size" field.
-func (_u *SetUpdateOne) SetKeptLogicalSize(v int64) *SetUpdateOne {
-	_u.mutation.ResetKeptLogicalSize()
-	_u.mutation.SetKeptLogicalSize(v)
-	return _u
-}
-
-// SetNillableKeptLogicalSize sets the "kept_logical_size" field if the given value is not nil.
-func (_u *SetUpdateOne) SetNillableKeptLogicalSize(v *int64) *SetUpdateOne {
-	if v != nil {
-		_u.SetKeptLogicalSize(*v)
-	}
-	return _u
-}
-
-// AddKeptLogicalSize adds value to the "kept_logical_size" field.
-func (_u *SetUpdateOne) AddKeptLogicalSize(v int64) *SetUpdateOne {
-	_u.mutation.AddKeptLogicalSize(v)
-	return _u
-}
-
-// ClearKeptLogicalSize clears the value of the "kept_logical_size" field.
-func (_u *SetUpdateOne) ClearKeptLogicalSize() *SetUpdateOne {
-	_u.mutation.ClearKeptLogicalSize()
-	return _u
-}
-
 // SetUniqueSize sets the "unique_size" field.
 func (_u *SetUpdateOne) SetUniqueSize(v int64) *SetUpdateOne {
 	_u.mutation.ResetUniqueSize()
@@ -1466,15 +1403,6 @@ func (_u *SetUpdateOne) sqlSave(ctx context.Context) (_node *Set, err error) {
 	}
 	if _u.mutation.LogicalSizeCleared() {
 		_spec.ClearField(set.FieldLogicalSize, field.TypeInt64)
-	}
-	if value, ok := _u.mutation.KeptLogicalSize(); ok {
-		_spec.SetField(set.FieldKeptLogicalSize, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedKeptLogicalSize(); ok {
-		_spec.AddField(set.FieldKeptLogicalSize, field.TypeInt64, value)
-	}
-	if _u.mutation.KeptLogicalSizeCleared() {
-		_spec.ClearField(set.FieldKeptLogicalSize, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.UniqueSize(); ok {
 		_spec.SetField(set.FieldUniqueSize, field.TypeInt64, value)

@@ -38,8 +38,6 @@ const (
 	FieldDeduplicatedAloneSize = "deduplicated_alone_size"
 	// FieldLogicalSize holds the string denoting the logical_size field in the database.
 	FieldLogicalSize = "logical_size"
-	// FieldKeptLogicalSize holds the string denoting the kept_logical_size field in the database.
-	FieldKeptLogicalSize = "kept_logical_size"
 	// FieldUniqueSize holds the string denoting the unique_size field in the database.
 	FieldUniqueSize = "unique_size"
 	// FieldSizesDigest holds the string denoting the sizes_digest field in the database.
@@ -99,7 +97,6 @@ var Columns = []string{
 	FieldExclusiveSize,
 	FieldDeduplicatedAloneSize,
 	FieldLogicalSize,
-	FieldKeptLogicalSize,
 	FieldUniqueSize,
 	FieldSizesDigest,
 }
@@ -216,11 +213,6 @@ func ByDeduplicatedAloneSize(opts ...sql.OrderTermOption) OrderOption {
 // ByLogicalSize orders the results by the logical_size field.
 func ByLogicalSize(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldLogicalSize, opts...).ToFunc()
-}
-
-// ByKeptLogicalSize orders the results by the kept_logical_size field.
-func ByKeptLogicalSize(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKeptLogicalSize, opts...).ToFunc()
 }
 
 // ByUniqueSize orders the results by the unique_size field.

@@ -356,7 +356,6 @@ var (
 		{Name: "exclusive_size", Type: field.TypeInt64, Nullable: true},
 		{Name: "deduplicated_alone_size", Type: field.TypeInt64, Nullable: true},
 		{Name: "logical_size", Type: field.TypeInt64, Nullable: true},
-		{Name: "kept_logical_size", Type: field.TypeInt64, Nullable: true},
 		{Name: "unique_size", Type: field.TypeInt64, Nullable: true},
 		{Name: "sizes_digest", Type: field.TypeBytes, Nullable: true},
 	}

@@ -35,10 +35,9 @@ func (Set) Fields() []ent.Field {
 		field.Int64("exclusive_size").Optional().Nillable(),
 		field.Int64("deduplicated_alone_size").Optional().Nillable(),
 		// what the set's live commits held when last measured: the newest
-		// of them, all of them added up, and every distinct file version
-		// they hold; sizes_digest is the digest of those commits
+		// of them and every distinct file version they hold; sizes_digest
+		// is the digest of those commits
 		field.Int64("logical_size").Optional().Nillable(),
-		field.Int64("kept_logical_size").Optional().Nillable(),
 		field.Int64("unique_size").Optional().Nillable(),
 		field.Bytes("sizes_digest").Optional(),
 	}

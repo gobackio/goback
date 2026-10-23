@@ -40,8 +40,6 @@ type Set struct {
 	DeduplicatedAloneSize *int64 `json:"deduplicated_alone_size,omitempty"`
 	// LogicalSize holds the value of the "logical_size" field.
 	LogicalSize *int64 `json:"logical_size,omitempty"`
-	// KeptLogicalSize holds the value of the "kept_logical_size" field.
-	KeptLogicalSize *int64 `json:"kept_logical_size,omitempty"`
 	// UniqueSize holds the value of the "unique_size" field.
 	UniqueSize *int64 `json:"unique_size,omitempty"`
 	// SizesDigest holds the value of the "sizes_digest" field.
@@ -112,7 +110,7 @@ func (*Set) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case set.FieldRetentionPaused, set.FieldErase, set.FieldRescan:
 			values[i] = new(sql.NullBool)
-		case set.FieldID, set.FieldPhysicalSize, set.FieldDeduplicatedSize, set.FieldAloneSize, set.FieldExclusiveSize, set.FieldDeduplicatedAloneSize, set.FieldLogicalSize, set.FieldKeptLogicalSize, set.FieldUniqueSize:
+		case set.FieldID, set.FieldPhysicalSize, set.FieldDeduplicatedSize, set.FieldAloneSize, set.FieldExclusiveSize, set.FieldDeduplicatedAloneSize, set.FieldLogicalSize, set.FieldUniqueSize:
 			values[i] = new(sql.NullInt64)
 		case set.FieldName, set.FieldState, set.FieldRetentionPolicy:
 			values[i] = new(sql.NullString)
@@ -215,13 +213,6 @@ func (_m *Set) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.LogicalSize = new(int64)
 				*_m.LogicalSize = value.Int64
-			}
-		case set.FieldKeptLogicalSize:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field kept_logical_size", values[i])
-			} else if value.Valid {
-				_m.KeptLogicalSize = new(int64)
-				*_m.KeptLogicalSize = value.Int64
 			}
 		case set.FieldUniqueSize:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -339,11 +330,6 @@ func (_m *Set) String() string {
 	builder.WriteString(", ")
 	if v := _m.LogicalSize; v != nil {
 		builder.WriteString("logical_size=")
-		builder.WriteString(fmt.Sprintf("%v", *v))
-	}
-	builder.WriteString(", ")
-	if v := _m.KeptLogicalSize; v != nil {
-		builder.WriteString("kept_logical_size=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
