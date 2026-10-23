@@ -980,6 +980,49 @@ func TestWalkerRunsInASessionAndUploadsEachChunkOnce(t *testing.T) {
 	require.Equal(t, "test", sessions.began[0].Set)
 }
 
+// remoteSessions refuses to end a session under a context that is done,
+// as a call to a remote store does.
+type remoteSessions struct{ memSessions }
+
+func (r *remoteSessions) EndSession(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return r.memSessions.EndSession(ctx)
+}
+
+// cancellingIndex cancels the run when its commit arrives.
+type cancellingIndex struct {
+	*memIndex
+	cancel context.CancelFunc
+}
+
+func (c *cancellingIndex) Put(ctx context.Context, obj *proto.Object) error {
+	if obj.GetCommit() != nil {
+		c.cancel()
+		return ctx.Err()
+	}
+
+	return c.memIndex.Put(ctx, obj)
+}
+
+func TestACancelledWalkerStillEndsItsSession(t *testing.T) {
+	f := newWalkerFixture(t)
+	sessions := &remoteSessions{}
+	f.walker.Sessions = sessions
+
+	ctx, cancel := context.WithCancel(context.Background())
+	f.walker.Index = &cancellingIndex{memIndex: f.index, cancel: cancel}
+	f.write("a.txt", []byte("a"))
+
+	_, err := f.walker.Run(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+
+	require.Len(t, sessions.began, 1)
+	require.Equal(t, sessions.began, sessions.ended)
+}
+
 // losingIndex refuses the first commit with ErrSessionLost and ends its
 // session, as a store does when a collection took what the run reused, or
 // with missing, naming what is gone; it refuses anything later put in an

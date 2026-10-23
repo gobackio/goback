@@ -449,9 +449,17 @@ func (w *Walker) beginSession(ctx context.Context) (context.Context, error) {
 	return sctx, nil
 }
 
+// endSessionWait bounds how long ending a session may take once the run's
+// context is done.
+const endSessionWait = 10 * time.Second
+
 // endSession ends the session on ctx unless a commit or the store already
-// ended it.
+// ended it, also when the run was cancelled: a store keeps a session left
+// open until its lease runs out.
 func (w *Walker) endSession(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endSessionWait)
+	defer cancel()
+
 	if err := w.Sessions.EndSession(ctx); err != nil && !errors.Is(err, ErrNoSession) {
 		w.logger().Warn("ending the session failed", "err", err)
 	}
