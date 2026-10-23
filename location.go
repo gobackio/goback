@@ -81,6 +81,7 @@ func openDirectory(_ context.Context, u *url.URL, s Settings) (backup.ObjectStor
 			pack.WithArchiveIndex(x),
 			pack.WithOwned(x),
 			pack.WithMaxParallel(1),
+			pack.WithCloseBeforeRead(true),
 			pack.WithMaxSize(1024*1024*1024),
 			pack.WithSessionLease(10*time.Minute),
 			pack.WithCompaction(pack.CompactionConfig{MinimumCandidates: 100}),

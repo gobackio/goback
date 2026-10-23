@@ -165,3 +165,27 @@ func TestAStoreInFrontOfAnotherLeavesReferencesToIt(t *testing.T) {
 	_, err = backup.PutTree(ctx, front.Index, nodes, nil, nil)
 	require.NoError(t, err, "the store behind checks references when what the front holds gets there")
 }
+
+func TestAStoreInFrontOfAnotherReadsBackWhatARunKeptOfIt(t *testing.T) {
+	ctx := context.Background()
+
+	open := func(s goback.Settings) *goback.Repo {
+		repo, err := goback.Open(ctx, s)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = repo.Close() })
+		return repo
+	}
+
+	back := open(goback.Settings{Storage: t.TempDir(), Index: t.TempDir(), AgentID: "pc"})
+	front := open(goback.Settings{Storage: t.TempDir(), Index: t.TempDir(), AgentID: "pc", Behind: back.Index})
+
+	sctx, err := front.Store.(backup.SessionStore).BeginSession(ctx, &backup.Session{Set: "pc/files"})
+	require.NoError(t, err)
+
+	tree := proto.NewObject(&proto.Tree{})
+	require.NoError(t, front.Index.Put(sctx, tree), "a tree the run took from the store behind")
+
+	got, err := front.Index.Get(sctx, tree.Ref())
+	require.NoError(t, err, "the run reads it again while its archive is still being written")
+	require.True(t, got.Ref().Equal(tree.Ref()))
+}
