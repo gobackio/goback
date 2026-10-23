@@ -529,37 +529,25 @@ func (rw *rewrite) lookUp(ctx context.Context, chunk []*archive, workers int) ([
 // indexes holds the index of each input by name. It returns how many it
 // retired and what they took up.
 func (ps *PackStorage) retireRewritten(obsolete []*archive, indexes map[string]IndexFile) (int, uint64) {
-	marked := make([]bool, len(obsolete))
-	now := time.Now()
-
-	grp := new(errgroup.Group)
-	grp.SetLimit(fileWorkers)
-
-	// marked before the index forgets it, so no process loads it again
-	for i, archive := range obsolete {
-		grp.Go(func() error {
-			if err := ps.quarantineArchive(archive.name, now); err != nil {
-				ps.logger.Warn("retiring an obsolete archive failed", "archive", archive.name, "err", err)
-				return nil
-			}
-
-			marked[i] = true
-
-			return nil
-		})
+	if len(obsolete) == 0 {
+		return 0, 0
 	}
 
-	_ = grp.Wait()
+	names := make([]string, len(obsolete))
+	for i, archive := range obsolete {
+		names[i] = archive.name
+	}
 
-	var names []string
+	// stored before the index forgets them, so no process loads them again
+	if err := ps.quarantineArchives(names, time.Now()); err != nil {
+		ps.logger.Warn("retiring obsolete archives failed", "archives", len(names), "err", err)
+		return 0, 0
+	}
+
 	var retired []IndexFile
 	var size uint64
 
-	for i, archive := range obsolete {
-		if !marked[i] {
-			continue
-		}
-
+	for _, archive := range obsolete {
 		size += archive.size
 		ps.retireArchive(archive)
 
@@ -567,12 +555,7 @@ func (ps *PackStorage) retireRewritten(obsolete []*archive, indexes map[string]I
 			ps.logger.Warn("closing obsolete archive failed", "archive", archive.name, "err", e)
 		}
 
-		names = append(names, archive.name)
 		retired = append(retired, indexes[archive.name])
-	}
-
-	if len(names) == 0 {
-		return 0, 0
 	}
 
 	if err := ps.index.DeleteArchives(names); err != nil {
@@ -580,6 +563,9 @@ func (ps *PackStorage) retireRewritten(obsolete []*archive, indexes map[string]I
 	}
 
 	ps.forgetCached(context.Background(), retired)
+
+	grp := new(errgroup.Group)
+	grp.SetLimit(fileWorkers)
 
 	// a restore needs neither: the index file says the archive was
 	// committed

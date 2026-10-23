@@ -150,6 +150,11 @@ type PackStorage struct {
 	// again, whatever a stale index location says
 	retired map[string]bool
 
+	// retiredRead holds each retirement file the last listing found, as
+	// read, by name
+	retiredMtx  sync.Mutex
+	retiredRead map[string]retirement
+
 	sessionsMtx sync.Mutex
 	sessions    map[string]*writeSession
 

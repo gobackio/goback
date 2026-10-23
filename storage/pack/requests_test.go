@@ -340,6 +340,54 @@ func TestAColdOpenListsTheMarkResultsOnce(t *testing.T) {
 	}
 }
 
+// TestARewriteRetiresItsInputsWithOneWrite pins that the archives one
+// rewrite retires cost one write between them, however many there are.
+func TestARewriteRetiresItsInputsWithOneWrite(t *testing.T) {
+	bucket := newMemBucket()
+	storage := newRequestCounting(bucket)
+
+	store, err := NewPackStorage(
+		WithArchiveStorage(storage),
+		WithArchiveIndex(NewInMemoryIndex()),
+		WithCompaction(CompactionConfig{MinimumCandidates: 1}),
+	)
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	t.Cleanup(func() { _ = store.Close() })
+
+	objects := makeTestData(t, 40)
+	for i := 0; i < len(objects); i += 10 {
+		for _, object := range objects[i : i+10] {
+			require.NoError(t, store.Put(context.Background(), object))
+		}
+
+		require.NoError(t, store.Flush())
+	}
+
+	storage.take()
+
+	report := compact(t, context.Background(), store)
+	require.EqualValues(t, 4, report.Rewritten)
+
+	counts := storage.take()
+	require.Equal(t, 1, counts["put "+RetiredExt]+counts["put "+RetirementExt], formatCounts(counts))
+
+	other, err := NewPackStorage(WithArchiveStorage(bucket.view()), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, other.Open())
+	t.Cleanup(func() { _ = other.Close() })
+
+	names, _, err := other.archiveNames()
+	require.NoError(t, err)
+	require.Len(t, names, 1, "another process loads only the rewrite's output")
+
+	for _, object := range objects {
+		got, err := other.Get(context.Background(), object.Ref())
+		require.NoError(t, err)
+		require.Equal(t, object.Bytes(), got.Bytes())
+	}
+}
+
 // signedCounting is a counting storage that also signs ranges, as the
 // bucket under a server does; signing asks the bucket nothing.
 type signedCounting struct{ *requestCounting }

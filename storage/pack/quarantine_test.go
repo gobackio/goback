@@ -2,6 +2,7 @@ package pack
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -34,7 +35,7 @@ func TestARewriteKeepsWhatItRetiredUntilTheQuarantineEnds(t *testing.T) {
 	require.NotZero(t, second.ArchiveBytes)
 	requireStored(t, store, gone, false)
 
-	retired, err := store.markerIDs(RetiredExt)
+	retired, err := store.retiredArchives()
 	require.NoError(t, err)
 	require.NotEmpty(t, retired)
 
@@ -63,7 +64,7 @@ func TestARewriteKeepsWhatItRetiredUntilTheQuarantineEnds(t *testing.T) {
 		require.False(t, store.hasIndexFile(name))
 	}
 
-	left, err := store.markerIDs(RetiredExt)
+	left, err := store.retiredArchives()
 	require.NoError(t, err)
 	require.Empty(t, left)
 
@@ -85,7 +86,7 @@ func TestRestoringAQuarantinedArchiveBringsItsObjectsBack(t *testing.T) {
 	require.NoError(t, err)
 	requireStored(t, store, gone, false)
 
-	retired, err := store.markerIDs(RetiredExt)
+	retired, err := store.retiredArchives()
 	require.NoError(t, err)
 
 	for name := range retired {
@@ -203,4 +204,114 @@ func TestAPurgeThatCannotDeleteTheArchiveTriesAgainNextRun(t *testing.T) {
 	require.Equal(t, 1, purged)
 	require.NotContains(t, bucket.files, "old"+ArchiveSuffix)
 	require.NotContains(t, bucket.files, "old"+RetiredExt)
+}
+
+func storeRetirementAt(t *testing.T, bucket *memBucket, name string, r retirement, stored time.Time) {
+	t.Helper()
+
+	data, err := json.Marshal(r)
+	require.NoError(t, err)
+
+	bucket.files[name+RetirementExt] = memObject{data: data, created: stored}
+
+	for _, archive := range r.Archives {
+		bucket.files[archive+ArchiveSuffix] = memObject{data: []byte(archive), created: stored}
+		bucket.files[archive+IndexExt] = memObject{created: stored}
+	}
+}
+
+func TestAPurgeGoesByTheDayARetirementNamesAndNeverBeforeItWasFirstStored(t *testing.T) {
+	day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	due := day.Add(DefaultQuarantine + 24*time.Hour)
+
+	open := func() (*PackStorage, *memBucket) {
+		bucket := newMemBucket()
+		store, err := NewPackStorage(WithArchiveStorage(bucket.view()), WithArchiveIndex(NewInMemoryIndex()))
+		require.NoError(t, err)
+		require.NoError(t, store.Open())
+		t.Cleanup(func() { _ = store.Close() })
+
+		named := retirement{Day: day.Format(quarantineDay), Archives: []string{"same-day-1", "same-day-2"}}
+		storeRetirementAt(t, bucket, "same-day", named, day.Add(23*time.Hour+59*time.Minute))
+
+		later := retirement{Day: day.Format(quarantineDay), Archives: []string{"stored-later"}}
+		storeRetirementAt(t, bucket, "stored-later", later, day.Add(24*time.Hour+time.Minute))
+
+		bucket.files["live"+ArchiveSuffix] = memObject{data: make([]byte, 1000), created: day}
+
+		return store, bucket
+	}
+
+	store, _ := open()
+	retired, err := store.retiredBytes()
+	require.NoError(t, err)
+	require.Equal(t, uint64(len("same-day-1")+len("same-day-2")+len("stored-later")), retired)
+
+	for _, tc := range []struct {
+		now    time.Time
+		purged []string
+	}{
+		{now: due.Add(-time.Nanosecond)},
+		{now: due, purged: []string{"same-day-1", "same-day-2"}},
+		{now: due.Add(24 * time.Hour), purged: []string{"same-day-1", "same-day-2", "stored-later"}},
+	} {
+		store, bucket := open()
+
+		purged, err := store.PurgeQuarantine(DefaultQuarantine, tc.now)
+		require.NoError(t, err)
+		require.Equal(t, len(tc.purged), purged, "at %s", tc.now)
+
+		for _, name := range []string{"same-day-1", "same-day-2", "stored-later"} {
+			_, kept := bucket.files[name+ArchiveSuffix]
+			require.Equal(t, !slices.Contains(tc.purged, name), kept, "%s at %s", name, tc.now)
+		}
+
+		retired, err := store.retiredArchives()
+		require.NoError(t, err)
+		require.Len(t, retired, 3-len(tc.purged), "at %s", tc.now)
+	}
+
+	// what a restore leaves retired keeps the time it was first stored
+	store, bucket := open()
+	require.NoError(t, store.unretire("same-day-1"))
+	require.ErrorIs(t, store.unretire("same-day-1"), ErrNotQuarantined)
+
+	purged, err := store.PurgeQuarantine(DefaultQuarantine, due)
+	require.NoError(t, err)
+	require.Equal(t, 1, purged)
+	require.Contains(t, bucket.files, "same-day-1"+ArchiveSuffix)
+	require.NotContains(t, bucket.files, "same-day-2"+ArchiveSuffix)
+
+	names, _, err := store.archiveNames()
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"live", "same-day-1"}, names)
+}
+
+func TestAPurgeThatCannotDeleteARetiredArchiveTriesAgainNextRun(t *testing.T) {
+	day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	bucket := newMemBucket()
+	storage := &failingArchiveDeletes{memView: bucket.view(), failing: true}
+
+	store, err := NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	t.Cleanup(func() { _ = store.Close() })
+
+	storeRetirementAt(t, bucket, "old", retirement{Day: day.Format(quarantineDay), Archives: []string{"a", "b"}}, day)
+
+	due := day.Add(DefaultQuarantine + 24*time.Hour)
+
+	purged, err := store.PurgeQuarantine(DefaultQuarantine, due)
+	require.NoError(t, err)
+	require.Zero(t, purged)
+	require.Contains(t, bucket.files, "old"+RetirementExt, "the retirement stays for the next run")
+
+	storage.failing = false
+
+	purged, err = store.PurgeQuarantine(DefaultQuarantine, due)
+	require.NoError(t, err)
+	require.Equal(t, 2, purged)
+	require.NotContains(t, bucket.files, "a"+ArchiveSuffix)
+	require.NotContains(t, bucket.files, "b"+ArchiveSuffix)
+	require.NotContains(t, bucket.files, "old"+RetirementExt)
 }

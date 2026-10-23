@@ -3,6 +3,7 @@ package pack
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -240,14 +241,14 @@ func TestARewriteTrustsOnlyAReachableCopyOutsideItsGroup(t *testing.T) {
 	require.True(t, rw.elsewhere(at("unreachable", "reachable")))
 }
 
-// refusingMarker refuses to store the retirement marker of one archive.
-type refusingMarker struct {
+// refusingRetirement refuses to store retirements while refusing is set.
+type refusingRetirement struct {
 	*localArchiveStorage
-	refuse string
+	refusing bool
 }
 
-func (r *refusingMarker) CreateNew(name string, data []byte) error {
-	if name == r.refuse+RetiredExt {
+func (r *refusingRetirement) CreateNew(name string, data []byte) error {
+	if r.refusing && strings.HasSuffix(name, RetirementExt) {
 		return errors.New("refused")
 	}
 
@@ -279,61 +280,69 @@ func (b *batchObserved) ArchivesDeleted(names []string) {
 	b.batches = append(b.batches, names)
 }
 
-func TestARewriteRetiresItsInputsTogetherLeavingOutOneWhoseMarkerFailed(t *testing.T) {
-	storage := &refusingMarker{localArchiveStorage: newLocal(t.TempDir())}
-	index := &deletingIndex{InMemoryIndex: NewInMemoryIndex()}
-	seen := &batchObserved{observed: *newObserved()}
+func TestARewriteRetiresItsInputsTogetherOrNotAtAll(t *testing.T) {
+	for _, refusing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("refusing=%v", refusing), func(t *testing.T) {
+			storage := &refusingRetirement{localArchiveStorage: newLocal(t.TempDir())}
+			index := &deletingIndex{InMemoryIndex: NewInMemoryIndex()}
+			seen := &batchObserved{observed: *newObserved()}
 
-	store, err := NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(index), WithMaxSize(64<<20),
-		WithArchiveObserver(seen), WithCompaction(CompactionConfig{MinimumCandidates: 1}))
-	require.NoError(t, err)
-	require.NoError(t, store.Open())
-	defer store.Close()
+			store, err := NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(index), WithMaxSize(64<<20),
+				WithArchiveObserver(seen), WithCompaction(CompactionConfig{MinimumCandidates: 1}))
+			require.NoError(t, err)
+			require.NoError(t, store.Open())
+			defer store.Close()
 
-	objects := makeTestData(t, 40)
-	for i := 0; i < len(objects); i += 10 {
-		for _, object := range objects[i : i+10] {
-			require.NoError(t, store.Put(context.Background(), object))
-		}
+			objects := makeTestData(t, 40)
+			for i := 0; i < len(objects); i += 10 {
+				for _, object := range objects[i : i+10] {
+					require.NoError(t, store.Put(context.Background(), object))
+				}
 
-		require.NoError(t, store.Flush())
-	}
+				require.NoError(t, store.Flush())
+			}
 
-	var inputs []string
-	for _, a := range store.archives {
-		inputs = append(inputs, a.name)
-	}
-	require.Len(t, inputs, 4)
+			var inputs []string
+			for _, a := range store.archives {
+				inputs = append(inputs, a.name)
+			}
+			require.Len(t, inputs, 4)
 
-	storage.refuse = inputs[0]
-	compact(t, context.Background(), store)
+			storage.refusing = refusing
+			compact(t, context.Background(), store)
 
-	_, kept, err := index.LookupArchive(inputs[0])
-	require.NoError(t, err)
-	require.True(t, kept, "the archive whose marker failed keeps its rows")
+			retired, err := store.retiredArchives()
+			require.NoError(t, err)
 
-	for _, name := range inputs[1:] {
-		_, found, err := index.LookupArchive(name)
-		require.NoError(t, err)
-		require.False(t, found, "%s is forgotten", name)
+			for _, name := range inputs {
+				_, found, err := index.LookupArchive(name)
+				require.NoError(t, err)
+				require.Equal(t, refusing, found, "%s keeps its rows only when its retirement failed", name)
+				require.Equal(t, !refusing, retired[name], "%s is quarantined", name)
 
-		marker, err := storage.Open(name + RetiredExt)
-		require.NoError(t, err, "%s is quarantined", name)
-		require.NoError(t, marker.Close())
+				if !refusing {
+					_, err = storage.Open(name + CommittedExt)
+					require.True(t, notExist(err), "%s lost its committed marker", name)
+				}
+			}
 
-		_, err = storage.Open(name + CommittedExt)
-		require.True(t, notExist(err), "%s lost its committed marker", name)
-	}
+			require.Empty(t, seen.deleted, "a batch observer hears no single deletions")
 
-	require.EqualValues(t, 1, index.calls.Load(), "the index forgets the chunk's inputs at once")
-	require.Empty(t, seen.deleted, "a batch observer hears no single deletions")
-	require.Len(t, seen.batches, 1)
-	require.ElementsMatch(t, inputs[1:], seen.batches[0])
+			if refusing {
+				require.Zero(t, index.calls.Load())
+				require.Empty(t, seen.batches)
+			} else {
+				require.EqualValues(t, 1, index.calls.Load(), "the index forgets the chunk's inputs at once")
+				require.Len(t, seen.batches, 1)
+				require.ElementsMatch(t, inputs, seen.batches[0])
+			}
 
-	for _, object := range objects {
-		got, err := store.Get(context.Background(), object.Ref())
-		require.NoError(t, err)
-		require.Equal(t, object.Bytes(), got.Bytes())
+			for _, object := range objects {
+				got, err := store.Get(context.Background(), object.Ref())
+				require.NoError(t, err)
+				require.Equal(t, object.Bytes(), got.Bytes())
+			}
+		})
 	}
 }
 

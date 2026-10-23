@@ -1,21 +1,38 @@
 package pack
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 )
 
-// RetiredExt marks an archive a rewrite retired: <archive>.retired names
-// the day it was retired. The store no longer loads the archive, a
-// collection deletes it once the quarantine period has passed, and
+// RetiredExt marks one retired archive: <archive>.retired names the day
+// it was retired. The store no longer loads the archive, a collection
+// deletes it once the quarantine period has passed, and
 // RestoreQuarantined puts it back until then.
 const RetiredExt = ".retired"
+
+// RetirementExt names what one rewrite retired: <id>.retirement lists the
+// archives and the day they were retired, each retired as a RetiredExt
+// marker of its own would have it.
+const RetirementExt = ".retirement"
+
+type retirement struct {
+	Day string `json:"day"`
+	// Stored is when the storage stored the retirement this one was cut
+	// from, zero for one written by a rewrite
+	Stored   time.Time `json:"stored,omitzero"`
+	Archives []string  `json:"archives"`
+}
 
 const quarantineDay = "2006-01-02"
 
@@ -47,7 +64,7 @@ func (ps *PackStorage) archiveNames() ([]string, map[string]*ListedFile, error) 
 		}
 	}
 
-	retired, err := ps.markerIDs(RetiredExt)
+	retired, err := ps.retiredArchives()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -71,12 +88,159 @@ func (ps *PackStorage) archiveNames() ([]string, map[string]*ListedFile, error) 
 	return names, listed, nil
 }
 
-// quarantineArchive marks an archive retired, keeping its files for the
-// quarantine period.
-func (ps *PackStorage) quarantineArchive(name string, now time.Time) error {
-	err := ps.storage.CreateNew(name+RetiredExt, []byte(now.UTC().Format(quarantineDay)))
-	if err != nil && !errors.Is(err, ErrFileExists) {
-		return fmt.Errorf("retiring %s: %w", name, err)
+// retiredArchives returns the names of the retired archives, by their own
+// markers and by the retirements that list them.
+func (ps *PackStorage) retiredArchives() (map[string]bool, error) {
+	retired, err := ps.markerIDs(RetiredExt)
+	if err != nil {
+		return nil, err
+	}
+
+	retirements, err := ps.retirements()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, stored := range retirements {
+		for _, name := range stored.Archives {
+			retired[name] = true
+		}
+	}
+
+	return retired, nil
+}
+
+// storedRetirement is a retirement and the file it is stored in.
+type storedRetirement struct {
+	retirement
+	file ListedFile
+}
+
+// since is the earliest the storage stored the archives as retired.
+func (r storedRetirement) since() time.Time {
+	if r.Stored.IsZero() {
+		return r.file.Modified
+	}
+
+	return r.Stored
+}
+
+// retirements reads every retirement the storage holds. A retirement
+// never changes once written, so each is read once.
+func (ps *PackStorage) retirements() ([]storedRetirement, error) {
+	files, err := ListInfo(ps.storage, RetirementExt)
+	if err != nil {
+		return nil, err
+	}
+
+	read := make([]storedRetirement, len(files))
+	found := make([]bool, len(files))
+
+	grp := new(errgroup.Group)
+	grp.SetLimit(fileWorkers)
+
+	for i, file := range files {
+		grp.Go(func() error {
+			r, err := ps.readRetirement(file)
+			if notExist(err) {
+				return nil
+			}
+
+			read[i], found[i] = storedRetirement{retirement: r, file: file}, err == nil
+
+			return err
+		})
+	}
+
+	if err := grp.Wait(); err != nil {
+		return nil, err
+	}
+
+	kept := make(map[string]retirement, len(files))
+	stored := read[:0]
+
+	for i, r := range read {
+		if found[i] {
+			kept[r.file.Name] = r.retirement
+			stored = append(stored, r)
+		}
+	}
+
+	ps.retiredMtx.Lock()
+	ps.retiredRead = kept
+	ps.retiredMtx.Unlock()
+
+	return stored, nil
+}
+
+func (ps *PackStorage) readRetirement(file ListedFile) (retirement, error) {
+	ps.retiredMtx.Lock()
+	r, ok := ps.retiredRead[file.Name]
+	ps.retiredMtx.Unlock()
+
+	if ok {
+		return r, nil
+	}
+
+	opened, err := OpenListed(ps.storage, file)
+	if err != nil {
+		return retirement{}, err
+	}
+	defer opened.Close()
+
+	if err := json.NewDecoder(opened).Decode(&r); err != nil {
+		return retirement{}, fmt.Errorf("reading retirement %s: %w", file.Name, err)
+	}
+
+	return r, nil
+}
+
+// quarantineArchives retires the archives together, keeping their files
+// for the quarantine period.
+func (ps *PackStorage) quarantineArchives(names []string, now time.Time) error {
+	return ps.storeRetirement(retirement{Day: now.UTC().Format(quarantineDay), Archives: names})
+}
+
+func (ps *PackStorage) storeRetirement(r retirement) error {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return err
+	}
+
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+
+	if err := ps.storage.CreateNew(id.String()+RetirementExt, data); err != nil {
+		return fmt.Errorf("retiring %d archives: %w", len(r.Archives), err)
+	}
+
+	return nil
+}
+
+// cutRetirement takes the archives in out from a stored retirement. The
+// rest stay retired as before, under a retirement of their own.
+func (ps *PackStorage) cutRetirement(r storedRetirement, out map[string]bool) error {
+	rest := retirement{Day: r.Day, Stored: r.since()}
+	for _, name := range r.Archives {
+		if !out[name] {
+			rest.Archives = append(rest.Archives, name)
+		}
+	}
+
+	if len(rest.Archives) == len(r.Archives) {
+		return nil
+	}
+
+	if len(rest.Archives) > 0 {
+		if err := ps.storeRetirement(rest); err != nil {
+			return err
+		}
+	}
+
+	if err := ps.storage.Delete(r.file.Name); err != nil && !notExist(err) {
+		return err
 	}
 
 	return nil
@@ -137,9 +301,71 @@ func (ps *PackStorage) PurgeQuarantine(period time.Duration, now time.Time) (int
 		})
 	}
 
-	err = grp.Wait()
+	if err := grp.Wait(); err != nil {
+		return int(purged.Load()), err
+	}
 
-	return int(purged.Load()), err
+	n, err := ps.purgeRetirements(due)
+
+	return int(purged.Load()) + n, err
+}
+
+// purgeRetirements deletes the archives of every retirement due by both
+// the day it names and the day the storage stored it.
+func (ps *PackStorage) purgeRetirements(due func(day time.Time) bool) (int, error) {
+	retirements, err := ps.retirements()
+	if err != nil {
+		return 0, err
+	}
+
+	var purging []storedRetirement
+	archives := make(map[string]bool)
+
+	for _, r := range retirements {
+		day, err := time.Parse(quarantineDay, r.Day)
+		if err != nil {
+			ps.logger.Warn("reading when archives were retired failed", "retirement", r.file.Name, "err", err)
+			continue
+		}
+
+		if !due(day) || !due(dayOf(r.since())) {
+			continue
+		}
+
+		purging = append(purging, r)
+		for _, name := range r.Archives {
+			archives[name] = true
+		}
+	}
+
+	var mtx sync.Mutex
+	gone := make(map[string]bool, len(archives))
+
+	grp := new(errgroup.Group)
+	grp.SetLimit(fileWorkers)
+
+	for name := range archives {
+		grp.Go(func() error {
+			if ps.deleteArchiveFiles(name) {
+				mtx.Lock()
+				gone[name] = true
+				mtx.Unlock()
+			}
+
+			return nil
+		})
+	}
+
+	_ = grp.Wait()
+
+	// what is left is what brings a failed delete back next run
+	for _, r := range purging {
+		if err := ps.cutRetirement(r, gone); err != nil {
+			return len(gone), err
+		}
+	}
+
+	return len(gone), nil
 }
 
 func dayOf(t time.Time) time.Time {
@@ -150,7 +376,7 @@ func dayOf(t time.Time) time.Time {
 
 // retiredBytes sums the sizes of the retired archives still stored.
 func (ps *PackStorage) retiredBytes() (uint64, error) {
-	retired, err := ps.markerIDs(RetiredExt)
+	retired, err := ps.retiredArchives()
 	if err != nil {
 		return 0, err
 	}
@@ -199,7 +425,7 @@ func (ps *PackStorage) RestoreQuarantined(name string) error {
 
 	err := ps.storage.Delete(name + RetiredExt)
 	if notExist(err) {
-		return fmt.Errorf("%w: %s", ErrNotQuarantined, name)
+		err = ps.unretire(name)
 	}
 
 	if err != nil {
@@ -211,4 +437,32 @@ func (ps *PackStorage) RestoreQuarantined(name string) error {
 	ps.mtx.Unlock()
 
 	return ps.refreshArchives()
+}
+
+// unretire takes the archive out of every retirement that lists it.
+func (ps *PackStorage) unretire(name string) error {
+	retirements, err := ps.retirements()
+	if err != nil {
+		return err
+	}
+
+	listed := false
+
+	for _, r := range retirements {
+		if !slices.Contains(r.Archives, name) {
+			continue
+		}
+
+		listed = true
+
+		if err := ps.cutRetirement(r, map[string]bool{name: true}); err != nil {
+			return err
+		}
+	}
+
+	if !listed {
+		return fmt.Errorf("%w: %s", ErrNotQuarantined, name)
+	}
+
+	return nil
 }
