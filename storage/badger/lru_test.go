@@ -2,8 +2,13 @@ package badger
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/rand/v2"
+	"runtime"
+	"slices"
 	"testing"
 	"time"
 
@@ -184,7 +189,7 @@ func TestABoundedStoreStaysWithinCapacityUnderConcurrentUse(t *testing.T) {
 		stored++
 		return nil
 	}))
-	require.Equal(t, s.lru.order.Len(), stored)
+	require.Equal(t, s.lru.count, stored)
 }
 
 func TestASecondOpenOfAStoreFailsAsLocked(t *testing.T) {
@@ -208,9 +213,9 @@ func rewriteUses(t *testing.T, dir string, keepMark bool) {
 	require.NoError(t, err)
 
 	require.NoError(t, s.db.Update(func(txn *badger.Txn) error {
-		for el := s.lru.order.Front(); el != nil; el = el.Next() {
-			e := el.Value.(*lruEntry)
-			if err := txn.Set(usedKey([]byte(e.hash)), encodeUse(e.used, e.size)[:8]); err != nil {
+		for i := s.lru.head; i != none; i = s.lru.at(i).next {
+			e := s.lru.at(i)
+			if err := txn.Set(usedKey(e.hash[:]), encodeUse(e.used, e.size)[:8]); err != nil {
 				return err
 			}
 		}
@@ -258,6 +263,55 @@ func TestABoundedStoreLoadsWhatAnOlderStoreWrote(t *testing.T) {
 	}
 }
 
+// BenchmarkOpeningABoundedStoreOfAMillionObjects reports the heap the cache's
+// order of last use holds once loaded, per object, and what the open allocated.
+func BenchmarkOpeningABoundedStoreOfAMillionObjects(b *testing.B) {
+	const n = 1_000_000
+
+	dir := b.TempDir()
+	db, err := badger.Open(Options(dir).WithLogger(Logger))
+	require.NoError(b, err)
+
+	batch := db.NewWriteBatch()
+	val := make([]byte, 100)
+	for i := range n {
+		hash := sha256.Sum256(binary.BigEndian.AppendUint64(nil, uint64(i)))
+		key := objectKey(hash[:])
+		require.NoError(b, batch.Set(key, val))
+		require.NoError(b, batch.Set(usedKey(hash[:]), encodeUse(int64(i%5000)*1e9, int64(len(key)+len(val)))))
+	}
+	require.NoError(b, batch.Set([]byte(sizedKey), nil))
+	require.NoError(b, batch.Flush())
+	require.NoError(b, db.Close())
+
+	var live, allocated uint64
+
+	for b.Loop() {
+		var before, opened, dropped runtime.MemStats
+
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+
+		s, err := New(dir, WithCapacity(1<<40))
+		require.NoError(b, err)
+
+		runtime.GC()
+		runtime.ReadMemStats(&opened)
+
+		s.lru = nil
+		runtime.GC()
+		runtime.ReadMemStats(&dropped)
+		require.NoError(b, s.Close())
+
+		live = opened.HeapAlloc - dropped.HeapAlloc
+		allocated = opened.TotalAlloc - before.TotalAlloc
+	}
+
+	b.ReportMetric(float64(live)/n, "live-B/object")
+	b.ReportMetric(float64(live)/(1<<20), "live-MiB")
+	b.ReportMetric(float64(allocated)/(1<<20), "alloc-MiB/open")
+}
+
 func TestABoundedStoreCountsWhatItHeldUnbounded(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -279,4 +333,95 @@ func TestABoundedStoreCountsWhatItHeldUnbounded(t *testing.T) {
 	s = openBounded(t, dir, 4, c)
 	defer s.Close()
 	require.Equal(t, 4*one, s.lru.size)
+}
+
+// order lists the hashes s holds, most recently used first.
+func order(s *Store) []string {
+	var out []string
+	for i := s.lru.head; i != none; i = s.lru.at(i).next {
+		out = append(out, string(s.lru.at(i).hash[:]))
+	}
+
+	return out
+}
+
+func TestABoundedStoreKeepsTheOrderOfASimpleLRUThroughPutsReadsDeletesAndReopens(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	c := &clock{t: time.Unix(1_000_000, 0)}
+	rng := rand.New(rand.NewPCG(1, 2))
+
+	var objs []*proto.Object
+	for i := range 300 {
+		objs = append(objs, proto.NewObject(&proto.Blob{Data: []byte(fmt.Sprintf("object %05d", i))}))
+	}
+
+	const capacity = 100 * 64
+	open := func() *Store {
+		s, err := New(dir, WithCapacity(capacity))
+		require.NoError(t, err)
+		s.lru.now = c.now
+
+		return s
+	}
+	s := open()
+
+	var want []string
+	var most int
+	sizes := map[string]int64{}
+	front := func(hash string) {
+		want = slices.DeleteFunc(want, func(h string) bool { return h == hash })
+		want = slices.Insert(want, 0, hash)
+	}
+
+	for range 3000 {
+		c.advance(time.Second)
+		obj := objs[rng.IntN(len(objs))]
+		hash := string(obj.Ref().Hash)
+		held := slices.Contains(want, hash)
+
+		switch op := rng.IntN(100); {
+		case op < 50:
+			require.NoError(t, s.Put(ctx, obj))
+			if !held {
+				i, ok := s.lru.find(obj.Ref().Hash)
+				require.True(t, ok)
+				sizes[hash] = s.lru.at(i).size
+			}
+			front(hash)
+
+			var total int64
+			for _, h := range want {
+				total += sizes[h]
+			}
+			for total > capacity {
+				total -= sizes[want[len(want)-1]]
+				want = want[:len(want)-1]
+			}
+		case op < 80:
+			_, err := s.Get(ctx, obj.Ref())
+			if !held {
+				require.ErrorIs(t, err, backup.ErrNotFound)
+				continue
+			}
+			require.NoError(t, err)
+			front(hash)
+		case op < 98:
+			require.NoError(t, s.Delete(ctx, obj.Ref()))
+			want = slices.DeleteFunc(want, func(h string) bool { return h == hash })
+		default:
+			require.NoError(t, s.Close())
+			s = open()
+		}
+
+		require.Equal(t, want, order(s))
+		require.Equal(t, len(want), s.lru.count)
+		require.LessOrEqual(t, int(s.lru.allocated), most+1, "released entries are reused")
+		most = max(most, len(want))
+		for _, h := range want {
+			_, ok := s.lru.find([]byte(h))
+			require.True(t, ok)
+		}
+	}
+	require.NoError(t, s.Close())
 }
