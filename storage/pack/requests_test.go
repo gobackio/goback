@@ -286,6 +286,60 @@ func TestACommitAsksTheBucketForLittleBeyondWhatItWrites(t *testing.T) {
 	}
 }
 
+// TestAColdOpenListsTheMarkResultsOnce pins that opening a store reads the
+// mark result of each archive that has one and asks nothing of the others.
+func TestAColdOpenListsTheMarkResultsOnce(t *testing.T) {
+	ctx := context.Background()
+	bucket := newMemBucket()
+
+	store, err := NewPackStorage(WithArchiveStorage(bucket.view()), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	t.Cleanup(func() { _ = store.Close() })
+
+	chain := makeChain(makeTestData(t, 20))
+	for i := 0; i < len(chain); i += 5 {
+		for _, obj := range chain[i:min(i+5, len(chain))] {
+			require.NoError(t, store.Put(ctx, obj))
+		}
+
+		require.NoError(t, store.Flush())
+	}
+
+	_, err = store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+
+	for _, obj := range makeTestData(t, 3) {
+		require.NoError(t, store.Put(ctx, obj))
+		require.NoError(t, store.Flush())
+	}
+
+	marked := 0
+	for name := range bucket.files {
+		if strings.HasSuffix(name, GCExt) {
+			marked++
+		}
+	}
+
+	storage := newRequestCounting(bucket)
+	other, err := NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, other.Open())
+	t.Cleanup(func() { _ = other.Close() })
+
+	counts := storage.take()
+	require.Zero(t, counts["head .gc"], formatCounts(counts))
+	require.Equal(t, 1, counts["list .gc"], formatCounts(counts))
+	require.Equal(t, marked, counts["get .gc"], formatCounts(counts))
+
+	require.Greater(t, len(other.archives), marked, "some archives were never marked")
+
+	for _, a := range other.archives {
+		_, stored := bucket.files[a.name+GCExt]
+		require.Equal(t, stored, a.gcResult() != nil, a.name)
+	}
+}
+
 // signedCounting is a counting storage that also signs ranges, as the
 // bucket under a server does; signing asks the bucket nothing.
 type signedCounting struct{ *requestCounting }

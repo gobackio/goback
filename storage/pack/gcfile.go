@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
@@ -222,6 +223,11 @@ func notExist(err error) bool {
 // readGCFile loads the archive's mark result, nil when it has none.
 func readGCFile(storage ArchiveStorage, name string) (*gcFile, error) {
 	file, err := storage.Open(name + GCExt)
+
+	return readGCFrom(file, err)
+}
+
+func readGCFrom(file File, err error) (*gcFile, error) {
 	if err != nil {
 		if notExist(err) {
 			return nil, nil
@@ -237,6 +243,54 @@ func readGCFile(storage ArchiveStorage, name string) (*gcFile, error) {
 	}
 
 	return g, nil
+}
+
+// markListing is what one listing found of the mark results, by archive.
+type markListing map[string]ListedFile
+
+// listMarks lists the mark results the storage holds.
+func listMarks(storage ArchiveStorage) (markListing, error) {
+	var files []ListedFile
+
+	if lister, ok := storage.(InfoLister); ok {
+		listed, err := lister.ListInfo(GCExt)
+		if err != nil {
+			return nil, err
+		}
+
+		files = listed
+	} else {
+		names, err := storage.List(GCExt)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, name := range names {
+			files = append(files, ListedFile{Name: name})
+		}
+	}
+
+	marks := make(markListing, len(files))
+	for _, file := range files {
+		marks[strings.TrimSuffix(file.Name, GCExt)] = file
+	}
+
+	return marks, nil
+}
+
+// read loads the archive's mark result as the listing found it, nil when
+// it found none; a nil listing asks the storage.
+func (m markListing) read(storage ArchiveStorage, name string) (*gcFile, error) {
+	if m == nil {
+		return readGCFile(storage, name)
+	}
+
+	file, ok := m[name]
+	if !ok {
+		return nil, nil
+	}
+
+	return readGCFrom(OpenListed(storage, file))
 }
 
 func writeGCFile(storage ArchiveStorage, name string, g *gcFile) error {

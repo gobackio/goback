@@ -752,7 +752,7 @@ func (ps *PackStorage) archiveByName(name string) (*archive, error) {
 	}
 	ps.mtx.RUnlock()
 
-	return ps.openArchive(name, nil)
+	return ps.openArchive(name, nil, nil)
 }
 
 // retireArchive unloads an archive a rewrite replaced and keeps it from
@@ -1317,8 +1317,9 @@ func (ps *PackStorage) deleteArchiveFiles(name string) bool {
 // openArchive loads a finalized archive. One the index does not know is
 // indexed as its session's markers have it: committed, pending while the
 // session lives, or deleted once the session ended without committing.
-// One it cannot place yet is left alone and not loaded.
-func (ps *PackStorage) openArchive(name string, listed *ListedFile) (*archive, error) {
+// One it cannot place yet is left alone and not loaded. Its mark result
+// is read as marks lists it, or asked for when marks is nil.
+func (ps *PackStorage) openArchive(name string, listed *ListedFile, marks markListing) (*archive, error) {
 	info, known, err := ps.index.LookupArchive(name)
 	if err != nil {
 		return nil, err
@@ -1346,7 +1347,7 @@ func (ps *PackStorage) openArchive(name string, listed *ListedFile) (*archive, e
 		return nil, err
 	}
 
-	a.gc, err = readGCFile(ps.storage, name)
+	a.gc, err = marks.read(ps.storage, name)
 	if err != nil {
 		ps.logger.Warn("ignoring unreadable gc result", "archive", name, "err", err)
 	}
@@ -1509,6 +1510,11 @@ func (ps *PackStorage) Open() error {
 		return err
 	}
 
+	marks, err := listMarks(ps.storage)
+	if err != nil {
+		return errors.Wrap(err, "failed listing gc results")
+	}
+
 	sem := semaphore.NewWeighted(indexOpenerThreads)
 	group, ctx := errgroup.WithContext(context.Background())
 
@@ -1520,7 +1526,7 @@ func (ps *PackStorage) Open() error {
 		group.Go(func() error {
 			defer sem.Release(1)
 
-			_, err := ps.openArchive(name, listed[name])
+			_, err := ps.openArchive(name, listed[name], marks)
 
 			return err
 		})
@@ -1577,7 +1583,7 @@ func (ps *PackStorage) refreshArchives() error {
 				return nil
 			}
 
-			_, err = ps.openArchive(name, files[name])
+			_, err = ps.openArchive(name, files[name], nil)
 			if errors.Is(err, errArchiveRetired) {
 				return nil
 			}
