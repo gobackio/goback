@@ -28,8 +28,12 @@ func TestAPathIsBackedUpWhenEveryFilterKeepsItAndUnchangedDirectoriesAreTakenAsT
 		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 	}
 
+	// older than the first run's scan start, or the next run reads them
+	// again as racily clean
+	old := time.Now().Add(-time.Hour)
 	for _, name := range []string{"docs/a.txt", "docs/b.log", "cache/c.txt", "node_modules/d.js", "e.txt"} {
 		write(name, name)
+		require.NoError(t, os.Chtimes(filepath.Join(src, filepath.FromSlash(name)), old, old))
 	}
 
 	var mtx sync.Mutex
