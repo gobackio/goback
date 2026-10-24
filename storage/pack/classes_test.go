@@ -37,11 +37,11 @@ func TestASmallClassJoinsItsOwnersNextOlderOne(t *testing.T) {
 	set := Attribution{Group: 1, Set: 7}
 	other := Attribution{Group: 1, Set: 9}
 
-	today := c.id(outputClass{set, ageClass{spanDay, 300}})
-	week := c.id(outputClass{set, ageClass{spanWeek, 200}})
-	month := c.id(outputClass{set, ageClass{spanMonth, 100}})
-	year := c.id(outputClass{set, ageClass{spanYear, 0}})
-	alone := c.id(outputClass{other, ageClass{spanDay, 300}})
+	today := c.id(outputClass{Owner: set, Age: ageClass{spanDay, 300}})
+	week := c.id(outputClass{Owner: set, Age: ageClass{spanWeek, 200}})
+	month := c.id(outputClass{Owner: set, Age: ageClass{spanMonth, 100}})
+	year := c.id(outputClass{Owner: set, Age: ageClass{spanYear, 0}})
+	alone := c.id(outputClass{Owner: other, Age: ageClass{spanDay, 300}})
 
 	into := c.fold(map[int32]uint64{today: 10, week: 50, month: 200, year: 10, alone: 10}, 100)
 
@@ -169,17 +169,138 @@ func testSetsApart(t *testing.T, handoff bool) {
 		}
 
 		require.LessOrEqual(t, len(held), 1, "archive %s holds objects of %v", a.name, held)
+		requireOneKind(t, a)
 	}
 
 	requireStored(t, store, mine, true)
 	requireStored(t, store, yours, true)
 }
 
+// requireOneKind fails unless the archive holds blobs alone or no blob.
+func requireOneKind(t *testing.T, a *archive) {
+	t.Helper()
+
+	require.LessOrEqual(t, len(kindsIn(t, a)), 1, "archive %s holds blobs and other objects", a.name)
+}
+
+func kindsIn(t *testing.T, a *archive) map[bool]bool {
+	t.Helper()
+
+	idx, err := a.getIndex()
+	require.NoError(t, err)
+
+	kinds := make(map[bool]bool)
+	for _, rec := range idx {
+		kinds[isData(rec.Type)] = true
+	}
+
+	return kinds
+}
+
+// archivesOf names the archives the store holds.
+func archivesOf(store *PackStorage) map[string]bool {
+	store.mtx.RLock()
+	defer store.mtx.RUnlock()
+
+	names := make(map[string]bool)
+	for _, a := range store.archives {
+		names[a.name] = true
+	}
+
+	return names
+}
+
+// requireWrittenApart fails unless the store holds several archives
+// before does not name and each holds one kind of object.
+func requireWrittenApart(t *testing.T, store *PackStorage, before map[string]bool) {
+	t.Helper()
+
+	store.mtx.RLock()
+	defer store.mtx.RUnlock()
+
+	written := 0
+	for _, a := range store.archives {
+		if !before[a.name] {
+			requireOneKind(t, a)
+			written++
+		}
+	}
+
+	require.Greater(t, written, 1)
+}
+
+func requireSomeMixed(t *testing.T, store *PackStorage) {
+	t.Helper()
+
+	store.mtx.RLock()
+	defer store.mtx.RUnlock()
+
+	for _, a := range store.archives {
+		if len(kindsIn(t, a)) > 1 {
+			return
+		}
+	}
+
+	require.Fail(t, "no session wrote blobs and other objects together")
+}
+
+func TestCompactionWritesBlobsApartFromTheRest(t *testing.T) {
+	store := newTestStore(t, t.TempDir(), WithMaxSize(4<<20),
+		WithCompaction(CompactionConfig{Small: 1 << 20, MinimumCandidates: 1, Workers: 4}))
+	defer store.Close()
+
+	ctx := context.Background()
+
+	reachable, unreachable := makeGCTestData(t)
+	objects := append(append([]*proto.Object{}, reachable...), unreachable...)
+
+	for _, batch := range batchObjects(objects, 40) {
+		putAll(t, store, batch)
+	}
+
+	requireSomeMixed(t, store)
+	before := archivesOf(store)
+
+	report := compact(t, ctx, store)
+	require.Equal(t, len(before), report.Rewritten)
+	requireWrittenApart(t, store, before)
+
+	for _, object := range objects {
+		got, err := store.Get(ctx, object.Ref())
+		require.NoError(t, err)
+		require.Equal(t, object.Bytes(), got.Bytes())
+	}
+}
+
+func TestASweepWritesBlobsApartFromTheRest(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	defer store.Close()
+
+	ctx := context.Background()
+
+	reachable, unreachable := makeGCTestData(t)
+	putAll(t, store, append(append([]*proto.Object{}, reachable...), unreachable...))
+	requireSomeMixed(t, store)
+
+	_, err := store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+
+	before := archivesOf(store)
+
+	report, err := store.Collect(ctx, gcOptions(t, 48*time.Hour))
+	require.NoError(t, err)
+	require.Greater(t, report.Swept, 0)
+	requireWrittenApart(t, store, before)
+
+	requireStored(t, store, reachable, true)
+	requireStored(t, store, unreachable, false)
+}
+
 func TestAChunkFoldsTheClassesBySizesWithinIt(t *testing.T) {
 	c := newClasses(nil)
 	set := Attribution{Group: 1, Set: 7}
-	day := c.id(outputClass{set, ageClass{spanDay, 300}})
-	week := c.id(outputClass{set, ageClass{spanWeek, 200}})
+	day := c.id(outputClass{Owner: set, Age: ageClass{spanDay, 300}})
+	week := c.id(outputClass{Owner: set, Age: ageClass{spanWeek, 200}})
 
 	first, second := &archive{name: "first"}, &archive{name: "second"}
 	held := map[string]*classed{

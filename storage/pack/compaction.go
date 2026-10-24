@@ -91,8 +91,9 @@ func (r *CompactReport) Summary() string {
 
 // Compact merges the small committed archives into archives at the root
 // once they add up to a batch, or are more than MinimumCandidates, and
-// returns what it did when it is done. What it writes is too large to be
-// merged again.
+// returns what it did when it is done. It writes blobs and the other
+// objects into archives of their own, each too large to be merged again
+// unless the candidates held too little of its kind.
 func (ps *PackStorage) Compact(ctx context.Context) (*CompactReport, error) {
 	started := time.Now()
 
@@ -254,15 +255,19 @@ func (c CompactionConfig) batch() uint64 {
 }
 
 // workersFor is at most workers, and few enough that each writes at least
-// four times what counts as small out of chunk: an output that came out
+// four times what counts as small out of total: an output that came out
 // small would be merged again by the next Compact.
-func (c CompactionConfig) workersFor(chunk []*archive, workers int) int {
+func (c CompactionConfig) workersFor(total uint64, workers int) int {
+	return max(1, min(workers, int(total/(4*c.small()))))
+}
+
+func sizeOf(archives []*archive) uint64 {
 	var total uint64
-	for _, a := range chunk {
+	for _, a := range archives {
 		total += a.size
 	}
 
-	return max(1, min(workers, int(total/(4*c.small()))))
+	return total
 }
 
 // compactGroup rewrites the group's candidates, several at once. An object
@@ -273,7 +278,7 @@ func (ps *PackStorage) compactGroup(ctx context.Context, group *compactionGroup)
 	defer span.End()
 
 	rw := &rewrite{started: time.Now(), ps: ps, group: group, inGroup: make(map[string]bool, len(group.candidates)),
-		open: make(map[int64]*rewriteOutput)}
+		open: make(map[outputKey]*rewriteOutput)}
 	for _, candidate := range group.candidates {
 		rw.inGroup[candidate.name] = true
 	}
@@ -293,7 +298,7 @@ func (ps *PackStorage) compactGroup(ctx context.Context, group *compactionGroup)
 	span.SetAttributes(attribute.Int("candidates", len(group.candidates)), attribute.Int("workers", workers), attribute.Int("chunks", len(chunks)))
 
 	for n, chunk := range chunks {
-		if err := rw.chunk(ctx, chunk, ps.compaction.workersFor(chunk, workers)); err != nil {
+		if err := rw.chunk(ctx, chunk, ps.compaction.workersFor(sizeOf(chunk), workers)); err != nil {
 			span.RecordError(err)
 			return err
 		}
@@ -329,10 +334,21 @@ type rewrite struct {
 	// unmarked names the copied objects their input's last mark result
 	// left unreachable, with that result's generation and DeadSince
 	unmarked map[string]unmarkedIn
-	// open holds the outputs being written, by class, or by worker for
-	// what has none; class is the classes of the chunk being written
-	open  map[int64]*rewriteOutput
-	class func(candidate *archive, pos int) int32
+	// open holds the outputs being written; class is the classes of the
+	// chunk being written, and writers how many outputs of each kind, by
+	// whether it is data, its unclassed records share
+	open    map[outputKey]*rewriteOutput
+	class   func(candidate *archive, pos int) int32
+	writers map[bool]int
+}
+
+// outputKey names an open output: a class of the chunk, or, for a record
+// without one, the writer of its kind it is written by. Blobs and other
+// records never share an output.
+type outputKey struct {
+	class  int32
+	writer int
+	data   bool
 }
 
 // shares splits the chunk into at most workers runs of about the same size,
@@ -376,6 +392,18 @@ func (rw *rewrite) chunk(ctx context.Context, chunk []*archive, workers int) err
 	}
 
 	rw.written, rw.unmarked = make(map[string]bool), make(map[string]unmarkedIn)
+
+	kinds := make(map[bool]uint64)
+	for _, idx := range indexes {
+		for i := range idx {
+			kinds[isData(idx[i].Type)] += uint64(idx[i].Length)
+		}
+	}
+
+	rw.writers = make(map[bool]int)
+	for _, data := range []bool{false, true} {
+		rw.writers[data] = rw.ps.compaction.workersFor(kinds[data], workers)
+	}
 
 	rw.class = nil
 	if rw.group.classes != nil {
@@ -626,14 +654,16 @@ func (rw *rewrite) elsewhere(copies []IndexLocation) bool {
 	return false
 }
 
-// output is the open output the worker writes the record at pos of
-// candidate into.
-func (rw *rewrite) output(worker int, candidate *archive, pos int) *rewriteOutput {
-	key := -1 - int64(worker)
+// output is the open output the worker writes the record of type t at
+// pos of candidate into.
+func (rw *rewrite) output(worker int, candidate *archive, pos int, t uint32) *rewriteOutput {
+	key := outputKey{class: -1, data: isData(t)}
 	if rw.class != nil {
-		if class := rw.class(candidate, pos); class >= 0 {
-			key = int64(class)
-		}
+		key.class = rw.class(candidate, pos)
+	}
+
+	if key.class < 0 {
+		key.writer = worker % rw.writers[key.data]
 	}
 
 	rw.mtx.Lock()
@@ -652,7 +682,7 @@ func (rw *rewrite) output(worker int, candidate *archive, pos int) *rewriteOutpu
 func (rw *rewrite) finish(ctx context.Context, workers int) error {
 	rw.mtx.Lock()
 	open := rw.open
-	rw.open = make(map[int64]*rewriteOutput)
+	rw.open = make(map[outputKey]*rewriteOutput)
 	rw.mtx.Unlock()
 
 	grp, gctx := errgroup.WithContext(ctx)
@@ -680,7 +710,7 @@ func (rw *rewrite) abort() {
 		out.abort()
 	}
 
-	rw.open = make(map[int64]*rewriteOutput)
+	rw.open = make(map[outputKey]*rewriteOutput)
 }
 
 // candidate copies what survives of one candidate, whose bytes data
@@ -728,7 +758,7 @@ func (rw *rewrite) candidate(ctx context.Context, worker int, candidate *archive
 			return nil
 		}
 
-		out := rw.output(worker, candidate, pos)
+		out := rw.output(worker, candidate, pos, uint32(hdr.Type))
 		out.mtx.Lock()
 		defer out.mtx.Unlock()
 
@@ -833,7 +863,7 @@ func prefetch(ctx context.Context, inputs []*archive, held *semaphore.Weighted) 
 	return reads
 }
 
-// rewriteOutput is the root archive one class is written into.
+// rewriteOutput is the root archive one output key is written into.
 type rewriteOutput struct {
 	rw   *rewrite
 	mtx  sync.Mutex

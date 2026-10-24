@@ -3,6 +3,8 @@ package pack
 import (
 	"slices"
 	"time"
+
+	"github.com/gobackio/goback/proto"
 )
 
 // span is the length of the calendar period an age class covers.
@@ -58,13 +60,20 @@ func (c ageClass) newer(o ageClass) bool {
 	return c.Span < o.Span
 }
 
-// outputClass is what a rewrite writes into one output: the objects of
-// one owner stored in one period. A zero Set with a Group is what several
-// sets of that group share; a zero Attribution is what the mark
-// attributed to nobody.
+// outputClass is what a rewrite writes into one output: the blobs, or the
+// other objects, of one owner stored in one period. A zero Set with a
+// Group is what several sets of that group share; a zero Attribution is
+// what the mark attributed to nobody.
 type outputClass struct {
 	Owner Attribution `json:"owner"`
+	Data  bool        `json:"data,omitempty"`
 	Age   ageClass    `json:"age"`
+}
+
+// isData reports whether a record of type t goes into a data archive,
+// which holds blobs alone, rather than a metadata one.
+func isData(t uint32) bool {
+	return proto.ObjectType(t) == proto.ObjectType_BLOB
 }
 
 // classes numbers the output classes of a sweep.
@@ -94,15 +103,20 @@ func (c *classes) id(class outputClass) int32 {
 }
 
 // fold maps every class sizes holds to the one its objects are written
-// into. A class holding less than small joins its owner's next older one;
-// the oldest, if that leaves it small, joins the newer one it would have
-// followed.
+// into. A class holding less than small joins the next older one of its
+// owner and kind; the oldest, if that leaves it small, joins the newer one
+// it would have followed.
 func (c *classes) fold(sizes map[int32]uint64, small uint64) map[int32]int32 {
 	into := make(map[int32]int32, len(sizes))
 
-	byOwner := make(map[Attribution][]int32)
+	type ownerKind struct {
+		owner Attribution
+		data  bool
+	}
+
+	byOwner := make(map[ownerKind][]int32)
 	for id := range sizes {
-		owner := c.all[id].Owner
+		owner := ownerKind{c.all[id].Owner, c.all[id].Data}
 		byOwner[owner] = append(byOwner[owner], id)
 	}
 
@@ -240,7 +254,7 @@ func (r *gcRun) classify(live *liveRuns) error {
 		ga.classed = &classed{Class: make([]int32, ga.count), Bytes: make(map[int32]uint64)}
 
 		ga.each(func(pos int, rec *IndexRecord) {
-			id := r.classes.id(outputClass{ga.owners[pos], classOf(ga.a.version(*rec).Time, r.opts.Now)})
+			id := r.classes.id(outputClass{ga.owners[pos], isData(rec.Type), classOf(ga.a.version(*rec).Time, r.opts.Now)})
 			ga.classed.Class[pos] = id
 
 			if !r.droppable(ga, ga.next, pos, rec) {
