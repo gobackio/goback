@@ -262,12 +262,19 @@ func (s *SeedMap) restoring(partial string) *seedFile {
 	return &seedFile{path: partial, restored: true}
 }
 
-// moved records that file was renamed to path.
-func (s *SeedMap) moved(file *seedFile, path string) {
+// move renames file to path through rename, holding the map so that a
+// read which finds the old path gone finds the new one on its retry.
+func (s *SeedMap) move(file *seedFile, path string, rename func() error) error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
+	if err := rename(); err != nil {
+		return err
+	}
+
 	file.path = path
+
+	return nil
 }
 
 // wrote records that the file ref names was written whole.

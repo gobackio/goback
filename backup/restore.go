@@ -460,7 +460,7 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 
 	missing, err := r.assemble(ctx, dst, source, reader, matched, held, local, ref)
 	if err == nil {
-		err = r.settle(ctx, random, tmp, source, partial, path, stat, reader, missing)
+		err = r.settle(ctx, random, tmp, source, dst.file, partial, path, stat, reader, missing)
 	} else {
 		_ = tmp.Close()
 	}
@@ -469,7 +469,9 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 		return 0, errors.Wrapf(err, "restoring %s", path)
 	}
 
-	r.settled(dst, path, ref)
+	if dst.file != nil {
+		r.parts.wrote(ref)
+	}
 
 	if len(missing) > 0 {
 		r.reportHoles(path, reader, missing)
@@ -501,8 +503,9 @@ func openReaderAt(ctx context.Context, fsys RandomWriteFS, path string) (io.Read
 
 // settle cuts the assembled partial file to the file's size, rehashes it
 // when Verify is set, applies stat and renames it over path, closing tmp
-// and source, the destination it was read from, on the way.
-func (r *Restorer) settle(ctx context.Context, fsys RandomWriteFS, tmp RandomFile, source io.ReaderAt, partial, path string, stat *proto.FileInfo, reader *fileReader, missing []int) error {
+// and source, the destination it was read from, on the way. file, when
+// set, is where the restore recorded the partial's parts.
+func (r *Restorer) settle(ctx context.Context, fsys RandomWriteFS, tmp RandomFile, source io.ReaderAt, file *seedFile, partial, path string, stat *proto.FileInfo, reader *fileReader, missing []int) error {
 	// the partial may be longer, from another version, or end in a hole
 	err := tmp.Truncate(reader.size())
 
@@ -536,7 +539,12 @@ func (r *Restorer) settle(ctx context.Context, fsys RandomWriteFS, tmp RandomFil
 	}
 
 	if err == nil {
-		err = fsys.Rename(ctx, partial, path)
+		rename := func() error { return fsys.Rename(ctx, partial, path) }
+		if file != nil {
+			err = r.parts.move(file, path, rename)
+		} else {
+			err = rename()
+		}
 	}
 
 	if err == nil {
@@ -1241,14 +1249,6 @@ func (r *Restorer) put(dst target, reader *fileReader, i int, data []byte) error
 func (r *Restorer) record(dst target, reader *fileReader, i int) {
 	if part := reader.parts[i]; dst.file != nil && part.Ref != nil {
 		r.parts.landed(string(part.Ref.Hash), dst.file, int64(part.Offset), int64(part.Length))
-	}
-}
-
-// settled records that the file ref names was renamed from dst to path.
-func (r *Restorer) settled(dst target, path string, ref *proto.Ref) {
-	if dst.file != nil {
-		r.parts.moved(dst.file, path)
-		r.parts.wrote(ref)
 	}
 }
 

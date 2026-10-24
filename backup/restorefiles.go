@@ -523,7 +523,7 @@ func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.File
 		return err
 	}
 
-	if err := r.settle(ctx, random, tmp, nil, partial, path, stat, reader, nil); err != nil {
+	if err := r.settle(ctx, random, tmp, nil, nil, partial, path, stat, reader, nil); err != nil {
 		return err
 	}
 
