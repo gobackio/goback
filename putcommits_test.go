@@ -90,6 +90,8 @@ func TestAnAgentCommitsSeveralSnapshotsOfSeveralSetsInOneSession(t *testing.T) {
 	require.NoError(t, client.PutCommits(sctx, commits))
 
 	require.Less(t, commits[0].GetCommit().GetReceivedAtNs(), commits[1].GetCommit().GetReceivedAtNs())
+	require.True(t, commits[1].GetCommit().GetParent().Equal(commits[0].Ref()), "a commit takes the one of its set before it as its parent")
+	require.Nil(t, commits[2].GetCommit().GetParent())
 
 	for set, want := range map[string]*proto.Object{"world": commits[1], "other": commits[2]} {
 		latest, err := client.LatestCommit(ctx, set)

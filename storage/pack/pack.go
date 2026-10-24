@@ -505,7 +505,9 @@ var _ backup.CommitBatcher = (*PackStorage)(nil)
 
 // PutCommits implements backup.CommitBatcher: the commits' records go into
 // the session's archive and the session commits once for them all, which
-// points each set at the newest of its commits.
+// points each set at the newest of its commits. A commit that names no
+// parent and follows another commit of its set takes that one, as stored,
+// as its parent.
 func (ps *PackStorage) PutCommits(ctx context.Context, commits []*proto.Object) error {
 	ctx, span := tracer.Start(ctx, "PackStorage.PutCommits")
 	defer span.End()
@@ -520,9 +522,20 @@ func (ps *PackStorage) PutCommits(ctx context.Context, commits []*proto.Object) 
 		return nil
 	}
 
+	before := map[uint64]*proto.Object{}
+
 	for _, object := range commits {
+		commit := object.GetCommit()
+		if prev := before[commit.GetSetId()]; prev != nil && commit.GetParent() == nil {
+			commit.Parent = prev.Ref()
+		}
+
 		if err := ps.lossMarked(ctx, object); err != nil {
 			return err
+		}
+
+		if commit := object.GetCommit(); commit.GetSetId() != 0 {
+			before[commit.GetSetId()] = object
 		}
 	}
 
