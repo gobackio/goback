@@ -38,9 +38,40 @@ type Mapper interface {
 	FromRetentionBracket(in *proto.RetentionBracket) retention.Bracket
 
 	// field:UploadId from:"ID"
+	// field:CommitsMissing using:"MissingRefs"
 	UploadStatus(in backup.UploadStatus) *proto.UploadStatus
 	// field:ID from:"UploadId"
+	// field:CommitsMissing using:"FromMissingRefs"
 	FromUploadStatus(in *proto.UploadStatus) backup.UploadStatus
+}
+
+// MissingRefs is what each of several commits lacks, as the store service
+// carries it.
+func MissingRefs(refs [][]*proto.Ref) []*proto.MissingRefs {
+	if refs == nil {
+		return nil
+	}
+
+	out := make([]*proto.MissingRefs, len(refs))
+	for i, r := range refs {
+		out[i] = &proto.MissingRefs{Refs: r}
+	}
+
+	return out
+}
+
+// FromMissingRefs is MissingRefs's inverse.
+func FromMissingRefs(refs []*proto.MissingRefs) [][]*proto.Ref {
+	if refs == nil {
+		return nil
+	}
+
+	out := make([][]*proto.Ref, len(refs))
+	for i, r := range refs {
+		out[i] = r.GetRefs()
+	}
+
+	return out
 }
 
 // Seconds is d in whole seconds, as the store service carries durations.

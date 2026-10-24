@@ -108,6 +108,35 @@ message UploadStatus {
     // phase knows its total
     string phase = 10;
     int64 objects_total = 11;
+    // every commit the file held, as the store stored them, in the file's
+    // order, once done; commit is the last of them
+    repeated Object commits = 12;
+    // what each of the file's commits references that the store holds
+    // nowhere, in the file's order, when they failed for that; missing
+    // holds all of it
+    repeated MissingRefs commits_missing = 13;
+}
+
+// MissingRefs is what one commit references that the store holds nowhere.
+message MissingRefs {
+    repeated Ref refs = 1;
+}
+
+// PutCommitsRequest puts several commits of the caller's session as Put
+// puts one, together: either all are stored or none is. Each set's commits
+// come in the order they were taken.
+message PutCommitsRequest {
+    repeated Object commits = 1;
+}
+
+message PutCommitsResponse {
+    // the commits as stored, in the order sent, whose set ids and receipt
+    // times the server assigns; empty when missing is set
+    repeated Object commits = 1;
+    // what each commit references that the store holds nowhere, in the
+    // order sent, when any commit does; then none was stored and the
+    // session stays open to send them and the commits again
+    repeated MissingRefs missing = 2;
 }
 
 message UploadStatusResponse {
@@ -508,6 +537,8 @@ message GetTreeResponse {
 
 service Store {
     rpc Put (PutRequest) returns (PutResponse) {}
+    // PutCommits commits several commits of the caller's session at once
+    rpc PutCommits (PutCommitsRequest) returns (PutCommitsResponse) {}
     // Missing answers which of many refs the store does not hold
     rpc Missing (MissingRequest) returns (MissingResponse) {}
     // PutObjects stores the objects of every message of the stream; a

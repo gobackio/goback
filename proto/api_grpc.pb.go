@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	Store_Put_FullMethodName            = "/proto.Store/Put"
+	Store_PutCommits_FullMethodName     = "/proto.Store/PutCommits"
 	Store_Missing_FullMethodName        = "/proto.Store/Missing"
 	Store_PutObjects_FullMethodName     = "/proto.Store/PutObjects"
 	Store_BeginUpload_FullMethodName    = "/proto.Store/BeginUpload"
@@ -56,6 +57,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type StoreClient interface {
 	Put(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error)
+	// PutCommits commits several commits of the caller's session at once
+	PutCommits(ctx context.Context, in *PutCommitsRequest, opts ...grpc.CallOption) (*PutCommitsResponse, error)
 	// Missing answers which of many refs the store does not hold
 	Missing(ctx context.Context, in *MissingRequest, opts ...grpc.CallOption) (*MissingResponse, error)
 	// PutObjects stores the objects of every message of the stream; a
@@ -129,6 +132,16 @@ func (c *storeClient) Put(ctx context.Context, in *PutRequest, opts ...grpc.Call
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PutResponse)
 	err := c.cc.Invoke(ctx, Store_Put_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeClient) PutCommits(ctx context.Context, in *PutCommitsRequest, opts ...grpc.CallOption) (*PutCommitsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PutCommitsResponse)
+	err := c.cc.Invoke(ctx, Store_PutCommits_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -472,6 +485,8 @@ func (c *storeClient) EscrowedKeys(ctx context.Context, in *EscrowedKeysRequest,
 // for forward compatibility.
 type StoreServer interface {
 	Put(context.Context, *PutRequest) (*PutResponse, error)
+	// PutCommits commits several commits of the caller's session at once
+	PutCommits(context.Context, *PutCommitsRequest) (*PutCommitsResponse, error)
 	// Missing answers which of many refs the store does not hold
 	Missing(context.Context, *MissingRequest) (*MissingResponse, error)
 	// PutObjects stores the objects of every message of the stream; a
@@ -543,6 +558,9 @@ type UnimplementedStoreServer struct{}
 
 func (UnimplementedStoreServer) Put(context.Context, *PutRequest) (*PutResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Put not implemented")
+}
+func (UnimplementedStoreServer) PutCommits(context.Context, *PutCommitsRequest) (*PutCommitsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PutCommits not implemented")
 }
 func (UnimplementedStoreServer) Missing(context.Context, *MissingRequest) (*MissingResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Missing not implemented")
@@ -666,6 +684,24 @@ func _Store_Put_Handler(srv interface{}, ctx context.Context, dec func(interface
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(StoreServer).Put(ctx, req.(*PutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Store_PutCommits_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PutCommitsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServer).PutCommits(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Store_PutCommits_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServer).PutCommits(ctx, req.(*PutCommitsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1152,6 +1188,10 @@ var Store_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Put",
 			Handler:    _Store_Put_Handler,
+		},
+		{
+			MethodName: "PutCommits",
+			Handler:    _Store_PutCommits_Handler,
 		},
 		{
 			MethodName: "Missing",

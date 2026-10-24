@@ -46,34 +46,50 @@ const carriedReceipt = 90 * 24 * time.Hour
 // newest commit, as one an agent stored locally while offline does;
 // anything else is replaced.
 func (x *Index) Stamp(ctx context.Context, object *proto.Object) error {
-	commit := object.GetCommit()
-	if commit == nil && object.GetPin() == nil {
-		return nil
-	}
+	return x.StampAll(ctx, []*proto.Object{object})
+}
 
-	at := x.stamp()
+// StampAll stamps objects as Stamp stamps each, in the order given, so
+// that each set's receipt times increase in that order: a commit keeps a
+// receipt time it carries only when it is also later than those of the
+// set's commits before it among them.
+func (x *Index) StampAll(ctx context.Context, objects []*proto.Object) error {
+	last := map[int64]time.Time{}
 
-	var setID int64
-	if commit != nil {
-		var err error
-		setID, err = x.ensureSet(ctx, x.client, commit, nil, true)
-		if err != nil {
-			return err
+	for _, object := range objects {
+		commit := object.GetCommit()
+		if commit == nil && object.GetPin() == nil {
+			continue
 		}
 
-		if carried := time.Unix(0, commit.GetReceivedAtNs()).UTC(); commit.GetReceivedAtNs() > 0 && !carried.After(at) && at.Sub(carried) <= carriedReceipt {
-			newest, err := newestCommit(ctx, x.client, setID)
+		at := x.stamp()
+
+		var setID int64
+		if commit != nil {
+			var err error
+			setID, err = x.ensureSet(ctx, x.client, commit, nil, true)
 			if err != nil {
 				return err
 			}
 
-			if newest == nil || carried.Truncate(receiptGrain).After(newest.ReceivedAt.Truncate(receiptGrain)) {
-				at = carried
-			}
-		}
-	}
+			if carried := time.Unix(0, commit.GetReceivedAtNs()).UTC(); commit.GetReceivedAtNs() > 0 && !carried.After(at) && at.Sub(carried) <= carriedReceipt {
+				newest, err := newestCommit(ctx, x.client, setID)
+				if err != nil {
+					return err
+				}
 
-	object.Stamp(uint64(setID), at)
+				after := func(t time.Time) bool { return carried.Truncate(receiptGrain).After(t.Truncate(receiptGrain)) }
+
+				if (newest == nil || after(newest.ReceivedAt)) && after(last[setID]) {
+					at = carried
+				}
+			}
+
+			last[setID] = at
+		}
+
+		object.Stamp(uint64(setID), at)
+	}
 
 	return nil
 }
@@ -139,6 +155,41 @@ func (x *Index) Put(ctx context.Context, object *proto.Object) error {
 		return err
 	case proto.ObjectType_PIN:
 		return x.indexPin(ctx, object.GetPin(), object.Ref(), true)
+	}
+
+	return nil
+}
+
+var _ backup.CommitBatcher = (*Index)(nil)
+
+// PutCommits implements backup.CommitBatcher: the store takes the commits
+// together and the index records them in the order given, as Put records
+// one, up to the first it cannot record.
+func (x *Index) PutCommits(ctx context.Context, commits []*proto.Object) error {
+	for _, object := range commits {
+		if object.GetCommit() == nil {
+			return fmt.Errorf("PutCommits takes commits, not a %s", object.Type())
+		}
+
+		if x.checks(ctx) {
+			if err := backup.CheckReferences(ctx, x.ObjectStore, object); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := x.StampAll(ctx, commits); err != nil {
+		return err
+	}
+
+	if err := backup.PutCommits(ctx, x.ObjectStore, commits); err != nil {
+		return err
+	}
+
+	for _, object := range commits {
+		if _, err := x.indexCommit(ctx, object.GetCommit(), object.Ref(), true, true, nil); err != nil {
+			return err
+		}
 	}
 
 	return nil

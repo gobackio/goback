@@ -11,6 +11,11 @@
    Compaction, a rewrite moves a tombstone out of the archive it was written
    in, keeping its version. With SplitUntomb, a committing session stores its
    commit's un-tombstone with its data and looks up tombstones only after.
+   With Delayed, a client decides what the store holds before its session
+   begins, as one that uploads several backups in one session long after
+   it took them does, and checks those objects again once it has begun.
+   One session's backup stands for all the backups it commits: each of its
+   roots is retired on its own.
 
    Safe: no committed backup ever references an object without a committed
    copy. Collectable: no horizon passes over a tombstone the store holds, so
@@ -49,7 +54,9 @@ CONSTANTS
     Compaction,  \* compaction moves tombstones out of the archives they were written in
     SkipCarried, \* mutation: a horizon covers a moved tombstone only if an earlier one did
     SplitUntomb, \* the commit's un-tombstone is stored with its data, before the session looks up tombstones
-    LateUntomb   \* mutation: the commit's un-tombstone is stored after the session read the seals
+    LateUntomb,  \* mutation: the commit's un-tombstone is stored after the session read the seals
+    Delayed,     \* sessions deduplicate against what the store held before they began
+    SkipRecheck  \* mutation: a delayed session keeps what it assumed without asking again
 
 None == "none"
 
@@ -133,7 +140,7 @@ Init ==
 
 Begin(s) ==
     /\ phase[s] = "new"
-    /\ phase' = [phase EXCEPT ![s] = "active"]
+    /\ phase' = [phase EXCEPT ![s] = IF Delayed THEN "begun" ELSE "active"]
     /\ seen' = [seen EXCEPT ![s] = sealed]
     /\ UNCHANGED <<moved, records, clock, refs, roots, gc, lease, cycles, dedup, sealed, plans, rw, state, retired>>
 
@@ -151,6 +158,31 @@ Use(s, o) ==
                    /\ clock' = IF v > clock THEN v ELSE clock
               /\ UNCHANGED dedup
     /\ UNCHANGED <<moved, phase, roots, gc, lease, cycles, sealed, plans, rw, state, seen, retired>>
+
+\* before its session begins, a delayed client takes o as stored because the
+\* store held it then
+Assume(s, o) ==
+    /\ Delayed
+    /\ phase[s] = "new"
+    /\ o \notin refs[s]
+    /\ Present(s, o)
+    /\ refs' = [refs EXCEPT ![s] = @ \cup {o}]
+    /\ dedup' = [dedup EXCEPT ![s] = @ \cup {o}]
+    /\ UNCHANGED <<moved, records, clock, phase, roots, gc, lease, cycles, sealed, plans, rw, state, seen, retired>>
+
+\* once begun, it asks again about everything it assumed and uploads what
+\* the store no longer says it holds
+Recheck(s) ==
+    LET gone == IF SkipRecheck THEN {} ELSE {o \in dedup[s] : ~Present(s, o)}
+    IN /\ phase[s] = "begun"
+       /\ phase' = [phase EXCEPT ![s] = "active"]
+       /\ dedup' = [dedup EXCEPT ![s] = @ \ gone]
+       /\ \E ver \in [gone -> NewVersions] :
+            /\ records' = records \cup {Record("copy", o, ver[o], s, s) : o \in gone}
+            /\ clock' = IF gone = {} THEN clock ELSE
+                          LET top == CHOOSE v \in {ver[o] : o \in gone} : \A o \in gone : ver[o] <= v
+                          IN IF top > clock THEN top ELSE clock
+       /\ UNCHANGED <<moved, refs, roots, gc, lease, cycles, sealed, plans, rw, state, seen, retired>>
 
 \* before committing, take back what the session deduplicated: un-tombstone
 \* objects whose closure holds all of it, the session's own commit among
@@ -230,7 +262,7 @@ Commit(s) ==
 \* a session ends without committing, by choice or because the reaper ended
 \* it after a crash; its end marker keeps it from ever committing
 Abort(s) ==
-    /\ phase[s] \in {"active", "flushed", "untombed", "checked", "late"}
+    /\ phase[s] \in {"begun", "active", "flushed", "untombed", "checked", "late"}
     /\ phase' = [phase EXCEPT ![s] = "aborted"]
     /\ records' = {r \in records : r.owner # s}
     /\ UNCHANGED <<moved, clock, refs, roots, gc, lease, cycles, dedup, sealed, plans, rw, state, seen, retired>>
@@ -521,7 +553,8 @@ Crash(m) ==
 
 Next ==
     \/ \E s \in Sessions : Begin(s) \/ Untomb(s) \/ CommitUntomb(s) \/ TombedUntomb(s) \/ Check(s) \/ Commit(s) \/ Abort(s)
-    \/ \E s \in Sessions, o \in Objects : Use(s, o)
+    \/ \E s \in Sessions : Recheck(s)
+    \/ \E s \in Sessions, o \in Objects : Use(s, o) \/ Assume(s, o)
     \/ \E p \in roots : Retire(p)
     \/ \E p \in retired : Unretire(p)
     \/ Expire
@@ -543,7 +576,7 @@ Safe == \A o \in Reachable : \E r \in Committed : r.kind = "copy" /\ r.obj = o
 Collectable == state.stood \cap records \subseteq state.tombs
 
 TypeOK ==
-    /\ phase \in [Sessions -> {"new", "active", "flushed", "untombed", "checked", "late", "committed", "aborted"}]
+    /\ phase \in [Sessions -> {"new", "begun", "active", "flushed", "untombed", "checked", "late", "committed", "aborted"}]
     /\ refs \in [Sessions -> SUBSET Objects]
     /\ roots \subseteq Sessions \X Objects
 =============================================================================

@@ -97,17 +97,19 @@ func (m MapperImpl) FromUploadStatus(in *proto.UploadStatus) backup.UploadStatus
 	}
 
 	return backup.UploadStatus{
-		ID:           in.UploadId,
-		State:        backup.UploadState(in.State),
-		Objects:      in.Objects,
-		ObjectsTotal: in.ObjectsTotal,
-		Stored:       in.Stored,
-		Bytes:        in.Bytes,
-		BytesTotal:   in.BytesTotal,
-		Error:        in.Error,
-		Phase:        in.Phase,
-		Commit:       in.Commit,
-		Missing:      in.Missing,
+		ID:             in.UploadId,
+		State:          backup.UploadState(in.State),
+		Objects:        in.Objects,
+		ObjectsTotal:   in.ObjectsTotal,
+		Stored:         in.Stored,
+		Bytes:          in.Bytes,
+		BytesTotal:     in.BytesTotal,
+		Error:          in.Error,
+		Phase:          in.Phase,
+		Commit:         in.Commit,
+		Commits:        in.Commits,
+		Missing:        in.Missing,
+		CommitsMissing: mapping.FromMissingRefs(in.CommitsMissing),
 	}
 }
 
@@ -159,17 +161,19 @@ func (m MapperImpl) StorePolicy(in *storekey.Policy) *proto.StorePolicy {
 func (m MapperImpl) UploadStatus(in backup.UploadStatus) *proto.UploadStatus {
 
 	return &proto.UploadStatus{
-		UploadId:     in.ID,
-		State:        proto.UploadState(in.State),
-		Objects:      in.Objects,
-		Bytes:        in.Bytes,
-		BytesTotal:   in.BytesTotal,
-		Error:        in.Error,
-		Stored:       in.Stored,
-		Commit:       in.Commit,
-		Missing:      in.Missing,
-		Phase:        in.Phase,
-		ObjectsTotal: in.ObjectsTotal,
+		UploadId:       in.ID,
+		State:          proto.UploadState(in.State),
+		Objects:        in.Objects,
+		Bytes:          in.Bytes,
+		BytesTotal:     in.BytesTotal,
+		Error:          in.Error,
+		Stored:         in.Stored,
+		Commit:         in.Commit,
+		Missing:        in.Missing,
+		Phase:          in.Phase,
+		ObjectsTotal:   in.ObjectsTotal,
+		Commits:        in.Commits,
+		CommitsMissing: mapping.MissingRefs(in.CommitsMissing),
 	}
 }
 

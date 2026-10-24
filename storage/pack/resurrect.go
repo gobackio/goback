@@ -89,15 +89,44 @@ func (ps *PackStorage) sealedAtBegin(ws *writeSession) (uint64, error) {
 // at a time, so its progress moves within a level.
 const checkChunk = 10_000
 
-// skippedRefs walks down from the commit while the objects are the
+// checkCommits is skippedRefs over all the commits at once. When they lack
+// anything, the backup.MissingError names, beside every ref they lack, what
+// each commit lacks on its own.
+func (ps *PackStorage) checkCommits(ctx context.Context, ws *writeSession, commits []*proto.Object) (skipped, whole []*proto.Ref, err error) {
+	skipped, whole, err = ps.skippedRefs(ctx, ws, commits, nil)
+
+	var missing *backup.MissingError
+	if len(commits) == 1 || !errors.As(err, &missing) {
+		return skipped, whole, err
+	}
+
+	missing.Commits = make([][]*proto.Ref, len(commits))
+
+	for i := range commits {
+		var lacks *backup.MissingError
+
+		_, _, err := ps.skippedRefs(ctx, ws, commits[i:i+1], nil)
+		if err != nil && !errors.As(err, &lacks) {
+			return nil, nil, err
+		}
+
+		if lacks != nil {
+			missing.Commits[i] = lacks.Refs
+		}
+	}
+
+	return nil, nil, missing
+}
+
+// skippedRefs walks down from the commits while the objects are the
 // session's own, or held only as incomplete, and returns the refs it
 // reaches outside the session's own: what the session deduplicated, and of
 // those the ones held only as incomplete, which it found whole. It fails
 // with a backup.MissingError naming the refs it reaches that no archive the
 // session sees holds. It reports the refs it walked as progress.PhaseCheck.
-// A non-nil parents gets, for every ref it reaches below the commit, the
+// A non-nil parents gets, for every ref it reaches below the commits, the
 // objects that reference it.
-func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit *proto.Object, parents map[string][]*proto.Ref) (skipped, whole []*proto.Ref, err error) {
+func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commits []*proto.Object, parents map[string][]*proto.Ref) (skipped, whole []*proto.Ref, err error) {
 	pending, err := ps.index.PendingArchives(ws.id)
 	if err != nil {
 		return nil, nil, err
@@ -109,9 +138,17 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 	}
 
 	scope := ScopeOf(ctx)
-	root := commit.Ref()
-	seen := map[string]bool{string(root.Hash): true}
-	frontier := []*proto.Ref{root}
+	seen := make(map[string]bool, len(commits))
+	roots := make(map[string]bool, len(commits))
+	frontier := make([]*proto.Ref, 0, len(commits))
+
+	for _, commit := range commits {
+		root := commit.Ref()
+		if !seen[string(root.Hash)] {
+			seen[string(root.Hash)], roots[string(root.Hash)] = true, true
+			frontier = append(frontier, root)
+		}
+	}
 
 	var missing []*proto.Ref
 
@@ -130,8 +167,8 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 			var below []*proto.Ref
 
 			for _, ref := range chunk {
-				// the commit is at hand, stored or not
-				if ref.Equal(root) {
+				// a commit is at hand, stored or not
+				if roots[string(ref.Hash)] {
 					below = append(below, ref)
 					continue
 				}
@@ -159,7 +196,7 @@ func (ps *PackStorage) skippedRefs(ctx context.Context, ws *writeSession, commit
 				}
 			}
 
-			objects, err := ps.readOwn(ctx, ws, commit, below)
+			objects, err := ps.readOwn(ctx, ws, commits, below)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -207,15 +244,20 @@ func incomplete(copies []IndexLocation) bool {
 	return len(copies) > 0
 }
 
-// readOwn reads the session's objects at refs, the commit being one it
-// has at hand or one held only as incomplete, a range read per run of
+// readOwn reads the session's objects at refs, the commits being ones it
+// has at hand or ones held only as incomplete, a range read per run of
 // neighbouring records.
-func (ps *PackStorage) readOwn(ctx context.Context, ws *writeSession, commit *proto.Object, refs []*proto.Ref) ([]*proto.Object, error) {
+func (ps *PackStorage) readOwn(ctx context.Context, ws *writeSession, commits []*proto.Object, refs []*proto.Ref) ([]*proto.Object, error) {
 	var out []*proto.Object
+
+	atHand := make(map[string]*proto.Object, len(commits))
+	for _, commit := range commits {
+		atHand[string(commit.Ref().Hash)] = commit
+	}
 
 	stored := make([]*proto.Ref, 0, len(refs))
 	for _, ref := range refs {
-		if ref.Equal(commit.Ref()) {
+		if commit, ok := atHand[string(ref.Hash)]; ok {
 			out = append(out, commit)
 		} else {
 			stored = append(stored, ref)
@@ -411,7 +453,7 @@ func (ps *PackStorage) markLost(ctx context.Context, commit *proto.Object) (*pro
 			return nil, err
 		}
 
-		_, _, err = ps.skippedRefs(ctx, ws, commit, parents)
+		_, _, err = ps.skippedRefs(ctx, ws, []*proto.Object{commit}, parents)
 		if err != nil && !errors.As(err, &missing) {
 			return nil, err
 		}
@@ -479,7 +521,7 @@ func (ps *PackStorage) readAbove(ctx context.Context, ws *writeSession, commit *
 	read := &readAhead{ObjectStore: ps, objects: make(map[string]*proto.Object, len(refs))}
 
 	for chunk := range slices.Chunk(refs, checkChunk) {
-		objects, err := ps.readOwn(ctx, ws, commit, chunk)
+		objects, err := ps.readOwn(ctx, ws, []*proto.Object{commit}, chunk)
 		if err != nil {
 			return nil, err
 		}

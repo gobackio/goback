@@ -104,26 +104,39 @@ func TestIngestFailsWithWhatBrokeTheRead(t *testing.T) {
 	}
 }
 
-func TestIngestLeavesTheCommitAFileHoldsToItsCaller(t *testing.T) {
+func TestIngestLeavesTheCommitsAFileHoldsToItsCaller(t *testing.T) {
 	part := proto.NewObject(&proto.Blob{Data: []byte("part")})
-	commit := proto.NewObject(&proto.Commit{Timestamp: 1, Tree: part.Ref(), BackupSet: "world"})
+	first := proto.NewObject(&proto.Commit{Timestamp: 1, Tree: part.Ref(), BackupSet: "world"})
+	second := proto.NewObject(&proto.Commit{Timestamp: 2, Tree: part.Ref(), BackupSet: "world"})
 
 	var buf bytes.Buffer
 
 	w, err := NewWriter(&buf)
 	require.NoError(t, err)
-	require.NoError(t, w.Write(commit))
+	require.NoError(t, w.Write(first))
 	require.NoError(t, w.Write(part))
+	require.NoError(t, w.Write(second))
 
 	h := &held{hashes: map[string]bool{}}
 	done, err := Ingest(context.Background(), bytes.NewReader(buf.Bytes()), int64(buf.Len()), h)
 	require.NoError(t, err)
-	require.Equal(t, int64(2), done.Objects)
+	require.Equal(t, int64(3), done.Objects)
 	require.Equal(t, int64(1), done.Stored)
-	require.True(t, done.Commit.Ref().Equal(commit.Ref()))
+	require.Len(t, done.Commits, 2)
+	require.True(t, done.Commits[0].Ref().Equal(first.Ref()))
+	require.True(t, done.Commits[1].Ref().Equal(second.Ref()))
+}
 
-	require.NoError(t, w.Write(commit))
+func TestIngestRefusesAFileWithMoreCommitsThanItHolds(t *testing.T) {
+	var buf bytes.Buffer
+
+	w, err := NewWriter(&buf)
+	require.NoError(t, err)
+
+	for i := range MaxCommits + 1 {
+		require.NoError(t, w.Write(proto.NewObject(&proto.Commit{Timestamp: int64(i + 1), Tree: &proto.Ref{Hash: make([]byte, 32)}, BackupSet: "world"})))
+	}
 
 	_, err = Ingest(context.Background(), bytes.NewReader(buf.Bytes()), int64(buf.Len()), &held{hashes: map[string]bool{}})
-	require.ErrorIs(t, err, ErrInvalid, "a file holds one commit at most")
+	require.ErrorIs(t, err, ErrInvalid)
 }

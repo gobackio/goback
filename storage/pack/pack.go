@@ -475,19 +475,83 @@ func (ps *PackStorage) Put(ctx context.Context, object *proto.Object) error {
 	ctx, span := tracer.Start(ctx, "PackStorage.Put")
 	defer span.End()
 
-	// rewritten in place, so whoever indexes or answers for the commit
-	// after the put has the one stored
-	if object.Type() == proto.ObjectType_COMMIT && object.GetCommit().GetIncomplete() {
-		stored, err := ps.markLost(ctx, object)
-		if err != nil {
-			return err
-		}
-
-		pb.Reset(object)
-		pb.Merge(object, stored)
+	if err := ps.lossMarked(ctx, object); err != nil {
+		return err
 	}
 
 	return ps.putWriteCache(ctx, object, ps.put(ctx, object))
+}
+
+// lossMarked rewrites in place a commit that asks to be stored incomplete,
+// so whoever indexes or answers for the commit after the put has the one
+// stored.
+func (ps *PackStorage) lossMarked(ctx context.Context, object *proto.Object) error {
+	if object.Type() != proto.ObjectType_COMMIT || !object.GetCommit().GetIncomplete() {
+		return nil
+	}
+
+	stored, err := ps.markLost(ctx, object)
+	if err != nil {
+		return err
+	}
+
+	pb.Reset(object)
+	pb.Merge(object, stored)
+
+	return nil
+}
+
+var _ backup.CommitBatcher = (*PackStorage)(nil)
+
+// PutCommits implements backup.CommitBatcher: the commits' records go into
+// the session's archive and the session commits once for them all, which
+// points each set at the newest of its commits.
+func (ps *PackStorage) PutCommits(ctx context.Context, commits []*proto.Object) error {
+	ctx, span := tracer.Start(ctx, "PackStorage.PutCommits")
+	defer span.End()
+
+	for _, object := range commits {
+		if object.Type() != proto.ObjectType_COMMIT {
+			return fmt.Errorf("PutCommits takes commits, not a %s", object.Type())
+		}
+	}
+
+	if len(commits) == 0 {
+		return nil
+	}
+
+	for _, object := range commits {
+		if err := ps.lossMarked(ctx, object); err != nil {
+			return err
+		}
+	}
+
+	steps := laps.Start()
+
+	var ws *writeSession
+
+	for i, object := range commits {
+		written, err := ps.write(ctx, object)
+		if err != nil {
+			// a later commit of the session must not take these records
+			for _, done := range commits[:i] {
+				ps.refuse(ctx, ws, done.Ref(), err)
+			}
+
+			return err
+		}
+
+		ws = written
+	}
+
+	steps.Lap("write")
+
+	err := ps.commitSession(ctx, ws, commits, steps)
+	for _, object := range commits {
+		_ = ps.putWriteCache(ctx, object, err)
+	}
+
+	return err
 }
 
 func (ps *PackStorage) put(ctx context.Context, object *proto.Object) error {
@@ -496,14 +560,32 @@ func (ps *PackStorage) put(ctx context.Context, object *proto.Object) error {
 		steps = laps.Start()
 	}
 
-	hdr, stored, err := proto.HeaderFor(object)
+	ws, err := ps.write(ctx, object)
 	if err != nil {
 		return err
 	}
 
+	if object.Type() != proto.ObjectType_COMMIT {
+		return nil
+	}
+
+	steps.Lap("write")
+
+	return ps.commitSession(ctx, ws, []*proto.Object{object}, steps)
+}
+
+// write stores object in its session's open archive and returns the
+// session, which it returns with an error too once it found it. Once the
+// row of a claimed archive is in, other processes may rely on the object.
+func (ps *PackStorage) write(ctx context.Context, object *proto.Object) (*writeSession, error) {
+	hdr, stored, err := proto.HeaderFor(object)
+	if err != nil {
+		return nil, err
+	}
+
 	ws, err := ps.writeSessionFor(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var (
@@ -531,10 +613,9 @@ func (ps *PackStorage) put(ctx context.Context, object *proto.Object) error {
 	})
 
 	if err != nil {
-		return err
+		return ws, err
 	}
 
-	// another process can only rely on the object once its row is in
 	if claimed != nil {
 		err := claimed.rows.wait(indexed)
 		if lapsed(err) {
@@ -542,42 +623,74 @@ func (ps *PackStorage) put(ctx context.Context, object *proto.Object) error {
 			// was still writing it
 			_ = ps.finalizeArchive(claimed)
 
-			return fmt.Errorf("%w: %w", backup.ErrSessionLost, err)
+			return ws, fmt.Errorf("%w: %w", backup.ErrSessionLost, err)
 		}
 
 		if errors.Is(err, backup.ErrNoSession) {
 			_ = ps.finalizeArchive(claimed)
-			return err
+			return ws, err
 		}
 
 		if err != nil {
-			return err
+			return ws, err
 		}
 	}
 
 	ps.touchSession(ws)
 
-	if object.Type() == proto.ObjectType_COMMIT {
-		steps.Lap("write")
+	return ws, nil
+}
 
-		err := ps.commit(ctx, ws, object, steps)
-		if err != nil {
+// commitSession commits the session the commits' records were written in,
+// refusing them all when it cannot, and points each set at the newest of
+// them.
+func (ps *PackStorage) commitSession(ctx context.Context, ws *writeSession, commits []*proto.Object, steps *laps.Laps) error {
+	if err := ps.commit(ctx, ws, commits, steps); err != nil {
+		for _, object := range commits {
 			ps.refuse(ctx, ws, object.Ref(), err)
-
-			return err
 		}
 
-		// the commit is durable without its head; a restore without the
-		// index then finds the set's previous one
+		return err
+	}
+
+	// a commit is durable without its head; a restore without the index
+	// then finds the set's previous one
+	for _, object := range newestOfEachSet(commits) {
 		if err := ps.AdvanceHead(object); err != nil {
 			ps.logger.Warn("pointing the set at its new commit failed", "commit", fmt.Sprintf("%x", object.Ref().Hash), "err", err)
 		}
-
-		steps.Lap("head")
-		ps.logger.Info("committed session", append([]any{"session", ws.id}, steps.Attrs()...)...)
 	}
 
+	steps.Lap("head")
+	ps.logger.Info("committed session", append([]any{"session", ws.id, "commits", len(commits)}, steps.Attrs()...)...)
+
 	return nil
+}
+
+// newestOfEachSet is, of each set the commits name, the one received last
+// that may become its head, in the order the sets first appear.
+func newestOfEachSet(commits []*proto.Object) []*proto.Object {
+	newest := map[uint64]int{}
+
+	var out []*proto.Object
+
+	for _, object := range commits {
+		commit := object.GetCommit()
+		if commit.GetPartial() || commit.GetSetId() == 0 {
+			continue
+		}
+
+		i, ok := newest[commit.GetSetId()]
+		switch {
+		case !ok:
+			newest[commit.GetSetId()] = len(out)
+			out = append(out, object)
+		case commit.GetReceivedAtNs() > out[i].GetCommit().GetReceivedAtNs():
+			out[i] = object
+		}
+	}
+
+	return out
 }
 
 // ChecksAtCommit implements backup.CommitChecker.
@@ -602,11 +715,12 @@ func (ps *PackStorage) refuse(ctx context.Context, ws *writeSession, ref *proto.
 	}
 }
 
-// commit makes everything the session wrote durable and visible: its open
-// archive is finalized and its archives flip to committed. A session with
-// an archive that failed to finalize cannot commit: the objects it
-// acknowledged are in no index. A commit ends the session.
-func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *proto.Object, steps *laps.Laps) error {
+// commit makes everything the session wrote durable and visible under the
+// commits whose records it holds: its open archive is finalized and its
+// archives flip to committed. A session with an archive that failed to
+// finalize cannot commit: the objects it acknowledged are in no index. A
+// commit ends the session.
+func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commits []*proto.Object, steps *laps.Laps) error {
 	if err := ws.failed(); err != nil {
 		return fmt.Errorf("session %s lost an archive: %w", ws.id, err)
 	}
@@ -633,17 +747,19 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 
 	// a commit missing anything is refused before it takes anything back,
 	// so its session may store what is missing and commit again
-	skipped, whole, err := ps.skippedRefs(ctx, ws, commit, nil)
+	skipped, whole, err := ps.checkCommits(ctx, ws, commits)
 	if err != nil {
 		return err
 	}
 
 	steps.Lap("check")
 
-	// the commit's un-tombstone keeps everything the commit reaches; it is
-	// stored before resurrect reads the seals
-	if err := ps.putTombstone(ctx, ws, proto.TombstoneRef(commit.Ref()), false); err != nil {
-		return fmt.Errorf("taking back the tombstones of what session %s relied on: %w", ws.id, err)
+	// each commit's un-tombstone keeps everything the commit reaches; they
+	// are stored before resurrect reads the seals
+	for _, commit := range commits {
+		if err := ps.putTombstone(ctx, ws, proto.TombstoneRef(commit.Ref()), false); err != nil {
+			return fmt.Errorf("taking back the tombstones of what session %s relied on: %w", ws.id, err)
+		}
 	}
 
 	if err := ps.flushSession(ws); err != nil {
@@ -657,8 +773,10 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commit *pro
 	steps.Lap("untombstone")
 
 	if ps.claims != nil {
-		if err := ps.kept(ctx, ws, commit.Ref()); err != nil {
-			return err
+		for _, commit := range commits {
+			if err := ps.kept(ctx, ws, commit.Ref()); err != nil {
+				return err
+			}
 		}
 
 		steps.Lap("kept")

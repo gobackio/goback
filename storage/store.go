@@ -16,6 +16,7 @@ import (
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
+	"github.com/gobackio/goback/storage/upload"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -35,11 +36,11 @@ type Store struct {
 	// store's own when it has one.
 	Lease time.Duration
 
-	// CommitUploaded, when set, takes the commit an upload file sent to
+	// CommitUploaded, when set, takes the commits an upload file sent to
 	// SendUpload held under the upload's id, once the rest of the file is
-	// stored, and answers where the upload stands; nil puts the commit at
-	// once.
-	CommitUploaded func(ctx context.Context, upload string, commit *proto.Object) (backup.UploadStatus, error)
+	// stored, and answers where the upload stands; nil puts the commits at
+	// once, with PutCommits.
+	CommitUploaded func(ctx context.Context, upload string, commits []*proto.Object) (backup.UploadStatus, error)
 
 	uploads uploads
 }
@@ -115,26 +116,13 @@ func (s *Store) Put(ctx context.Context, up Upload) (*Receipt, error) {
 	}
 
 	if stamped {
-		p, err := auth.Require(ctx)
-		if err != nil {
+		if err := admitStamped(ctx, object); err != nil {
 			return nil, err
 		}
-
-		if commit := object.GetCommit(); commit != nil {
-			err = p.AuthorizeCommit(commit)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		// whatever the client wrote there, the server decides
-		clearStamp(object)
 	}
 
-	if s.Sessions != nil {
-		if _, ok := backup.SessionFromContext(ctx); !ok {
-			return nil, fmt.Errorf("%w: writes need a session", backup.ErrNoSession)
-		}
+	if _, err := s.writeSession(ctx); err != nil {
+		return nil, err
 	}
 
 	if len(up.Assumed) > 0 {
@@ -169,6 +157,109 @@ func (s *Store) Put(ctx context.Context, up Upload) (*Receipt, error) {
 	}
 
 	return receipt, nil
+}
+
+// admitStamped refuses a commit or pin the caller may not store and
+// clears what of its stamp the store assigns.
+func admitStamped(ctx context.Context, object *proto.Object) error {
+	p, err := auth.Require(ctx)
+	if err != nil {
+		return err
+	}
+
+	if commit := object.GetCommit(); commit != nil {
+		if err := p.AuthorizeCommit(commit); err != nil {
+			return err
+		}
+	}
+
+	// whatever the client wrote there, the server decides
+	clearStamp(object)
+
+	return nil
+}
+
+// MaxCommits is the most commits one PutCommits call takes, as many as an
+// upload file holds.
+const MaxCommits = upload.MaxCommits
+
+// CommitsReceipt answers PutCommits: the commits as stored, in the order
+// given, or, when any of them lacks something, what each lacks, in which
+// case none was stored.
+type CommitsReceipt struct {
+	Commits []*proto.Object
+	Missing [][]*proto.Ref
+}
+
+// PutCommits stores commits of the caller's session together, as
+// backup.CommitBatcher does, each stamped as Put stamps one; at most
+// MaxCommits at once. A single commit is put as Put puts it.
+func (s *Store) PutCommits(ctx context.Context, commits []*proto.Object) (*CommitsReceipt, error) {
+	if len(commits) == 0 || len(commits) > MaxCommits {
+		return nil, fmt.Errorf("%w: %d commits in one call, 1 to %d", ErrInvalidRequest, len(commits), MaxCommits)
+	}
+
+	if len(commits) == 1 {
+		if commits[0].GetCommit() == nil {
+			return nil, fmt.Errorf("%w: PutCommits takes commits, not a %s", ErrInvalidRequest, commits[0].Type())
+		}
+
+		receipt, err := s.Put(ctx, Upload{Object: commits[0]})
+		switch {
+		case err != nil:
+			return nil, err
+		case len(receipt.Missing) > 0:
+			return &CommitsReceipt{Missing: [][]*proto.Ref{receipt.Missing}}, nil
+		}
+
+		return &CommitsReceipt{Commits: []*proto.Object{receipt.Object}}, nil
+	}
+
+	for _, object := range commits {
+		if err := object.Validate(); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+		}
+
+		if object.GetCommit() == nil {
+			return nil, fmt.Errorf("%w: PutCommits takes commits, not a %s", ErrInvalidRequest, object.Type())
+		}
+
+		if err := admitStamped(ctx, object); err != nil {
+			return nil, err
+		}
+	}
+
+	if _, err := s.writeSession(ctx); err != nil {
+		return nil, err
+	}
+
+	err := backup.PutCommits(ctx, s.Index, commits)
+
+	var missing *backup.MissingError
+	if errors.As(err, &missing) {
+		return &CommitsReceipt{Missing: byCommit(missing, len(commits))}, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &CommitsReceipt{Commits: commits}, nil
+}
+
+// byCommit is what each of n commits lacks; a store that did not say which
+// lacks what has each lack it all.
+func byCommit(missing *backup.MissingError, n int) [][]*proto.Ref {
+	if len(missing.Commits) == n {
+		return missing.Commits
+	}
+
+	out := make([][]*proto.Ref, n)
+	for i := range out {
+		out[i] = missing.Refs
+	}
+
+	return out
 }
 
 // MaxMissingRefs is the most refs one Missing call asks about.

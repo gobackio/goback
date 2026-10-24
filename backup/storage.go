@@ -60,9 +60,12 @@ var (
 
 // MissingError is what a commit fails with when the store lacks objects its
 // session's objects reference: the caller stores Refs and puts the commit
-// again. It matches ErrDanglingRef.
+// again. It matches ErrDanglingRef. For several commits put together,
+// Commits names what each lacks, by its place among them, and Refs all of
+// it; a commit that lacks nothing has none.
 type MissingError struct {
-	Refs []*proto.Ref
+	Refs    []*proto.Ref
+	Commits [][]*proto.Ref
 }
 
 func (e *MissingError) Error() string {
@@ -71,6 +74,38 @@ func (e *MissingError) Error() string {
 
 func (e *MissingError) Is(target error) bool {
 	return target == ErrDanglingRef
+}
+
+// CommitBatcher is a store or index that takes several commits of a
+// session at once. PutCommits stores them as one commit of the session
+// would be, in the order given, which for each set is the order its
+// commits were taken in. Either all of them are stored, stamped in place
+// as Put stamps one, or none is; a MissingError names what each lacks,
+// and the session stays open to store that and put them all again.
+// ErrNotImplemented means the store takes one commit per session.
+type CommitBatcher interface {
+	PutCommits(ctx context.Context, commits []*proto.Object) error
+}
+
+// PutCommits puts commits in store, together when it is a CommitBatcher
+// and otherwise one at a time, which in a session is ErrNotImplemented for
+// more than one.
+func PutCommits(ctx context.Context, store ObjectStore, commits []*proto.Object) error {
+	if batcher, ok := store.(CommitBatcher); ok {
+		return batcher.PutCommits(ctx, commits)
+	}
+
+	if _, ok := SessionFromContext(ctx); ok && len(commits) > 1 {
+		return fmt.Errorf("%w: the store takes one commit per session", ErrNotImplemented)
+	}
+
+	for _, commit := range commits {
+		if err := store.Put(ctx, commit); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // CommitChecker is a store that may check, as a session commits, that it

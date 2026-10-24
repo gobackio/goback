@@ -22,6 +22,7 @@ import (
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
 	adminpb "github.com/gobackio/goback/proto/admin"
+	"github.com/gobackio/goback/storage/mapping"
 	"github.com/gobackio/goback/storage/mapping/gen"
 	"github.com/gobackio/goback/storage/pack"
 	"github.com/gobackio/goback/storage/upload"
@@ -405,6 +406,41 @@ func (r *Client) Put(ctx context.Context, object *proto.Object) error {
 	}
 
 	return err
+}
+
+var _ backup.CommitBatcher = (*Client)(nil)
+
+// PutCommits implements backup.CommitBatcher, stamping each commit in
+// place as the server stored it. A server that takes one commit per
+// session answers backup.ErrNotImplemented.
+func (r *Client) PutCommits(ctx context.Context, commits []*proto.Object) error {
+	for _, commit := range commits {
+		if err := commit.Validate(); err != nil {
+			return err
+		}
+	}
+
+	resp, err := r.store.PutCommits(r.outgoing(ctx), &proto.PutCommitsRequest{Commits: commits})
+	if err := fromWriteStatus(err); err != nil {
+		return err
+	}
+
+	if missing := mapping.FromMissingRefs(resp.GetMissing()); len(missing) > 0 {
+		return &backup.MissingError{Refs: allOf(missing), Commits: missing}
+	}
+
+	if len(resp.GetCommits()) != len(commits) {
+		return fmt.Errorf("put %d commits, the store answered with %d", len(commits), len(resp.GetCommits()))
+	}
+
+	// the server assigned the receipt times and set ids; the caller's
+	// objects must hash to the stored refs
+	for i, stored := range resp.GetCommits() {
+		pb.Reset(commits[i])
+		pb.Merge(commits[i], stored)
+	}
+
+	return nil
 }
 
 // PutFile implements backup.Confirmer.
@@ -1281,6 +1317,16 @@ func (r *Server) Put(ctx context.Context, request *proto.PutRequest) (*proto.Put
 	}
 
 	return &proto.PutResponse{Ref: receipt.Ref, Object: receipt.Object, Missing: receipt.Missing}, nil
+}
+
+// PutCommits implements proto.StoreServer.
+func (r *Server) PutCommits(ctx context.Context, request *proto.PutCommitsRequest) (*proto.PutCommitsResponse, error) {
+	receipt, err := r.store.PutCommits(ctx, request.GetCommits())
+	if err != nil {
+		return nil, ToStatus(err)
+	}
+
+	return &proto.PutCommitsResponse{Commits: receipt.Commits, Missing: mapping.MissingRefs(receipt.Missing)}, nil
 }
 
 // Missing implements proto.StoreServer.
