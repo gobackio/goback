@@ -189,6 +189,46 @@ func TestNewRunnerFindsTheJobsAndEachReindexesAfter(t *testing.T) {
 	require.Equal(t, int32(3), x.fakeReindexer.runs.Load())
 }
 
+type fakeForecaster struct{ asked time.Time }
+
+func (f *fakeForecaster) RootDeath(_ context.Context, now time.Time) (func([]byte) time.Time, error) {
+	f.asked = now
+	return func([]byte) time.Time { return now.Add(time.Hour) }, nil
+}
+
+type optsCollector struct{ opts pack.CollectOptions }
+
+func (c *optsCollector) Collect(_ context.Context, opts pack.CollectOptions) (*pack.CollectReport, error) {
+	c.opts = opts
+	return &pack.CollectReport{}, nil
+}
+
+type forecastingIndex struct {
+	backup.Index
+	fakeForecaster
+}
+
+func TestACollectionExpectsTheDeathsTheIndexForecasts(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+
+	collector, x := &optsCollector{}, &forecastingIndex{}
+	_, err := Collect(ctx, collector, x, pack.CollectOptions{Now: now})
+	require.NoError(t, err)
+	require.Equal(t, now, x.asked, "the index forecasts as of the collection's now")
+	require.NotNil(t, collector.opts.Death)
+	require.Equal(t, now.Add(time.Hour), collector.opts.Death(nil))
+
+	r := NewRunner(&fakeArchives{}, x, DefaultSchedule)
+	require.NotNil(t, r.Forecaster)
+
+	collector.opts = pack.CollectOptions{}
+	r.Collector = collector
+	_, err = r.Collect(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, collector.opts.Death)
+}
+
 type fakeRepairer struct {
 	backup.ObjectStore
 	lost []*proto.Ref

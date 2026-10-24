@@ -243,6 +243,7 @@ func TestPostgres(t *testing.T) {
 		"FillingSizesRepairsOldRows":       TestFillingSizesRepairsCommitsIndexedWithoutOne,
 		"FillingSizesSkipsTombstoned":      TestFillingSizesLeavesATombstonedCommitAlone,
 		"RootOwnerNamesTheSet":             TestRootOwnerNamesTheSetBehindACommitOrPin,
+		"RootDeathFollowsThePolicy":        TestRootDeathExpectsEachCommitToDieWhenItsPolicyLetsItGo,
 		"RecordedSetSizes":                 TestRecordedSetSizesReplaceTheLastRuns,
 		"RecordedSetSizesInBatches":        TestRecordedSetSizesReachEverySetAcrossBatchesAndCountUnknownOnes,
 		"PendingPresence":                  TestPendingPresenceIsBuiltForEachSetWhoseNewestLiveCommitLacksItOnceItsFilterIsOld,

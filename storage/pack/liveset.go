@@ -16,14 +16,15 @@ import (
 type refKey [32]byte
 
 // liveRef is a reached object with the uncompressed size of the file
-// content it carries.
+// content it carries and how soon the roots it was reached from die.
 type liveRef struct {
-	key  refKey
-	size uint64
+	key   refKey
+	size  uint64
+	death deathClass
 }
 
 // liveRefSize is what one liveRef takes up in a run.
-const liveRefSize = len(refKey{}) + 8
+const liveRefSize = len(refKey{}) + 8 + 1
 
 func keyOf(hash []byte) refKey {
 	var k refKey
@@ -80,7 +81,9 @@ func sortRefs(refs []liveRef) {
 // sortRoots groups the roots by group and then by set, so a batch of
 // them holds one set and every group's batches are contiguous. A group's
 // whole roots come before its shallow ones, so a file a shallow root
-// visited first never keeps a whole root from its parts.
+// visited first never keeps a whole root from its parts, and a set's
+// roots that die later come before those that die sooner, so the first
+// root to reach an object is one of those that keep it longest.
 func sortRoots(roots []gcRoot) {
 	sort.Slice(roots, func(i, j int) bool {
 		if roots[i].owner.Group != roots[j].owner.Group {
@@ -93,6 +96,10 @@ func sortRoots(roots []gcRoot) {
 
 		if roots[i].owner != roots[j].owner {
 			return roots[i].owner.before(roots[j].owner)
+		}
+
+		if roots[i].death != roots[j].death {
+			return roots[i].death.later(roots[j].death)
 		}
 
 		return bytes.Compare(roots[i].key[:], roots[j].key[:]) < 0
@@ -129,6 +136,7 @@ func (l *liveRuns) spillLocked() error {
 	for _, ref := range l.buf {
 		copy(entry[:], ref.key[:])
 		binary.BigEndian.PutUint64(entry[len(ref.key):], ref.size)
+		entry[len(ref.key)+8] = byte(ref.death)
 
 		if _, err := w.Write(entry[:]); err != nil {
 			_ = file.Close()
@@ -237,6 +245,7 @@ func (h *runHead) advance() bool {
 
 	copy(h.cur.key[:], entry[:])
 	h.cur.size = binary.BigEndian.Uint64(entry[len(h.cur.key):])
+	h.cur.death = deathClass(entry[len(h.cur.key)+8])
 
 	return true
 }
@@ -268,30 +277,36 @@ type liveIter struct {
 	heads []*runHead
 	heap  runHeap
 
-	key    refKey
-	size   uint64
-	owners []Attribution
-	held   bool
-	drawn  bool
+	key   refKey
+	found reach
+	held  bool
+	drawn bool
 }
 
-// at returns everything that reached key, in group then set order and
-// without repeats, with the size of the file content it carries, or false
-// when the runs hold nothing at key. The answer stands until the caller
-// asks after a later key, so the same object in two archives is answered
-// twice.
-func (it *liveIter) at(key refKey) ([]Attribution, uint64, bool) {
+// reach is what the runs hold at one key: everything that reached it, in
+// group then set order and without repeats, the size of the file content
+// it carries, and how soon the last of the roots it was reached from dies.
+type reach struct {
+	owners []Attribution
+	size   uint64
+	death  deathClass
+}
+
+// at returns what the runs hold at key, or false when they hold nothing
+// there. The answer stands until the caller asks after a later key, so
+// the same object in two archives is answered twice.
+func (it *liveIter) at(key refKey) (reach, bool) {
 	for {
 		if !it.drawn {
 			it.draw()
 		}
 
 		if !it.held || bytes.Compare(it.key[:], key[:]) > 0 {
-			return nil, 0, false
+			return reach{}, false
 		}
 
 		if it.key == key {
-			return it.owners, it.size, true
+			return it.found, true
 		}
 
 		it.drawn = false
@@ -300,20 +315,25 @@ func (it *liveIter) at(key refKey) ([]Attribution, uint64, bool) {
 
 // draw collects the runs' entries for the next key they hold.
 func (it *liveIter) draw() {
-	it.drawn, it.held, it.size, it.owners = true, false, 0, it.owners[:0]
+	it.drawn, it.held = true, false
+	it.found = reach{owners: it.found.owners[:0]}
 
 	if it.heap.Len() == 0 {
 		return
 	}
 
 	it.key, it.held = it.heap[0].cur.key, true
+	it.found.death = it.heap[0].cur.death
 
 	for it.heap.Len() > 0 && it.heap[0].cur.key == it.key {
 		top := it.heap[0]
-		it.size = max(it.size, top.cur.size)
+		it.found.size = max(it.found.size, top.cur.size)
+		if top.cur.death.later(it.found.death) {
+			it.found.death = top.cur.death
+		}
 
-		if n := len(it.owners); n == 0 || it.owners[n-1] != top.owner {
-			it.owners = append(it.owners, top.owner)
+		if n := len(it.found.owners); n == 0 || it.found.owners[n-1] != top.owner {
+			it.found.owners = append(it.found.owners, top.owner)
 		}
 
 		if top.advance() {

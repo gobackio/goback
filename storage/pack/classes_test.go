@@ -12,43 +12,49 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAnAgeClassIsTheDayThenWeekThenMonthThenYear(t *testing.T) {
-	now := time.Date(2026, 10, 5, 15, 0, 0, 0, time.UTC) // a Monday
-	day := func(y int, m time.Month, d int) int64 { return time.Date(y, m, d, 0, 0, 0, 0, time.UTC).Unix() }
+func TestADeathClassIsTheHorizonItFallsWithin(t *testing.T) {
+	now := time.Date(2026, 10, 5, 15, 0, 0, 0, time.UTC)
+	day := 24 * time.Hour
 
 	for _, c := range []struct {
 		at   time.Time
-		want ageClass
+		want deathClass
 	}{
-		{now, ageClass{spanDay, day(2026, 10, 5)}},
-		{time.Date(2026, 9, 29, 23, 0, 0, 0, time.UTC), ageClass{spanDay, day(2026, 9, 29)}},
-		{time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC), ageClass{spanWeek, day(2026, 9, 28)}},
-		{time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC), ageClass{spanWeek, day(2026, 9, 7)}},
-		{time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC), ageClass{spanMonth, day(2026, 9, 1)}},
-		{time.Date(2025, 11, 30, 12, 0, 0, 0, time.UTC), ageClass{spanMonth, day(2025, 11, 1)}},
-		{time.Date(2025, 10, 31, 12, 0, 0, 0, time.UTC), ageClass{spanYear, day(2025, 1, 1)}},
+		{time.Time{}, never},
+		{now.Add(-day), 4},
+		{now.Add(7 * day), 4},
+		{now.Add(8 * day), 3},
+		{now.Add(31 * day), 3},
+		{now.Add(60 * day), 2},
+		{now.Add(200 * day), 1},
+		{now.Add(400 * day), never},
 	} {
-		require.Equal(t, c.want, classOf(c.at, now), "%s", c.at)
+		require.Equal(t, c.want, deathOf(c.at, now), "%s", c.at)
 	}
+
+	require.True(t, never.later(1))
+	require.True(t, deathClass(1).later(4))
 }
 
-func TestASmallClassJoinsItsOwnersNextOlderOne(t *testing.T) {
+func TestASmallClassJoinsItsOwnersNextToDieLater(t *testing.T) {
 	c := newClasses(nil)
 	set := Attribution{Group: 1, Set: 7}
 	other := Attribution{Group: 1, Set: 9}
 
-	today := c.id(outputClass{Owner: set, Age: ageClass{spanDay, 300}})
-	week := c.id(outputClass{Owner: set, Age: ageClass{spanWeek, 200}})
-	month := c.id(outputClass{Owner: set, Age: ageClass{spanMonth, 100}})
-	year := c.id(outputClass{Owner: set, Age: ageClass{spanYear, 0}})
-	alone := c.id(outputClass{Owner: other, Age: ageClass{spanDay, 300}})
+	week := c.id(outputClass{Owner: set, Death: 4})
+	month := c.id(outputClass{Owner: set, Death: 3})
+	quarter := c.id(outputClass{Owner: set, Death: 2})
+	forever := c.id(outputClass{Owner: set, Death: never})
+	data := c.id(outputClass{Owner: set, Data: true, Death: 4})
+	alone := c.id(outputClass{Owner: other, Death: 4})
 
-	into := c.fold(map[int32]uint64{today: 10, week: 50, month: 200, year: 10, alone: 10}, 100)
+	into := c.fold(map[int32]uint64{week: 10, month: 50, quarter: 200, forever: 10, data: 10, alone: 10}, 100)
 
-	require.Equal(t, month, into[today], "the day and the week add up to too little, so they join the month")
-	require.Equal(t, month, into[week])
-	require.Equal(t, month, into[month])
-	require.Equal(t, month, into[year], "the oldest, still small, joins the newer class")
+	require.Equal(t, quarter, into[week], "the week and the month add up to too little, so they join the quarter")
+	require.Equal(t, quarter, into[month])
+	require.Equal(t, quarter, into[quarter])
+	require.Equal(t, quarter, into[forever], "the last to die, still small, joins the one before")
+	require.Equal(t, data, into[data], "blobs never join the rest")
 	require.Equal(t, alone, into[alone], "an owner whose only class is small keeps it")
 }
 
@@ -299,8 +305,8 @@ func TestASweepWritesBlobsApartFromTheRest(t *testing.T) {
 func TestAChunkFoldsTheClassesBySizesWithinIt(t *testing.T) {
 	c := newClasses(nil)
 	set := Attribution{Group: 1, Set: 7}
-	day := c.id(outputClass{Owner: set, Age: ageClass{spanDay, 300}})
-	week := c.id(outputClass{Owner: set, Age: ageClass{spanWeek, 200}})
+	day := c.id(outputClass{Owner: set, Death: 4})
+	week := c.id(outputClass{Owner: set, Death: 3})
 
 	first, second := &archive{name: "first"}, &archive{name: "second"}
 	held := map[string]*classed{

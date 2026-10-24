@@ -39,6 +39,12 @@ type Attributor interface {
 	RecordSetSizes(ctx context.Context, report *pack.CollectReport) error
 }
 
+// Forecaster is an index that expects when each root stops being one, so
+// a collection writes what dies about the same time together.
+type Forecaster interface {
+	RootDeath(ctx context.Context, now time.Time) (func(root []byte) time.Time, error)
+}
+
 // Reindexer is an index that rebuilds the indexes of its tables a
 // maintenance run churned, and reports the tables it rebuilt.
 type Reindexer interface {
@@ -72,22 +78,38 @@ var DefaultSchedule = Schedule{
 
 // Collect garbage collects the store with opts. When idx is an Attributor,
 // what survives is grouped by the set that owns it and what each set takes
-// up is recorded; when it is a Reindexer, the indexes the collection
-// churned are rebuilt. idx may be nil.
+// up is recorded; when it is a Forecaster, by when it is expected to die;
+// when it is a Reindexer, the indexes the collection churned are rebuilt.
+// idx may be nil.
 func Collect(ctx context.Context, collector pack.Collector, idx backup.Index, opts pack.CollectOptions) (*pack.CollectReport, error) {
 	attributor, _ := idx.(Attributor)
+	forecaster, _ := idx.(Forecaster)
 	reindexer, _ := idx.(Reindexer)
 
-	return collect(ctx, collector, attributor, reindexer, opts)
+	return collect(ctx, collector, attributor, forecaster, reindexer, opts)
 }
 
-func collect(ctx context.Context, collector pack.Collector, attributor Attributor, reindexer Reindexer, opts pack.CollectOptions) (*pack.CollectReport, error) {
-	report, err := attributed(ctx, collector, attributor, opts)
+func collect(ctx context.Context, collector pack.Collector, attributor Attributor, forecaster Forecaster, reindexer Reindexer, opts pack.CollectOptions) (*pack.CollectReport, error) {
+	report, err := attributed(ctx, collector, attributor, forecaster, opts)
 
 	return report, errors.Join(err, reindex(ctx, reindexer))
 }
 
-func attributed(ctx context.Context, collector pack.Collector, attributor Attributor, opts pack.CollectOptions) (*pack.CollectReport, error) {
+func attributed(ctx context.Context, collector pack.Collector, attributor Attributor, forecaster Forecaster, opts pack.CollectOptions) (*pack.CollectReport, error) {
+	if forecaster != nil {
+		now := opts.Now
+		if now.IsZero() {
+			now = time.Now()
+		}
+
+		death, err := forecaster.RootDeath(ctx, now)
+		if err != nil {
+			return nil, err
+		}
+
+		opts.Death = death
+	}
+
 	if attributor != nil {
 		owner, err := attributor.RootOwner(ctx)
 		if err != nil {
@@ -133,6 +155,7 @@ func NewRunner(store backup.ObjectStore, idx backup.Index, schedule Schedule) *R
 	r.Presence, _ = idx.(Presence)
 	r.Measurer, _ = idx.(Measurer)
 	r.Attributor, _ = idx.(Attributor)
+	r.Forecaster, _ = idx.(Forecaster)
 	r.Reindexer, _ = idx.(Reindexer)
 
 	return r
@@ -143,6 +166,7 @@ type Runner struct {
 	Store      Store
 	Collector  pack.Collector
 	Attributor Attributor
+	Forecaster Forecaster
 	Retirer    backup.Retirer
 	Presence   Presence
 	Measurer   Measurer
@@ -280,7 +304,7 @@ func (r *Runner) Due(ctx context.Context) (Ran, error) {
 	errs = append(errs, err)
 
 	if due {
-		ran.Collected, err = attributed(ctx, r.Collector, r.Attributor, pack.CollectOptions{})
+		ran.Collected, err = attributed(ctx, r.Collector, r.Attributor, r.Forecaster, pack.CollectOptions{})
 		errs = append(errs, err)
 	}
 
@@ -342,7 +366,7 @@ func (r *Runner) Collect(ctx context.Context) (*pack.CollectReport, error) {
 		return nil, nil
 	}
 
-	report, err := collect(ctx, r.Collector, r.Attributor, r.Reindexer, pack.CollectOptions{})
+	report, err := collect(ctx, r.Collector, r.Attributor, r.Forecaster, r.Reindexer, pack.CollectOptions{})
 	if report != nil && r.OnCollect != nil {
 		r.OnCollect(report)
 	}

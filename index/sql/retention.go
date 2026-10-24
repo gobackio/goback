@@ -52,16 +52,25 @@ func (x *Index) loadSetConfig(ctx context.Context, c *ent.Client, setID int64) (
 		return nil, err
 	}
 
-	cfg := &setConfig{
+	policy, err := x.policyOf(defaults, s)
+	if err != nil {
+		return nil, err
+	}
+
+	return &setConfig{
 		name:   s.Name,
 		state:  s.State,
 		paused: s.RetentionPaused,
-		policy: retention.Default,
+		policy: policy,
 		trash:  time.Duration(defaults.TrashDays) * 24 * time.Hour,
-	}
+	}, nil
+}
 
+// policyOf is the policy set s keeps by: its own, or else the store's.
+func (x *Index) policyOf(defaults *ent.Settings, s *ent.Set) (retention.Policy, error) {
+	policy := retention.Default
 	if x.DefaultPolicy != nil {
-		cfg.policy = *x.DefaultPolicy
+		policy = *x.DefaultPolicy
 	}
 
 	for _, raw := range []*string{defaults.RetentionPolicy, s.RetentionPolicy} {
@@ -71,13 +80,13 @@ func (x *Index) loadSetConfig(ctx context.Context, c *ent.Client, setID int64) (
 
 		p, err := retention.Parse([]byte(*raw))
 		if err != nil {
-			return nil, fmt.Errorf("set %d: %w", setID, err)
+			return policy, fmt.Errorf("set %d: %w", s.ID, err)
 		}
 
-		cfg.policy = p
+		policy = p
 	}
 
-	return cfg, nil
+	return policy, nil
 }
 
 // evaluateSet applies the set's policy to its un-tombstoned, un-deleted

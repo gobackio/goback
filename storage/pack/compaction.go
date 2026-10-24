@@ -92,8 +92,9 @@ func (r *CompactReport) Summary() string {
 // Compact merges the small committed archives into archives at the root
 // once they add up to a batch, or are more than MinimumCandidates, and
 // returns what it did when it is done. It writes blobs and the other
-// objects into archives of their own, each too large to be merged again
-// unless the candidates held too little of its kind.
+// objects into archives of their own, and what the candidates' last mark
+// expected to die about the same time together, each too large to be
+// merged again unless the candidates held too little of it.
 func (ps *PackStorage) Compact(ctx context.Context) (*CompactReport, error) {
 	started := time.Now()
 
@@ -332,19 +333,20 @@ type rewrite struct {
 	obsolete []*archive
 	done     int
 	// unmarked names the copied objects their input's last mark result
-	// left unreachable, with that result's generation and DeadSince
+	// left unreachable, with that result's generation and DeadSince, and
+	// deaths those it expected to die
 	unmarked map[string]unmarkedIn
+	deaths   map[string]deathClass
 	// open holds the outputs being written; class is the classes of the
-	// chunk being written, and writers how many outputs of each kind, by
-	// whether it is data, its unclassed records share
+	// chunk being written, and writers how many outputs each class shares
+	// out among the workers when more than one
 	open    map[outputKey]*rewriteOutput
 	class   func(candidate *archive, pos int) int32
-	writers map[bool]int
+	writers map[int32]int
 }
 
-// outputKey names an open output: a class of the chunk, or, for a record
-// without one, the writer of its kind it is written by. Blobs and other
-// records never share an output.
+// outputKey names an open output: a class of the chunk and the writer of
+// it a worker writes with. Blobs and other records never share an output.
 type outputKey struct {
 	class  int32
 	writer int
@@ -391,23 +393,12 @@ func (rw *rewrite) chunk(ctx context.Context, chunk []*archive, workers int) err
 		return err
 	}
 
-	rw.written, rw.unmarked = make(map[string]bool), make(map[string]unmarkedIn)
+	rw.written, rw.unmarked, rw.deaths = make(map[string]bool), make(map[string]unmarkedIn), make(map[string]deathClass)
 
-	kinds := make(map[bool]uint64)
-	for _, idx := range indexes {
-		for i := range idx {
-			kinds[isData(idx[i].Type)] += uint64(idx[i].Length)
-		}
-	}
-
-	rw.writers = make(map[bool]int)
-	for _, data := range []bool{false, true} {
-		rw.writers[data] = rw.ps.compaction.workersFor(kinds[data], workers)
-	}
-
-	rw.class = nil
 	if rw.group.classes != nil {
-		rw.class = chunkClasses(rw.group.classes, rw.ps.compaction.small(), chunk, rw.group.classed)
+		rw.class, rw.writers = chunkClasses(rw.group.classes, rw.ps.compaction.small(), chunk, rw.group.classed), nil
+	} else {
+		rw.class, rw.writers = rw.deathClasses(chunk, indexes, workers)
 	}
 
 	grp, gctx := errgroup.WithContext(ctx)
@@ -457,7 +448,7 @@ func (rw *rewrite) chunk(ctx context.Context, chunk []*archive, workers int) err
 	rw.obsolete, rw.outputs = nil, nil
 	rw.mtx.Unlock()
 
-	if err := rw.ps.carryErasureClock(obsolete, outputs, rw.unmarked); err != nil {
+	if err := rw.ps.carryErasureClock(obsolete, outputs, rw.unmarked, rw.deaths); err != nil {
 		return err
 	}
 
@@ -474,6 +465,57 @@ func (rw *rewrite) chunk(ctx context.Context, chunk []*archive, workers int) err
 	rw.mtx.Unlock()
 
 	return nil
+}
+
+// deathClasses classes the records of a chunk no sweep classed by kind
+// and by how soon their input's last mark expected them to die, folded as
+// a sweep folds its classes, and shares each class out among as many
+// writers as its bytes fill.
+func (rw *rewrite) deathClasses(chunk []*archive, indexes []IndexFile, workers int) (func(candidate *archive, pos int) int32, map[int32]int) {
+	c := newClasses(nil)
+	held := make(map[*archive]*classed, len(chunk))
+	sizes := make(map[int32]uint64)
+
+	for i, a := range chunk {
+		mark := a.gcResult()
+		cl := &classed{Class: make([]int32, len(indexes[i]))}
+
+		for pos := range indexes[i] {
+			rec := &indexes[i][pos]
+
+			death := never
+			if mark != nil {
+				death = mark.death(pos)
+			}
+
+			id := c.id(outputClass{Data: isData(rec.Type), Death: death})
+			cl.Class[pos] = id
+			sizes[id] += uint64(rec.Length)
+		}
+
+		held[a] = cl
+	}
+
+	into := c.fold(sizes, rw.ps.compaction.small())
+
+	folded := make(map[int32]uint64)
+	for id, n := range sizes {
+		folded[into[id]] += n
+	}
+
+	writers := make(map[int32]int, len(folded))
+	for id, n := range folded {
+		writers[id] = rw.ps.compaction.workersFor(n, workers)
+	}
+
+	return func(candidate *archive, pos int) int32 {
+		cl := held[candidate]
+		if cl == nil || pos < 0 || pos >= len(cl.Class) {
+			return -1
+		}
+
+		return into[cl.Class[pos]]
+	}, writers
 }
 
 // lookUp reads the indexes of the chunk and works out once for every
@@ -620,7 +662,8 @@ func (ps *PackStorage) retireRewritten(obsolete []*archive, indexes map[string]I
 const progressEvery = 500
 
 // claim reports whether the caller is the first to write the object, and
-// records the mark the input's last generation gave it.
+// records the mark the input's last generation gave it and the death it
+// expected.
 func (rw *rewrite) claim(hash []byte, mark *gcFile, pos int) bool {
 	rw.mtx.Lock()
 	defer rw.mtx.Unlock()
@@ -631,8 +674,16 @@ func (rw *rewrite) claim(hash []byte, mark *gcFile, pos int) bool {
 
 	rw.written[string(hash)] = true
 
-	if mark != nil && pos >= 0 && !mark.Current.Test(uint(pos)) {
+	if mark == nil || pos < 0 {
+		return true
+	}
+
+	if !mark.Current.Test(uint(pos)) {
 		rw.unmarked[string(hash)] = unmarkedIn{generation: mark.Generation, since: mark.DeadSince}
+	}
+
+	if death := mark.death(pos); death != never {
+		rw.deaths[string(hash)] = death
 	}
 
 	return true
@@ -662,8 +713,8 @@ func (rw *rewrite) output(worker int, candidate *archive, pos int, t uint32) *re
 		key.class = rw.class(candidate, pos)
 	}
 
-	if key.class < 0 {
-		key.writer = worker % rw.writers[key.data]
+	if n := rw.writers[key.class]; n > 1 {
+		key.writer = worker % n
 	}
 
 	rw.mtx.Lock()
@@ -946,12 +997,13 @@ type unmarkedIn struct {
 
 // carryErasureClock seeds the outputs of a rewrite with the mark of the
 // newest generation among its inputs, so that an unreachable object keeps
-// counting towards its second unmarked generation. An output's DeadSince
+// counting towards its second unmarked generation and one expected to die
+// keeps its death. An output's DeadSince
 // is the earliest its unreachable objects carry: their input's, but no
 // earlier than the object's own version, which it cannot have outlived.
 // An output without unreachable objects has none. An object whose input
 // was last marked in an older generation counts as reachable.
-func (ps *PackStorage) carryErasureClock(inputs, outputs []*archive, unmarked map[string]unmarkedIn) error {
+func (ps *PackStorage) carryErasureClock(inputs, outputs []*archive, unmarked map[string]unmarkedIn, deaths map[string]deathClass) error {
 	var generation uint64
 	var snapshot time.Time
 
@@ -978,6 +1030,8 @@ func (ps *PackStorage) carryErasureClock(inputs, outputs []*archive, unmarked ma
 		}
 
 		for pos, rec := range idx {
+			seed.Death.set(pos, len(idx), deaths[string(rec.Sum[:])])
+
 			in, ok := unmarked[string(rec.Sum[:])]
 			if !ok || in.generation != generation {
 				continue

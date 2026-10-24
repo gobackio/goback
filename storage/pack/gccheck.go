@@ -61,7 +61,7 @@ func (ps *PackStorage) halted() (string, error) {
 // never change.
 func (r *gcRun) confirmDrops(ctx context.Context) error {
 	opts := r.opts
-	opts.Owner = nil
+	opts.Owner, opts.Death = nil, nil
 	opts.TempDir = filepath.Join(r.opts.TempDir, "goback-gc-check")
 
 	check := newGCRun(r.ps, opts, r.prev, r.reads)
@@ -85,7 +85,7 @@ func (r *gcRun) confirmDrops(ctx context.Context) error {
 	dropped := make(map[refKey][]string)
 	kept := make(map[refKey]bool)
 
-	err = check.scan(live, func(ga *gcArchive, pos int, rec *IndexRecord, _ []Attribution, _ uint64) {
+	err = check.scan(live, func(ga *gcArchive, pos int, rec *IndexRecord, _ reach) {
 		if proto.ObjectType(rec.Type) == proto.ObjectType_TOMBSTONE {
 			return
 		}

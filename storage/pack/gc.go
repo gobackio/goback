@@ -60,6 +60,10 @@ type CollectOptions struct {
 	// parts of those files, which go unless another root reaches them; nil
 	// keeps every root whole.
 	Shallow func(root []byte) bool
+	// Death is when a root is expected to stop being one, zero for never,
+	// so a sweep writes what dies about the same time together; nil
+	// expects no root to die.
+	Death func(root []byte) time.Time
 }
 
 // Attribution is what a root belongs to: the group its objects are
@@ -214,9 +218,10 @@ type gcArchive struct {
 	prev      *gcFile
 	cur       *bitset.BitSet
 	next      *gcFile
-	// owners is whom the mark attributed each record to, and classed
-	// what a sweep writes each with
+	// owners is whom the mark attributed each record to, death how soon
+	// it expects each to die, and classed what a sweep writes each with
 	owners  []Attribution
+	death   deaths
 	classed *classed
 }
 
@@ -349,11 +354,13 @@ func newGCRun(ps *PackStorage, opts CollectOptions, prev *gcState, reads *gcRead
 	return run
 }
 
-// gcRoot is a root with what it belongs to, zero when nothing names it.
+// gcRoot is a root with what it belongs to, zero when nothing names it,
+// and how soon it is expected to die.
 type gcRoot struct {
 	key     refKey
 	owner   Attribution
 	shallow bool
+	death   deathClass
 }
 
 // Collect marks every object reachable from a live commit or pin, records
@@ -739,6 +746,10 @@ func (r *gcRun) root(hash []byte) gcRoot {
 
 	if r.opts.Shallow != nil {
 		root.shallow = r.opts.Shallow(hash)
+	}
+
+	if r.opts.Death != nil {
+		root.death = deathOf(r.opts.Death(hash), r.opts.Now)
 	}
 
 	return root
@@ -1140,6 +1151,7 @@ func (r *gcRun) snapshotID() string {
 
 	for _, root := range r.roots {
 		h.Write(root.key[:])
+		h.Write([]byte{byte(root.death)})
 	}
 
 	return fmt.Sprintf("%x", h.Sum(nil))
@@ -1246,24 +1258,19 @@ func (r *gcRun) mark(ctx context.Context) (*liveRuns, error) {
 		bit := visited.bit(roots[0].owner.Set)
 		claim := func(keys []refKey) []refKey { return visited.claim(keys, bit) }
 
-		var blobs []liveRef
-		frontier := claim(keysOf(roots))
-		walked := frontier[:0]
-
-		for _, key := range frontier {
-			if r.blobs[key] {
-				blobs = append(blobs, liveRef{key: key})
-			} else {
-				walked = append(walked, key)
+		// the roots that die later walk first, so what they reach is
+		// claimed for them before a root that dies sooner reaches it
+		for start := 0; start < len(roots); {
+			end := start + 1
+			for end < len(roots) && roots[end].death == roots[start].death {
+				end++
 			}
-		}
 
-		if err := live.add(blobs); err != nil {
-			return nil, err
-		}
+			if err := r.markRoots(ctx, roots[start:end], claim, live); err != nil {
+				return nil, err
+			}
 
-		if err := r.markBatch(ctx, walked, claim, live, roots[0].shallow); err != nil {
-			return nil, err
+			start = end
 		}
 
 		if err := live.checkpoint(batch); err != nil {
@@ -1283,10 +1290,32 @@ func (r *gcRun) mark(ctx context.Context) (*liveRuns, error) {
 	return live, nil
 }
 
+// markRoots walks from roots of one set, shallowness and death.
+func (r *gcRun) markRoots(ctx context.Context, roots []gcRoot, claim func([]refKey) []refKey, live *liveRuns) error {
+	var blobs []liveRef
+	frontier := claim(keysOf(roots))
+	walked := frontier[:0]
+
+	for _, key := range frontier {
+		if r.blobs[key] {
+			blobs = append(blobs, liveRef{key: key, death: roots[0].death})
+		} else {
+			walked = append(walked, key)
+		}
+	}
+
+	if err := live.add(blobs); err != nil {
+		return err
+	}
+
+	return r.markBatch(ctx, walked, claim, live, roots[0].shallow, roots[0].death)
+}
+
 // markBatch walks breadth-first from the frontier, reading each run of
 // records that sit close together in an archive at once, up to Readers runs
-// at a time. A shallow walk leaves the parts of files out.
-func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]refKey) []refKey, live *liveRuns, shallow bool) error {
+// at a time, and records what it reaches as dying with death. A shallow
+// walk leaves the parts of files out.
+func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]refKey) []refKey, live *liveRuns, shallow bool, death deathClass) error {
 	for len(frontier) > 0 {
 		records, err := r.placeAll(ctx, frontier)
 		if err != nil {
@@ -1320,6 +1349,10 @@ func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]r
 					} else {
 						children = appendChildren(children, &found, read.obj)
 					}
+				}
+
+				for i := range found {
+					found[i].death = death
 				}
 
 				if err := live.add(found); err != nil {
@@ -1625,9 +1658,12 @@ func (r *gcRun) merge(live *liveRuns) (uint64, error) {
 	var marked uint64
 
 	var counted refKey
-	err := r.scan(live, func(ga *gcArchive, pos int, rec *IndexRecord, owners []Attribution, size uint64) {
+	err := r.scan(live, func(ga *gcArchive, pos int, rec *IndexRecord, found reach) {
 		ga.cur.Set(uint(pos))
+		ga.death.set(pos, ga.count, found.death)
 		marked++
+
+		owners, size := found.owners, found.size
 
 		// a second copy of an object adds to what it takes up, not to the
 		// content it carries
@@ -1707,14 +1743,14 @@ func (r *gcRun) share(owners []Attribution, length, content uint64) {
 }
 
 // scan walks every index record of the snapshot in ref order alongside the
-// sorted runs; hit sees the records the runs name, with everything that
-// reached them, and each sees every record.
-func (r *gcRun) scan(runs *liveRuns, hit func(ga *gcArchive, pos int, rec *IndexRecord, owners []Attribution, size uint64), each func(sum refKey)) error {
+// sorted runs; hit sees the records the runs name, with what the runs hold
+// of them, and each sees every record.
+func (r *gcRun) scan(runs *liveRuns, hit func(ga *gcArchive, pos int, rec *IndexRecord, found reach), each func(sum refKey)) error {
 	return r.scanOf(r.order, runs, hit, each)
 }
 
 // scanOf is scan over archives alone.
-func (r *gcRun) scanOf(archives []*gcArchive, runs *liveRuns, hit func(ga *gcArchive, pos int, rec *IndexRecord, owners []Attribution, size uint64), each func(sum refKey)) error {
+func (r *gcRun) scanOf(archives []*gcArchive, runs *liveRuns, hit func(ga *gcArchive, pos int, rec *IndexRecord, found reach), each func(sum refKey)) error {
 	it, err := runs.iterator()
 	if err != nil {
 		return err
@@ -1752,8 +1788,8 @@ func (r *gcRun) scanOf(archives []*gcArchive, runs *liveRuns, hit func(ga *gcArc
 		top := h[0]
 		sum := top.rec.Sum
 
-		if owners, size, ok := it.at(sum); ok {
-			hit(top.ga, top.pos, top.rec, owners, size)
+		if found, ok := it.at(sum); ok {
+			hit(top.ga, top.pos, top.rec, found)
 		}
 
 		if each != nil {
@@ -1801,11 +1837,11 @@ func (r *gcRun) flagErased(ctx context.Context) error {
 	defer runs.close()
 
 	visited := newVisitedSet()
-	if err := r.markBatch(ctx, visited.claimUnreached(roots), visited.claimUnreached, runs, false); err != nil {
+	if err := r.markBatch(ctx, visited.claimUnreached(roots), visited.claimUnreached, runs, false, never); err != nil {
 		return err
 	}
 
-	return r.scan(runs, func(ga *gcArchive, pos int, _ *IndexRecord, _ []Attribution, _ uint64) {
+	return r.scan(runs, func(ga *gcArchive, pos int, _ *IndexRecord, _ reach) {
 		if !ga.cur.Test(uint(pos)) {
 			ga.erase = true
 		}
@@ -1819,7 +1855,7 @@ func (r *gcRun) writeResults() error {
 	grp.SetLimit(r.opts.Readers)
 
 	for _, ga := range r.order {
-		next := &gcFile{Generation: r.gen, Snapshot: r.snapshot, Current: ga.cur, Erase: ga.erase}
+		next := &gcFile{Generation: r.gen, Snapshot: r.snapshot, Current: ga.cur, Erase: ga.erase, Death: ga.death}
 
 		if ga.prev != nil && ga.prev.Generation == r.gen-1 {
 			next.Previous = ga.prev.Current

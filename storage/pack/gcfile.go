@@ -60,6 +60,40 @@ type gcFile struct {
 	// Erase is set when the archive holds objects only an erased commit
 	// names; the sweep selects it as soon as they are dead.
 	Erase bool
+	// Death is how soon the generation expected the object at each .idx
+	// position to die.
+	Death deaths
+}
+
+// death is how soon the object at pos was expected to die.
+func (g *gcFile) death(pos int) deathClass {
+	return g.Death.at(pos)
+}
+
+// deaths holds the deathClass of each index position, two to a byte; nil
+// holds never for every one.
+type deaths []byte
+
+func (d deaths) at(pos int) deathClass {
+	if pos < 0 || pos/2 >= len(d) {
+		return never
+	}
+
+	return deathClass(d[pos/2] >> (4 * (pos % 2)) & 0xf)
+}
+
+// set records class c at pos of count positions.
+func (d *deaths) set(pos, count int, c deathClass) {
+	if c == never && *d == nil {
+		return
+	}
+
+	if *d == nil {
+		*d = make(deaths, (count+1)/2)
+	}
+
+	shift := 4 * (pos % 2)
+	(*d)[pos/2] = (*d)[pos/2]&^(0xf<<shift) | byte(c)<<shift
 }
 
 // dead reports whether the object at pos was unmarked in both generations.
@@ -141,6 +175,14 @@ func (g *gcFile) WriteTo(w io.Writer) (int64, error) {
 		}
 	}
 
+	if err := write(uint32(len(g.Death))); err != nil {
+		return cw.count, err
+	}
+
+	if _, err := bw.Write(g.Death); err != nil {
+		return cw.count, err
+	}
+
 	return cw.count, bw.Flush()
 }
 
@@ -185,6 +227,22 @@ func (g *gcFile) ReadFrom(r io.Reader) (int64, error) {
 	g.Dead = make([]uint64, dead)
 	for i := range g.Dead {
 		if err := binary.Read(cr, binary.BigEndian, &g.Dead[i]); err != nil {
+			return cr.count, err
+		}
+	}
+
+	// deaths come last, so a result may end without them and a reader
+	// that knows none stops before them
+	var n uint32
+	if err := binary.Read(cr, binary.BigEndian, &n); errors.Is(err, io.EOF) {
+		return cr.count, nil
+	} else if err != nil {
+		return cr.count, err
+	}
+
+	if n > 0 {
+		g.Death = make(deaths, n)
+		if _, err := io.ReadFull(cr, g.Death); err != nil {
 			return cr.count, err
 		}
 	}

@@ -606,7 +606,7 @@ func TestARewriteOutputTakesTheErasureClockOfTheDeadObjectsItHolds(t *testing.T)
 
 	carry := func(since time.Time, unmarked map[string]unmarkedIn) *gcFile {
 		out.setGCResult(&gcFile{Generation: 5, Snapshot: written, Current: bitset.New(uint(len(idx))), DeadSince: since})
-		require.NoError(t, store.carryErasureClock([]*archive{out}, []*archive{out}, unmarked))
+		require.NoError(t, store.carryErasureClock([]*archive{out}, []*archive{out}, unmarked, nil))
 
 		return out.gcResult()
 	}
@@ -744,6 +744,37 @@ func TestGCFileRoundTrip(t *testing.T) {
 	require.False(t, out.dead(0))
 }
 
+func TestAMarkResultKeepsTheDeathOfEachPosition(t *testing.T) {
+	g := &gcFile{Generation: 1, Current: bitset.New(5)}
+	g.Death.set(0, 5, never)
+	require.Nil(t, g.Death, "a result expecting nothing to die holds no deaths")
+
+	g.Death.set(1, 5, 4)
+	g.Death.set(4, 5, 2)
+	g.Death.set(1, 5, 3)
+
+	var buf bytes.Buffer
+	_, err := g.WriteTo(&buf)
+	require.NoError(t, err)
+
+	out := &gcFile{}
+	_, err = out.ReadFrom(bytes.NewReader(buf.Bytes()))
+	require.NoError(t, err)
+
+	for pos, want := range []deathClass{never, 3, never, never, 2} {
+		require.Equal(t, want, out.death(pos), "position %d", pos)
+	}
+	require.Equal(t, never, out.death(7))
+
+	// what precedes the deaths is a whole result without them
+	short := buf.Bytes()[:buf.Len()-4-len(g.Death)]
+	out = &gcFile{}
+	_, err = out.ReadFrom(bytes.NewReader(short))
+	require.NoError(t, err)
+	require.Nil(t, out.Death)
+	require.Equal(t, g.Generation, out.Generation)
+}
+
 func TestLiveRunsMergeSortedAndDistinct(t *testing.T) {
 	runs := newLiveRuns(t.TempDir(), 100)
 	defer runs.close()
@@ -777,17 +808,47 @@ func TestLiveRunsMergeSortedAndDistinct(t *testing.T) {
 		var k refKey
 		binary.BigEndian.PutUint64(k[:], uint64(i))
 
-		owners, size, ok := it.at(k)
+		held, ok := it.at(k)
 		require.Equal(t, distinct[k], ok, "key %d", i)
 
 		if ok {
 			found++
-			require.Equal(t, []Attribution{{}}, owners, "one unattributed run holds them all")
-			require.EqualValues(t, i*10, size, "key %d", i)
+			require.Equal(t, []Attribution{{}}, held.owners, "one unattributed run holds them all")
+			require.EqualValues(t, i*10, held.size, "key %d", i)
 		}
 	}
 
 	require.Equal(t, len(distinct), found)
+}
+
+func TestLiveRunsAnswerTheLatestDeathOfAKey(t *testing.T) {
+	runs := newLiveRuns(t.TempDir(), 1)
+	defer runs.close()
+
+	key := func(n uint64) refKey {
+		var k refKey
+		binary.BigEndian.PutUint64(k[:], n)
+
+		return k
+	}
+
+	runs.begin("a-", Attribution{Group: 1, Set: 1})
+	require.NoError(t, runs.add([]liveRef{{key: key(1), death: 4}, {key: key(2), death: 4}}))
+	runs.begin("b-", Attribution{Group: 1, Set: 2})
+	require.NoError(t, runs.add([]liveRef{{key: key(1), death: 2}, {key: key(2), death: never}, {key: key(3), death: 3}}))
+
+	it, err := runs.iterator()
+	require.NoError(t, err)
+	defer it.close()
+
+	for _, c := range []struct {
+		n    uint64
+		want deathClass
+	}{{1, 2}, {2, never}, {3, 3}} {
+		held, ok := it.at(key(c.n))
+		require.True(t, ok)
+		require.Equal(t, c.want, held.death, "key %d", c.n)
+	}
 }
 
 // storedBytes is what the archives spend on these objects.

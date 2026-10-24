@@ -7,67 +7,48 @@ import (
 	"github.com/gobackio/goback/proto"
 )
 
-// span is the length of the calendar period an age class covers.
-type span int
+// DeathHorizons are how far past a collection the death classes its
+// rewrites file objects by end, soonest first. An object is expected to
+// die when the last root that reaches it does; one expected to outlive
+// the last horizon, or never to die, is filed with the others that do.
+var DeathHorizons = []time.Duration{7 * 24 * time.Hour, 31 * 24 * time.Hour, 92 * 24 * time.Hour, 366 * 24 * time.Hour}
 
-const (
-	spanDay span = iota
-	spanWeek
-	spanMonth
-	spanYear
-)
+// deathClass is how soon an object is expected to die: never, the zero
+// class, or class n for within DeathHorizons[len(DeathHorizons)-n], so a
+// smaller class dies later.
+type deathClass uint8
 
-// ageClass is the calendar period an object's stored time falls in.
-type ageClass struct {
-	Span  span  `json:"span"`
-	Start int64 `json:"start"`
+const never deathClass = 0
+
+// deathOf is the class of an object expected to die at death, seen from
+// now; a zero death is never.
+func deathOf(death, now time.Time) deathClass {
+	if death.IsZero() {
+		return never
+	}
+
+	for i, horizon := range DeathHorizons {
+		if !death.After(now.Add(horizon)) {
+			return deathClass(len(DeathHorizons) - i)
+		}
+	}
+
+	return never
 }
 
-// classOf is the period of t seen from now: its day within the last week,
-// its week within the last five, its month within the last year and its
-// year before that.
-func classOf(t, now time.Time) ageClass {
-	t, now = t.UTC(), now.UTC()
-	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-
-	if !day.Before(today.AddDate(0, 0, -6)) {
-		return ageClass{spanDay, day.Unix()}
-	}
-
-	if week := monday(day); !week.Before(monday(today).AddDate(0, 0, -7*4)) {
-		return ageClass{spanWeek, week.Unix()}
-	}
-
-	month := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
-	if !month.Before(time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -11, 0)) {
-		return ageClass{spanMonth, month.Unix()}
-	}
-
-	return ageClass{spanYear, time.Date(t.Year(), 1, 1, 0, 0, 0, 0, time.UTC).Unix()}
-}
-
-func monday(day time.Time) time.Time {
-	return day.AddDate(0, 0, -((int(day.Weekday()) + 6) % 7))
-}
-
-// newer orders classes newest first.
-func (c ageClass) newer(o ageClass) bool {
-	if c.Start != o.Start {
-		return c.Start > o.Start
-	}
-
-	return c.Span < o.Span
+// later reports whether d dies after o.
+func (d deathClass) later(o deathClass) bool {
+	return d < o
 }
 
 // outputClass is what a rewrite writes into one output: the blobs, or the
-// other objects, of one owner stored in one period. A zero Set with a
-// Group is what several sets of that group share; a zero Attribution is
-// what the mark attributed to nobody.
+// other objects, of one owner expected to die about the same time. A zero
+// Set with a Group is what several sets of that group share; a zero
+// Attribution is what the mark attributed to nobody.
 type outputClass struct {
 	Owner Attribution `json:"owner"`
 	Data  bool        `json:"data,omitempty"`
-	Age   ageClass    `json:"age"`
+	Death deathClass  `json:"death,omitempty"`
 }
 
 // isData reports whether a record of type t goes into a data archive,
@@ -103,9 +84,9 @@ func (c *classes) id(class outputClass) int32 {
 }
 
 // fold maps every class sizes holds to the one its objects are written
-// into. A class holding less than small joins the next older one of its
-// owner and kind; the oldest, if that leaves it small, joins the newer one
-// it would have followed.
+// into. A class holding less than small joins the next one of its owner
+// and kind to die later; the last to die, if that leaves it small, joins
+// the one it would have followed.
 func (c *classes) fold(sizes map[int32]uint64, small uint64) map[int32]int32 {
 	into := make(map[int32]int32, len(sizes))
 
@@ -122,7 +103,7 @@ func (c *classes) fold(sizes map[int32]uint64, small uint64) map[int32]int32 {
 
 	for _, ids := range byOwner {
 		slices.SortFunc(ids, func(a, b int32) int {
-			if c.all[a].Age.newer(c.all[b].Age) {
+			if c.all[b].Death.later(c.all[a].Death) {
 				return -1
 			}
 
@@ -227,7 +208,8 @@ func ownerOf(owners []Attribution) Attribution {
 }
 
 // classify gives every record of the archives a sweep rewrites the output
-// class it is written with.
+// class it is written with: by the owner the mark attributed it to, its
+// kind and how soon the mark expects it to die.
 func (r *gcRun) classify(live *liveRuns) error {
 	var selected []*gcArchive
 	for _, ga := range r.order {
@@ -241,8 +223,8 @@ func (r *gcRun) classify(live *liveRuns) error {
 		return nil
 	}
 
-	err := r.scanOf(selected, live, func(ga *gcArchive, pos int, _ *IndexRecord, owners []Attribution, _ uint64) {
-		ga.owners[pos] = ownerOf(owners)
+	err := r.scanOf(selected, live, func(ga *gcArchive, pos int, _ *IndexRecord, found reach) {
+		ga.owners[pos] = ownerOf(found.owners)
 	}, nil)
 	if err != nil {
 		return err
@@ -254,7 +236,13 @@ func (r *gcRun) classify(live *liveRuns) error {
 		ga.classed = &classed{Class: make([]int32, ga.count), Bytes: make(map[int32]uint64)}
 
 		ga.each(func(pos int, rec *IndexRecord) {
-			id := r.classes.id(outputClass{ga.owners[pos], isData(rec.Type), classOf(ga.a.version(*rec).Time, r.opts.Now)})
+			// what the mark left unreachable goes once the next one does too
+			death := deathClass(len(DeathHorizons))
+			if ga.cur.Test(uint(pos)) {
+				death = ga.next.death(pos)
+			}
+
+			id := r.classes.id(outputClass{ga.owners[pos], isData(rec.Type), death})
 			ga.classed.Class[pos] = id
 
 			if !r.droppable(ga, ga.next, pos, rec) {
