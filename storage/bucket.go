@@ -24,6 +24,11 @@ import (
 const (
 	blobObjectPrefix = "pack/"
 	blobObjectKey    = blobObjectPrefix + "%s/%s" // pack/<extension>/<filename>
+
+	// a GCS upload holds a buffer this large, 16 MiB by default, while most
+	// objects written are a few bytes or KiB; S3 refuses parts under 5 MiB,
+	// so other buckets keep their driver's size
+	gcsStreamedBufferSize = 1 << 20
 )
 
 var _ io.ReadSeeker = (*bucketFile)(nil)
@@ -256,6 +261,19 @@ type BucketStore struct {
 	openFiles    map[string]*bucketFile
 
 	sync func(key string) error
+
+	onGCS bool
+}
+
+// bufferSize is the upload buffer for a write of size bytes on GCS, and
+// the driver's default elsewhere.
+func (c *BucketStore) bufferSize(size int) int {
+	if !c.onGCS {
+		return 0
+	}
+
+	// zero would be the default
+	return max(size, 1)
 }
 
 // A BucketOption adjusts a BucketStore.
@@ -327,6 +345,7 @@ func (c *BucketStore) newWriteFile(key string) (pack.File, error) {
 	}
 
 	writer, err := c.bucket.NewWriter(context.Background(), key, &blob.WriterOptions{
+		BufferSize: c.bufferSize(gcsStreamedBufferSize),
 		// runs under the file's lock, from the Write or Close that starts the upload
 		BeforeWrite: func(as func(any) bool) error {
 			var upload *gcs.Writer
@@ -396,7 +415,7 @@ func (c *BucketStore) Create(name string) (pack.File, error) {
 // precondition, so it holds across processes on GCS and S3; a file://
 // bucket only checks within one process.
 func (c *BucketStore) CreateNew(name string, data []byte) error {
-	err := c.bucket.WriteAll(context.Background(), c.key(name), data, &blob.WriterOptions{IfNotExist: true})
+	err := c.bucket.WriteAll(context.Background(), c.key(name), data, &blob.WriterOptions{IfNotExist: true, BufferSize: c.bufferSize(len(data))})
 	c.count(OpPut, int64(len(data)))
 
 	if gcerrors.Code(err) == gcerrors.FailedPrecondition {
@@ -566,6 +585,9 @@ func NewBucketStore(bucket *blob.Bucket, options ...BucketOption) *BucketStore {
 	for _, option := range options {
 		option(storage)
 	}
+
+	var client *gcs.Client
+	storage.onGCS = bucket.As(&client)
 
 	return storage
 }
