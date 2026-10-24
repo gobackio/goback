@@ -1,6 +1,7 @@
 package pack
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"fmt"
@@ -534,4 +535,95 @@ func TestAServerReadsWhatItsBoundedCacheLetGoFromTheBucket(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, oldest.Bytes(), obj.Bytes())
 	require.NotEmpty(t, storage.take(), "an evicted object is read from the bucket")
+}
+
+// putFlushed stores objects in archives of per objects each.
+func putFlushed(t *testing.T, store *PackStorage, objects []*proto.Object, per int) {
+	for i := 0; i < len(objects); i += per {
+		for _, obj := range objects[i:min(i+per, len(objects))] {
+			require.NoError(t, store.Put(context.Background(), obj))
+		}
+
+		require.NoError(t, store.Flush())
+	}
+}
+
+// TestOpeningAStoreReadsNoArchiveItsIndexKnows pins that opening a store,
+// or catching up with archives another process stored, reads no bytes of
+// an archive the index knows until one of its objects is read.
+func TestOpeningAStoreReadsNoArchiveItsIndexKnows(t *testing.T) {
+	ctx := context.Background()
+	bucket := newMemBucket()
+	index := NewInMemoryIndex()
+
+	writer, err := NewPackStorage(WithArchiveStorage(bucket.view()), WithArchiveIndex(index))
+	require.NoError(t, err)
+	require.NoError(t, writer.Open())
+	t.Cleanup(func() { _ = writer.Close() })
+
+	objects := makeTestData(t, 20)
+	putFlushed(t, writer, objects[:15], 5)
+
+	storage := newRequestCounting(bucket)
+	store, err := NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(index))
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	t.Cleanup(func() { _ = store.Close() })
+
+	require.Len(t, store.archives, 3)
+
+	putFlushed(t, writer, objects[15:], 5)
+	require.NoError(t, store.refreshArchives())
+	require.Len(t, store.archives, 4)
+
+	counts := storage.take()
+	require.Zero(t, counts["get archive"], formatCounts(counts))
+
+	for _, obj := range objects {
+		got, err := store.Get(ctx, obj.Ref())
+		require.NoError(t, err)
+		require.Equal(t, obj.Bytes(), got.Bytes())
+	}
+
+	counts = storage.take()
+	require.Equal(t, len(store.archives)+len(objects), counts["get archive"], "a header per archive and a record per object: %s", formatCounts(counts))
+}
+
+// TestAForeignArchiveIsRefusedBeforeItsRecordsAreTrusted pins that an
+// archive whose header is not goback's fails the first read of it when the
+// index knows it, and opening the store when the index does not.
+func TestAForeignArchiveIsRefusedBeforeItsRecordsAreTrusted(t *testing.T) {
+	ctx := context.Background()
+	bucket := newMemBucket()
+	index := NewInMemoryIndex()
+
+	writer, err := NewPackStorage(WithArchiveStorage(bucket.view()), WithArchiveIndex(index))
+	require.NoError(t, err)
+	require.NoError(t, writer.Open())
+
+	obj := makeTestData(t, 1)[0]
+	putFlushed(t, writer, []*proto.Object{obj}, 1)
+	require.NoError(t, writer.Close())
+
+	bucket.mtx.Lock()
+	for name, stored := range bucket.files {
+		if strings.HasSuffix(name, ArchiveSuffix) {
+			data := bytes.Clone(stored.data)
+			copy(data, "NOTGOBACK!")
+			bucket.files[name] = memObject{data: data, created: stored.created}
+		}
+	}
+	bucket.mtx.Unlock()
+
+	known, err := NewPackStorage(WithArchiveStorage(bucket.view()), WithArchiveIndex(index))
+	require.NoError(t, err)
+	require.NoError(t, known.Open())
+	t.Cleanup(func() { _ = known.Close() })
+
+	_, err = known.Get(ctx, obj.Ref())
+	require.ErrorContains(t, err, "not a goback archive")
+
+	unknown, err := NewPackStorage(WithArchiveStorage(bucket.view()), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.ErrorContains(t, unknown.Open(), "not a goback archive")
 }

@@ -10,6 +10,7 @@ import (
 	"path"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gobackio/goback/proto"
@@ -108,6 +109,11 @@ type archive struct {
 	// stored, when set, is told the bytes the archive and its index take
 	// up in the storage once the writer has put both there
 	stored func(a *archive, bytes int64)
+
+	// headerChecked is set once the archive's header was found to be
+	// goback's; headerMtx keeps concurrent first reads to one check
+	headerChecked atomic.Bool
+	headerMtx     sync.Mutex
 }
 
 // newArchive opens a writable archive named by a fresh uuid under dir,
@@ -232,6 +238,7 @@ func (a *archive) open() (err error) {
 
 		a.size = archiveHeaderSize
 		a.writeIndex = make(map[string]*IndexRecord)
+		a.headerChecked.Store(true)
 	}
 
 	var readFile File
@@ -249,27 +256,40 @@ func (a *archive) open() (err error) {
 	if a.readOnly {
 		info, err := readFile.Stat()
 		if err != nil {
+			readFile.Close()
 			return err
 		}
 
 		a.size = uint64(info.Size())
-
-		hdr := make([]byte, archiveHeaderSize)
-		if at, ok := readFile.(io.ReaderAt); ok {
-			_, err = at.ReadAt(hdr, 0)
-		} else {
-			_, err = io.ReadFull(readFile, hdr)
-		}
-
-		if err == nil {
-			err = checkArchiveHeader(hdr)
-		}
-
-		if err != nil {
-			readFile.Close()
-			return errors.Wrapf(err, "archive %s", a.name)
-		}
 	}
+
+	return nil
+}
+
+// checkHeader rejects an archive whose header is not goback's, reading the
+// header until it has passed once.
+func (a *archive) checkHeader() error {
+	if a.headerChecked.Load() {
+		return nil
+	}
+
+	a.headerMtx.Lock()
+	defer a.headerMtx.Unlock()
+
+	if a.headerChecked.Load() {
+		return nil
+	}
+
+	hdr, _, err := a.readAt(0, archiveHeaderSize)
+	if err == nil {
+		err = checkArchiveHeader(hdr)
+	}
+
+	if err != nil {
+		return errors.Wrapf(err, "archive %s", a.name)
+	}
+
+	a.headerChecked.Store(true)
 
 	return nil
 }
@@ -404,9 +424,18 @@ func (a *archive) readOnlyNow() bool {
 	return a.readOnly
 }
 
-// readSpan reads length bytes at offset, which may cover several records.
-// The bool reports whether the read was lock-free.
+// readSpan reads length bytes at offset, which may cover several records,
+// once the archive's header is checked. The bool reports whether the read
+// was lock-free.
 func (a *archive) readSpan(offset, length int64) ([]byte, bool, error) {
+	if err := a.checkHeader(); err != nil {
+		return nil, false, err
+	}
+
+	return a.readAt(offset, length)
+}
+
+func (a *archive) readAt(offset, length int64) ([]byte, bool, error) {
 	buf := make([]byte, length)
 
 	if readerAt, ok := a.readFile.(io.ReaderAt); ok {

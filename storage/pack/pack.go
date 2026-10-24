@@ -1516,8 +1516,13 @@ func (ps *PackStorage) openArchive(name string, listed *ListedFile, marks markLi
 }
 
 // indexArchive indexes a loaded archive as info places it, with the time
-// its index file was created, which it returns.
+// its index file was created, which it returns. An archive whose header is
+// not goback's is refused before any of its records is indexed.
 func (ps *PackStorage) indexArchive(a *archive, info ArchiveInfo, known bool) (time.Time, error) {
+	if err := a.checkHeader(); err != nil {
+		return time.Time{}, err
+	}
+
 	created, err := a.indexCreated()
 	if err != nil {
 		return time.Time{}, fmt.Errorf("reading when the index of %s was created: %w", a.name, err)
