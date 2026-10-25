@@ -18,8 +18,9 @@ agents into one store.
 
 ## Encryption
 
-- **Store key (client side).** With `--store-key`, names and contents are
-  encrypted before they leave the agent; a server never sees them. The key can
+- **Store key (client side).** With `--store-key`, file contents and names are
+  encrypted before they leave the agent. File sizes, times and modes, the shape
+  of each tree and the commits' metadata stay visible to the store. The key can
   be escrowed in the store under a passphrase (`goback key escrow`) and opened
   with `--passphrase`. Without the key or the passphrase, nothing can be
   restored.
