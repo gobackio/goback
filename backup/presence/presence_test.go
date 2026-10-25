@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"testing"
 
+	"github.com/gobackio/goback/proto"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -101,4 +103,18 @@ func TestSetTestsEveryFilter(t *testing.T) {
 	require.Equal(t, a.Size()+b.Size(), s.Size())
 	require.EqualValues(t, 2, s.Entries())
 	require.False(t, Set(nil).Test(ha))
+}
+
+func TestADigestNamesTheFiltersInAnyOrder(t *testing.T) {
+	a, b := New(10), New(10)
+	a.Add(randomHashes(1)[0])
+	b.Add(randomHashes(1)[0])
+
+	digest := Digest([]*proto.PresenceFilter{a.Proto(), b.Proto()})
+	require.Equal(t, digest, Digest([]*proto.PresenceFilter{b.Proto(), a.Proto()}))
+	require.NotEmpty(t, Digest(nil), "no filters have a digest too")
+	require.NotEqual(t, Digest(nil), digest)
+
+	b.Add(randomHashes(1)[0])
+	require.NotEqual(t, digest, Digest([]*proto.PresenceFilter{a.Proto(), b.Proto()}))
 }

@@ -4,11 +4,16 @@
 package presence
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"math"
+	"slices"
 
 	"github.com/gobackio/goback/proto"
+
+	pb "google.golang.org/protobuf/proto"
 )
 
 // FalsePositiveRate is what filters are sized for.
@@ -160,4 +165,29 @@ func (s Set) Entries() uint64 {
 	}
 
 	return total
+}
+
+// Digest names a scope's filters, in whatever order they come: a store
+// server answers GetPresence with it, and with no filters when the caller
+// already holds the filters of that digest.
+func Digest(filters []*proto.PresenceFilter) []byte {
+	sums := make([][]byte, len(filters))
+	for i, filter := range filters {
+		data, err := pb.MarshalOptions{Deterministic: true}.Marshal(filter)
+		if err != nil {
+			panic(err)
+		}
+
+		sum := sha256.Sum256(data)
+		sums[i] = sum[:]
+	}
+
+	slices.SortFunc(sums, bytes.Compare)
+
+	digest := sha256.New()
+	for _, sum := range sums {
+		digest.Write(sum)
+	}
+
+	return digest.Sum(nil)
 }

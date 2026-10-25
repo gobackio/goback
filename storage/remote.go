@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -55,7 +56,8 @@ type Dialer func(ctx context.Context, network, addr string) (net.Conn, error)
 type ClientOption func(*clientOptions)
 
 type clientOptions struct {
-	dial Dialer
+	dial        Dialer
+	presenceDir string
 }
 
 // WithDialer has the client open every connection through dial: to the
@@ -125,6 +127,7 @@ func dialStore(addr string, creds auth.Credentials, transport credentials.Transp
 		HTTP:      &http.Client{Transport: newSpread(base, locationConns)},
 		downloads: received,
 		fetching:  semaphore.NewWeighted(runFetchers),
+		presence:  presenceCache{dir: o.presenceDir},
 	}, nil
 }
 
@@ -203,6 +206,7 @@ type Client struct {
 	downloads *downloads
 	// fetching bounds the runs the client fetches at once, across calls
 	fetching *semaphore.Weighted
+	presence presenceCache
 }
 
 // Open is a no-op; the connection is dialed by NewClient.
@@ -713,19 +717,24 @@ func (r *Client) UploadStatus(ctx context.Context, ids []string) ([]backup.Uploa
 	return statuses, nil
 }
 
-// Presence implements backup.PresenceSource.
+// Presence implements backup.PresenceSource. It fetches the filters only
+// when they changed since the client, or the cache directory
+// WithPresenceCache names, last held those of set.
 func (r *Client) Presence(ctx context.Context, set string) (presence.Set, error) {
+	held := r.presence.load(set)
+
 	ctx = r.outgoing(ctx)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	stream, err := r.store.GetPresence(ctx, &proto.GetPresenceRequest{BackupSet: set})
+	stream, err := r.store.GetPresence(ctx, &proto.GetPresenceRequest{BackupSet: set, Digest: held.digest})
 	if err != nil {
 		return nil, err
 	}
 
 	var (
+		digest  []byte
 		order   []uint32
 		filters = map[uint32]*proto.PresenceFilter{}
 	)
@@ -740,6 +749,20 @@ func (r *Client) Presence(ctx context.Context, set string) (presence.Set, error)
 			return nil, err
 		}
 
+		if digest == nil {
+			if digest = resp.GetDigest(); len(digest) == 0 {
+				return nil, errors.New("the store server named no digest of its presence filters")
+			}
+
+			if resp.GetUnchanged() {
+				return held.filters, nil
+			}
+		}
+
+		if resp.GetFilter() == nil {
+			continue
+		}
+
 		if f, ok := filters[resp.Index]; ok {
 			f.Data = append(f.Data, resp.GetFilter().GetData()...)
 			continue
@@ -749,7 +772,13 @@ func (r *Client) Presence(ctx context.Context, set string) (presence.Set, error)
 		order = append(order, resp.Index)
 	}
 
+	if digest == nil {
+		return nil, errors.New("the store server named no digest of its presence filters")
+	}
+
 	result := make(presence.Set, 0, len(order))
+	protos := make([]*proto.PresenceFilter, 0, len(order))
+
 	for _, index := range order {
 		f, err := presence.FromProto(filters[index])
 		if err != nil {
@@ -757,7 +786,10 @@ func (r *Client) Presence(ctx context.Context, set string) (presence.Set, error)
 		}
 
 		result = append(result, f)
+		protos = append(protos, filters[index])
 	}
+
+	r.presence.keep(set, digest, result, protos)
 
 	return result, nil
 }
@@ -1746,11 +1778,18 @@ func (r *Server) ReportSchedule(ctx context.Context, request *proto.ReportSchedu
 const presencePiece = 1 << 20
 
 // GetPresence streams the head filters of the caller's scope, each split
-// into pieces that share an index.
+// into pieces that share an index, after their digest; it answers with the
+// digest alone, as unchanged, when the caller holds the filters of that
+// digest.
 func (r *Server) GetPresence(request *proto.GetPresenceRequest, stream proto.Store_GetPresenceServer) error {
 	filters, err := r.store.Presence(stream.Context(), request.BackupSet)
 	if err != nil {
 		return ToStatus(err)
+	}
+
+	digest := presence.Digest(filters)
+	if bytes.Equal(digest, request.GetDigest()) || len(filters) == 0 {
+		return stream.Send(&proto.GetPresenceResponse{Digest: digest, Unchanged: bytes.Equal(digest, request.GetDigest())})
 	}
 
 	for i, filter := range filters {
@@ -1770,7 +1809,12 @@ func (r *Server) GetPresence(request *proto.GetPresenceRequest, stream proto.Sto
 
 			piece.Data = data[:n]
 
-			err = stream.Send(&proto.GetPresenceResponse{Index: uint32(i), Filter: piece})
+			resp := &proto.GetPresenceResponse{Index: uint32(i), Filter: piece}
+			if i == 0 && first {
+				resp.Digest = digest
+			}
+
+			err = stream.Send(resp)
 			if err != nil {
 				return err
 			}

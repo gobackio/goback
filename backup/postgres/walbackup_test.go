@@ -308,6 +308,36 @@ func TestReceivingCommitsOverAStoreServerReadNoFileTheLastOneStored(t *testing.T
 	}
 }
 
+func TestReceivingCommitsFetchPresenceFiltersOnlyOnceARebuildChangedThem(t *testing.T) {
+	f := newWALFixture(t)
+	client, m := f.served()
+	r := f.receiver(client, client)
+	segment := f.growing(1)
+
+	rebuild := func() {
+		ref, err := f.index.LatestCommit(f.ctx, "db-wal")
+		require.NoError(t, err)
+		require.NoError(t, f.index.BuildPresence(f.ctx, ref))
+	}
+
+	segment.commit(r)
+	rebuild()
+
+	m.reset()
+	segment.commit(r)
+	require.NotZero(t, m.filters, "the first run after a rebuild fetches the filters")
+
+	m.reset()
+	segment.commit(r)
+	require.Zero(t, m.filters, "a run over unchanged filters fetches none")
+
+	rebuild()
+
+	m.reset()
+	segment.commit(r)
+	require.NotZero(t, m.filters)
+}
+
 func TestAReceiversSteadyCommitsReadNoMetadataWhateverCacheItsCallerSetUp(t *testing.T) {
 	for _, cached := range []bool{false, true} {
 		t.Run(fmt.Sprintf("cached=%v", cached), func(t *testing.T) {

@@ -2708,7 +2708,10 @@ func (*TouchSessionResponse) Descriptor() ([]byte, []int) {
 type GetPresenceRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// the set whose filter is wanted when the scope is the set
-	BackupSet     string `protobuf:"bytes,1,opt,name=backup_set,json=backupSet,proto3" json:"backup_set,omitempty"`
+	BackupSet string `protobuf:"bytes,1,opt,name=backup_set,json=backupSet,proto3" json:"backup_set,omitempty"`
+	// the digest of the filters the caller holds, as an earlier answer
+	// named it; empty when it holds none
+	Digest        []byte `protobuf:"bytes,2,opt,name=digest,proto3" json:"digest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2750,12 +2753,24 @@ func (x *GetPresenceRequest) GetBackupSet() string {
 	return ""
 }
 
+func (x *GetPresenceRequest) GetDigest() []byte {
+	if x != nil {
+		return x.Digest
+	}
+	return nil
+}
+
 // GetPresenceResponse carries one filter of the caller's scope in pieces:
-// messages with the same index concatenate their data.
+// messages with the same index concatenate their data. The first message
+// names the digest of the filters, presence.Digest of them; it is the only
+// one, and carries no filter, when the scope has none or when they are
+// unchanged: when the digest is the one the caller sent.
 type GetPresenceResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Index         uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
 	Filter        *PresenceFilter        `protobuf:"bytes,2,opt,name=filter,proto3" json:"filter,omitempty"`
+	Digest        []byte                 `protobuf:"bytes,3,opt,name=digest,proto3" json:"digest,omitempty"`
+	Unchanged     bool                   `protobuf:"varint,4,opt,name=unchanged,proto3" json:"unchanged,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2802,6 +2817,20 @@ func (x *GetPresenceResponse) GetFilter() *PresenceFilter {
 		return x.Filter
 	}
 	return nil
+}
+
+func (x *GetPresenceResponse) GetDigest() []byte {
+	if x != nil {
+		return x.Digest
+	}
+	return nil
+}
+
+func (x *GetPresenceResponse) GetUnchanged() bool {
+	if x != nil {
+		return x.Unchanged
+	}
+	return false
 }
 
 type DeleteCommitRequest struct {
@@ -4578,13 +4607,16 @@ const file_api_proto_rawDesc = "" +
 	"\x13TouchSessionRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x16\n" +
-	"\x14TouchSessionResponse\"3\n" +
+	"\x14TouchSessionResponse\"K\n" +
 	"\x12GetPresenceRequest\x12\x1d\n" +
 	"\n" +
-	"backup_set\x18\x01 \x01(\tR\tbackupSet\"Z\n" +
+	"backup_set\x18\x01 \x01(\tR\tbackupSet\x12\x16\n" +
+	"\x06digest\x18\x02 \x01(\fR\x06digest\"\x90\x01\n" +
 	"\x13GetPresenceResponse\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\rR\x05index\x12-\n" +
-	"\x06filter\x18\x02 \x01(\v2\x15.proto.PresenceFilterR\x06filter\"3\n" +
+	"\x06filter\x18\x02 \x01(\v2\x15.proto.PresenceFilterR\x06filter\x12\x16\n" +
+	"\x06digest\x18\x03 \x01(\fR\x06digest\x12\x1c\n" +
+	"\tunchanged\x18\x04 \x01(\bR\tunchanged\"3\n" +
 	"\x13DeleteCommitRequest\x12\x1c\n" +
 	"\x03ref\x18\x01 \x01(\v2\n" +
 	".proto.RefR\x03ref\"\x16\n" +

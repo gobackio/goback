@@ -363,13 +363,21 @@ message TouchSessionResponse {}
 message GetPresenceRequest {
     // the set whose filter is wanted when the scope is the set
     string backup_set = 1;
+    // the digest of the filters the caller holds, as an earlier answer
+    // named it; empty when it holds none
+    bytes digest = 2;
 }
 
 // GetPresenceResponse carries one filter of the caller's scope in pieces:
-// messages with the same index concatenate their data.
+// messages with the same index concatenate their data. The first message
+// names the digest of the filters, presence.Digest of them; it is the only
+// one, and carries no filter, when the scope has none or when they are
+// unchanged: when the digest is the one the caller sent.
 message GetPresenceResponse {
     uint32 index = 1;
     PresenceFilter filter = 2;
+    bytes digest = 3;
+    bool unchanged = 4;
 }
 
 message DeleteCommitRequest {

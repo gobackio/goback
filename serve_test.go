@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -478,4 +479,35 @@ func TestServeRefusesAnAdminKeyThatIsTheBackupKey(t *testing.T) {
 	repo := &Repo{}
 
 	require.Error(t, repo.Serve(context.Background(), nil, ServeOptions{Secret: "s3cret", AdminKey: "s3cret", PlaintextBehindProxy: true}))
+}
+
+func TestAnAgentKeepsThePresenceFiltersItFetchedInItsCacheDirectory(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	repo, err := Open(ctx, Settings{Storage: t.TempDir(), Index: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = repo.Close() })
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	served := make(chan error, 1)
+	go func() {
+		served <- repo.Serve(ctx, listener, ServeOptions{Secret: "s3cret", PlaintextBehindProxy: true})
+	}()
+
+	agent, err := Open(ctx, Settings{Storage: "goback+insecure://s3cret@" + listener.Addr().String(), AgentID: "agent", CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = agent.Close() })
+
+	_, err = agent.Store.(backup.PresenceSource).Presence(ctx, "world")
+	require.NoError(t, err)
+
+	cached, err := os.ReadDir(agent.StoreCache("presence"))
+	require.NoError(t, err)
+	require.Len(t, cached, 1)
+
+	cancel()
+	require.NoError(t, <-served)
 }

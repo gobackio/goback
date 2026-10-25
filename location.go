@@ -490,6 +490,10 @@ func openRemote(_ context.Context, u *url.URL, s Settings) (backup.ObjectStore, 
 		opts = append(opts, storage.WithDialer(s.Dial))
 	}
 
+	if dir := s.storeCache("presence"); dir != "" {
+		opts = append(opts, storage.WithPresenceCache(dir))
+	}
+
 	if u.Scheme == insecureScheme {
 		if ca != "" {
 			return nil, nil, fmt.Errorf("%s:// presents no certificate to check against %s", u.Scheme, ca)

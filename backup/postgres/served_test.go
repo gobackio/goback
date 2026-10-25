@@ -21,14 +21,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// meter counts the calls a store server takes, the bytes they move and the
-// metadata objects Get answers with.
+// meter counts the calls a store server takes, the bytes they move, the
+// metadata objects Get answers with and the filters GetPresence sends.
 type meter struct {
 	mtx      sync.Mutex
 	calls    map[string]int
 	failed   map[string]int
 	bytes    map[string]int64
 	metadata int
+	filters  int
 }
 
 func newMeter() *meter {
@@ -62,6 +63,10 @@ func (m *meter) HandleRPC(ctx context.Context, s stats.RPCStats) {
 		if resp, ok := s.Payload.(*proto.GetResponse); ok && resp.GetObject().Type().Metadata() {
 			m.metadata++
 		}
+
+		if resp, ok := s.Payload.(*proto.GetPresenceResponse); ok && resp.GetFilter() != nil {
+			m.filters++
+		}
 	}
 }
 
@@ -82,7 +87,7 @@ func (m *meter) reset() {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 
-	m.calls, m.failed, m.bytes, m.metadata = map[string]int{}, map[string]int{}, map[string]int64{}, 0
+	m.calls, m.failed, m.bytes, m.metadata, m.filters = map[string]int{}, map[string]int{}, map[string]int64{}, 0, 0
 }
 
 const servedSecret = "s3cret"
