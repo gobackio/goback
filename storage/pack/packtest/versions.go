@@ -27,7 +27,9 @@ func TestArchiveVersions(t *testing.T, idx pack.ArchiveIndex) {
 	for i, record := range moved.index {
 		location, err := idx.LocateObject(&proto.Ref{Hash: record.Sum[:]}, pack.Scope{})
 		require.NoError(t, err)
-		require.Equal(t, record.Version(created), location.Record.Version(info.Created), "record %d", i)
+		want, got := record.Version(created), location.Record.Version(info.Created)
+		require.True(t, want.Time.Equal(got.Time), "record %d: time %s, want %s", i, got.Time, want.Time)
+		require.Equal(t, want.Offset, got.Offset, "record %d", i)
 	}
 
 	require.NoError(t, idx.IndexArchive(pack.ArchiveInfo{Name: moved.name, Created: created.Add(time.Hour)}, moved.index))
