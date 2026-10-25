@@ -291,16 +291,81 @@ func (r *refusingRetirement) CreateNew(name string, data []byte) error {
 	return r.localArchiveStorage.CreateNew(name, data)
 }
 
-// deletingIndex counts the calls to DeleteArchives.
+// deletingIndex counts the calls to DeleteArchives, and fails them while
+// refusing is set.
 type deletingIndex struct {
 	*InMemoryIndex
-	calls atomic.Int64
+	calls    atomic.Int64
+	refusing atomic.Bool
 }
 
 func (d *deletingIndex) DeleteArchives(names []string) error {
 	d.calls.Add(1)
 
+	if d.refusing.Load() {
+		return errors.New("database is locked")
+	}
+
 	return d.InMemoryIndex.DeleteArchives(names)
+}
+
+func TestTheRowsOfRetiredArchivesGoOnceTheIndexTakesTheDeletion(t *testing.T) {
+	base := t.TempDir()
+	index := &deletingIndex{InMemoryIndex: NewInMemoryIndex()}
+	ctx := context.Background()
+
+	open := func() *PackStorage {
+		store, err := NewPackStorage(WithArchiveStorage(newLocal(base)), WithArchiveIndex(index), WithCompaction(CompactionConfig{MinimumCandidates: 0}))
+		require.NoError(t, err)
+		require.NoError(t, store.Open())
+
+		return store
+	}
+
+	requireIndexed := func(names []string, indexed bool, msg string) {
+		t.Helper()
+
+		for _, name := range names {
+			_, found, err := index.LookupArchive(name)
+			require.NoError(t, err)
+			require.Equal(t, indexed, found, "%s: %s", msg, name)
+		}
+	}
+
+	store := open()
+
+	for restart, again := range []func(){
+		func() { require.NoError(t, store.refreshArchives()) },
+		func() {
+			require.NoError(t, store.Close())
+			store = open()
+		},
+	} {
+		objects := makeTestData(t, 3)
+		for _, obj := range objects {
+			require.NoError(t, store.Put(ctx, obj))
+			require.NoError(t, store.Flush())
+		}
+
+		var inputs []string
+		for _, a := range store.archives {
+			inputs = append(inputs, a.name)
+		}
+
+		index.refusing.Store(true)
+		compact(t, ctx, store)
+		requireIndexed(inputs, true, "the rows stay while the index refuses")
+
+		index.refusing.Store(false)
+		again()
+		requireIndexed(inputs, false, fmt.Sprintf("the rows go (restart=%d)", restart))
+
+		for _, obj := range objects {
+			requirePresent(t, store, []*proto.Object{obj}, true)
+		}
+	}
+
+	require.NoError(t, store.Close())
 }
 
 // batchObserved collects the batches an ArchiveBatchObserver hears.

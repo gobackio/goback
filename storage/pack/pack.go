@@ -12,6 +12,8 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -154,6 +156,11 @@ type PackStorage struct {
 	// read, by name
 	retiredMtx  sync.Mutex
 	retiredRead map[string]retirement
+
+	// unforgotten names retired archives whose index rows are still to be
+	// deleted
+	forgetMtx   sync.Mutex
+	unforgotten map[string]bool
 
 	sessionsMtx sync.Mutex
 	sessions    map[string]*writeSession
@@ -1654,6 +1661,14 @@ func (ps *PackStorage) Open() error {
 		return errors.Wrap(err, "failed listing archive names")
 	}
 
+	// a process that retired these may have stopped before their rows went
+	retired, err := ps.retiredArchives()
+	if err != nil {
+		return errors.Wrap(err, "failed listing retired archives")
+	}
+
+	ps.forgetArchives(slices.Collect(maps.Keys(retired)))
+
 	// sessions first: an archive of a live session is indexed pending under it
 	if err := ps.reconcileSessions(listed); err != nil {
 		return err
@@ -1689,6 +1704,8 @@ func (ps *PackStorage) Open() error {
 // commits of archives it loaded while they were pending, and unloads the
 // committed archives whose files are gone.
 func (ps *PackStorage) refreshArchives() error {
+	ps.forgetArchives(nil)
+
 	names, files, err := ps.archiveNames()
 	if err != nil {
 		return errors.Wrap(err, "failed listing archive names")

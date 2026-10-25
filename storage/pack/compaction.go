@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"runtime"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -665,10 +666,7 @@ func (ps *PackStorage) retireRewritten(obsolete []*archive, indexes map[string]I
 		retired = append(retired, indexes[archive.name])
 	}
 
-	if err := ps.index.DeleteArchives(names); err != nil {
-		ps.logger.Warn("removing the index rows of retired archives failed", "archives", len(names), "err", err)
-	}
-
+	ps.forgetArchives(names)
 	ps.forgetCached(context.Background(), retired)
 
 	grp := new(errgroup.Group)
@@ -693,6 +691,42 @@ func (ps *PackStorage) retireRewritten(obsolete []*archive, indexes map[string]I
 	ps.archivesDeleted(names)
 
 	return len(names), size
+}
+
+// forgetArchives deletes the index rows of retired archives, and of those
+// an earlier call failed to, keeping all of them to try again when it
+// fails too.
+func (ps *PackStorage) forgetArchives(names []string) {
+	ps.forgetMtx.Lock()
+	defer ps.forgetMtx.Unlock()
+
+	all := slices.Clone(names)
+	for name := range ps.unforgotten {
+		all = append(all, name)
+	}
+
+	slices.Sort(all)
+	all = slices.Compact(all)
+
+	if len(all) == 0 {
+		return
+	}
+
+	if err := ps.index.DeleteArchives(all); err != nil {
+		ps.logger.Warn("removing the index rows of retired archives failed", "archives", len(all), "err", err)
+
+		if ps.unforgotten == nil {
+			ps.unforgotten = make(map[string]bool, len(all))
+		}
+
+		for _, name := range all {
+			ps.unforgotten[name] = true
+		}
+
+		return
+	}
+
+	ps.unforgotten = nil
 }
 
 // progressEvery is how many rewritten archives pass between progress logs.
