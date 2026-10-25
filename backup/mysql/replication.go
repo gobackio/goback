@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-mysql-org/go-mysql/client"
@@ -58,19 +60,40 @@ func (o *Options) network() (string, string) {
 	return "tcp", net.JoinHostPort(host, strconv.Itoa(port))
 }
 
-// tlsConfig is the TLS o's ssl-mode asks for: none for DISABLED, PREFERRED
-// or no mode, encryption alone for REQUIRED, and a verified certificate,
-// for VERIFY_IDENTITY also of the host's name, against ssl-ca or the
-// system's roots.
-func (o *Options) tlsConfig() (*tls.Config, error) {
-	switch o.SSLMode {
-	case "", "DISABLED", "PREFERRED":
-		return nil, nil
-	case "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY":
-	default:
-		return nil, fmt.Errorf("ssl-mode %q", o.SSLMode)
+// tlsConfig is the TLS o's ssl-mode asks for, as MySQL's clients read it:
+// none for DISABLED, encryption alone for REQUIRED, and a verified
+// certificate, for VERIFY_IDENTITY also of the host's name, against ssl-ca
+// or the system's roots. Without a mode it is PREFERRED, or VERIFY_CA when
+// ssl-ca is given. PREFERRED asks for encryption alone over TCP, with
+// optional set, as a server that offers no TLS is then connected to
+// without, and for none over a socket.
+func (o *Options) tlsConfig() (cfg *tls.Config, optional bool, err error) {
+	mode := o.SSLMode
+	if mode == "" {
+		mode = "PREFERRED"
+		if o.SSLCA != "" {
+			mode = "VERIFY_CA"
+		}
 	}
 
+	switch mode {
+	case "DISABLED":
+		return nil, false, nil
+	case "PREFERRED":
+		if network, _ := o.network(); network == "unix" {
+			return nil, false, nil
+		}
+	case "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY":
+	default:
+		return nil, false, fmt.Errorf("ssl-mode %q", o.SSLMode)
+	}
+
+	cfg, err = o.tlsFor(mode)
+
+	return cfg, mode == "PREFERRED", err
+}
+
+func (o *Options) tlsFor(mode string) (*tls.Config, error) {
 	cfg := &tls.Config{ServerName: o.Host, MinVersion: tls.VersionTLS12}
 
 	if o.SSLCert != "" || o.SSLKey != "" {
@@ -94,8 +117,8 @@ func (o *Options) tlsConfig() (*tls.Config, error) {
 		}
 	}
 
-	switch o.SSLMode {
-	case "REQUIRED":
+	switch mode {
+	case "PREFERRED", "REQUIRED":
 		cfg.InsecureSkipVerify = true
 	case "VERIFY_CA":
 		cfg.InsecureSkipVerify = true
@@ -112,6 +135,90 @@ func (o *Options) tlsConfig() (*tls.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// noServerTLS is what go-mysql fails a connection with whose server offers
+// no TLS though the client asks for it.
+const noServerTLS = "does not support TLS required by the client"
+
+// connectTLS connects with cfg, and when optional is set and the server
+// offers no TLS, again without it. Over TCP a connection without TLS is
+// made with guard set, which refuses a server asking for the password in
+// the clear.
+func connectTLS(cfg *tls.Config, optional bool, network string, connect func(cfg *tls.Config, guard bool) error) error {
+	guard := network == "tcp"
+
+	if cfg == nil {
+		return connect(nil, guard)
+	}
+
+	err := connect(cfg, false)
+	if !optional || err == nil || !strings.Contains(err.Error(), noServerTLS) {
+		return err
+	}
+
+	return connect(nil, guard)
+}
+
+// ErrClearPassword is returned for a server that asks for the password in
+// the clear, as mysql_clear_password sends it, over a connection without
+// TLS.
+var ErrClearPassword = errors.New("the server asks for the password in the clear over a connection without TLS; set ssl-mode to REQUIRED or stricter")
+
+// clearGuard is a connection that, until done is set once the client has
+// authenticated, fails a read holding the name of the mysql_clear_password
+// plugin, before the client could answer it with the password.
+type clearGuard struct {
+	net.Conn
+	done atomic.Bool
+	// tail is the end of the last read, which the name may run on from
+	tail []byte
+}
+
+func (g *clearGuard) Read(p []byte) (int, error) {
+	n, err := g.Conn.Read(p)
+	if g.done.Load() {
+		return n, err
+	}
+
+	name := []byte(gomysql.AUTH_CLEAR_PASSWORD)
+
+	seen := append(g.tail, p[:n]...)
+	if bytes.Contains(seen, name) {
+		_ = g.Conn.Close()
+		return 0, ErrClearPassword
+	}
+
+	g.tail = append(g.tail[:0], seen[max(0, len(seen)-len(name)+1):]...)
+
+	return n, err
+}
+
+// guardedDialer is dial, or with guard set, dial wrapping each connection
+// in a clearGuard, the last of which it hands to done.
+type guardedDialer struct {
+	dial  client.Dialer
+	guard bool
+	last  atomic.Pointer[clearGuard]
+}
+
+func (d *guardedDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	conn, err := d.dial(ctx, network, addr)
+	if err != nil || !d.guard {
+		return conn, err
+	}
+
+	g := &clearGuard{Conn: conn}
+	d.last.Store(g)
+
+	return g, nil
+}
+
+// authenticated stops the last connection's guard.
+func (d *guardedDialer) authenticated() {
+	if g := d.last.Load(); g != nil {
+		g.done.Store(true)
+	}
 }
 
 // queryTimeout bounds each read and write of a serverConn.
@@ -138,7 +245,7 @@ func (c *serverConn) connect(ctx context.Context) (*client.Conn, error) {
 		return c.conn, nil
 	}
 
-	cfg, err := c.opts.tlsConfig()
+	cfg, optional, err := c.opts.tlsConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -146,20 +253,29 @@ func (c *serverConn) connect(ctx context.Context) (*client.Conn, error) {
 	network, addr := c.opts.network()
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 
-	var raw net.Conn
+	var (
+		raw  net.Conn
+		conn *client.Conn
+	)
 
-	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		conn, err := dialer.DialContext(ctx, network, addr)
-		raw = conn
+	err = connectTLS(cfg, optional, network, func(cfg *tls.Config, guard bool) error {
+		d := &guardedDialer{guard: guard, dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := dialer.DialContext(ctx, network, addr)
+			raw = conn
 
-		return conn, err
-	}
+			return conn, err
+		}}
 
-	conn, err := client.ConnectWithDialer(ctx, network, addr, c.opts.User, c.opts.Password, "", dial, func(conn *client.Conn) error {
-		conn.SetTLSConfig(cfg)
-		conn.ReadTimeout, conn.WriteTimeout = queryTimeout, queryTimeout
+		var err error
+		conn, err = client.ConnectWithDialer(ctx, network, addr, c.opts.User, c.opts.Password, "", d.DialContext, func(conn *client.Conn) error {
+			conn.SetTLSConfig(cfg)
+			conn.ReadTimeout, conn.WriteTimeout = queryTimeout, queryTimeout
 
-		return nil
+			return nil
+		})
+		d.authenticated()
+
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connecting to %s: %w", addr, plainError(err))
@@ -267,7 +383,7 @@ type dumpStream struct {
 // startDump registers as replica serverID and asks for the binlogs from
 // name at pos.
 func startDump(opts *Options, serverID uint32, name string, pos int64) (*dumpStream, error) {
-	cfg, err := opts.tlsConfig()
+	cfg, optional, err := opts.tlsConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -283,24 +399,43 @@ func startDump(opts *Options, serverID uint32, name string, pos int64) (*dumpStr
 
 	hostname, _ := os.Hostname()
 
-	syncer := replication.NewBinlogSyncer(replication.BinlogSyncerConfig{
-		ServerID:         serverID,
-		Host:             host,
-		Port:             uint16(port),
-		User:             opts.User,
-		Password:         opts.Password,
-		Localhost:        hostname,
-		RawModeEnabled:   true,
-		TLSConfig:        cfg,
-		HeartbeatPeriod:  heartbeatPeriod,
-		ReadTimeout:      readTimeout,
-		DisableRetrySync: true,
-		Logger:           slog.New(slog.DiscardHandler),
-	})
+	var (
+		syncer   *replication.BinlogSyncer
+		streamer *replication.BinlogStreamer
+	)
 
-	streamer, err := syncer.StartSync(gomysql.Position{Name: name, Pos: uint32(pos)})
+	err = connectTLS(cfg, optional, network, func(cfg *tls.Config, guard bool) error {
+		d := &guardedDialer{guard: guard, dial: (&net.Dialer{}).DialContext}
+
+		syncer = replication.NewBinlogSyncer(replication.BinlogSyncerConfig{
+			ServerID:         serverID,
+			Host:             host,
+			Port:             uint16(port),
+			User:             opts.User,
+			Password:         opts.Password,
+			Localhost:        hostname,
+			RawModeEnabled:   true,
+			TLSConfig:        cfg,
+			HeartbeatPeriod:  heartbeatPeriod,
+			ReadTimeout:      readTimeout,
+			DisableRetrySync: true,
+			Logger:           slog.New(slog.DiscardHandler),
+			Dialer:           d.DialContext,
+			// runs once the connection is authenticated
+			Option: func(*client.Conn) error {
+				d.authenticated()
+				return nil
+			},
+		})
+
+		var err error
+		if streamer, err = syncer.StartSync(gomysql.Position{Name: name, Pos: uint32(pos)}); err != nil {
+			syncer.Close()
+		}
+
+		return err
+	})
 	if err != nil {
-		syncer.Close()
 		return nil, fmt.Errorf("starting the binlog dump from %s:%d: %w", name, pos, plainError(err))
 	}
 
@@ -418,6 +553,11 @@ const (
 func plainError(err error) error {
 	if err == nil || serverErrorCode(err) != 0 {
 		return err
+	}
+
+	// go-mysql keeps only the text of what a read failed with
+	if strings.Contains(err.Error(), ErrClearPassword.Error()) {
+		return ErrClearPassword
 	}
 
 	lines := strings.Split(err.Error(), "\n")
