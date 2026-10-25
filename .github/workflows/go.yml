@@ -1,10 +1,9 @@
 name: Go
 
 on:
-  push:
-    branches: [ master ]
   pull_request:
     branches: [ master ]
+  workflow_call:
 
 permissions:
   contents: read
@@ -22,6 +21,18 @@ jobs:
 
     - name: Vet
       run: go vet ./...
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      with:
+        go-version: stable
+
+    - name: Vulncheck
+      run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   test:
     strategy:
