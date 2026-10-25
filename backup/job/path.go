@@ -7,6 +7,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -137,13 +138,17 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 	preOut, err := runner.RunPre(ctx)
 	flush()
 
+	// the pre hook may have quiesced the application, even when it failed,
+	// so the post hook runs however Path ends, a panic included
+	post := sync.OnceFunc(func() {
+		if postErr := runner.RunPost(ctx); postErr != nil {
+			logger.Info(postErr.Error())
+		}
+	})
+	defer post()
+
 	if err != nil {
 		if !s.HookOptional {
-			// the hook may have quiesced the application before failing
-			if postErr := runner.RunPost(ctx); postErr != nil {
-				logger.Info(postErr.Error())
-			}
-
 			return nil, err
 		}
 
@@ -167,10 +172,7 @@ func Path(ctx context.Context, env *Env, s PathSettings) (*backup.WalkResult, er
 	}
 
 	result, walkErr := walker.Run(ctx)
-
-	if err := runner.RunPost(ctx); err != nil {
-		logger.Info(err.Error())
-	}
+	post()
 
 	if walkErr != nil {
 		return nil, walkErr
