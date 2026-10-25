@@ -412,6 +412,41 @@ func TestTombstonePrunesTheRefsOnlyItReaches(t *testing.T) {
 	}
 }
 
+func TestTombstonePrunesASetWhoseLiveCommitLostADirectory(t *testing.T) {
+	f := newFixture(t)
+
+	one := f.file("a.txt", "one")
+	f.commit("world", f.tree(one), false)
+	f.advance(time.Hour)
+	f.commit("world", f.tree(f.file("a.txt", "two")), false)
+	f.advance(time.Hour)
+	lost := f.dir("d", f.file("x.txt", "x"))
+	f.commit("world", f.tree(f.file("a.txt", "two"), lost), false)
+	f.advance(time.Hour)
+	f.commit("logs", f.tree(f.file("l.txt", "1")), false)
+	f.advance(time.Hour)
+	f.commit("logs", f.tree(f.file("l.txt", "2")), false)
+
+	f.store.mu.Lock()
+	delete(f.store.objects, string(lost.Ref.Hash))
+	f.store.mu.Unlock()
+
+	y := f.index()
+	require.NoError(t, reindexErr(y.ReIndex(f.ctx)))
+
+	for _, name := range []string{"world", "logs"} {
+		require.NoError(t, y.SetPolicy(f.ctx, name, &retention.Policy{KeepLast: 1}))
+	}
+
+	retired, err := y.RetireCommits(f.ctx, f.clock)
+	require.NoError(t, err)
+	require.Len(t, retired, 2)
+
+	readable, err := y.References(f.ctx, one.Ref)
+	require.NoError(t, err)
+	require.False(t, readable, "only the tombstoned commit reaches it")
+}
+
 func TestReIndexReconcilesTombstonesOnAnExistingDatabase(t *testing.T) {
 	f := newFixture(t)
 

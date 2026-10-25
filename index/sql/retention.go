@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -750,29 +751,40 @@ func (x *Index) RetireCommits(ctx context.Context, now time.Time) ([]index.Retir
 	phase.Finish()
 	phase = progress.Start(ctx, progress.OpRetire, progress.PhasePrune, int64(len(sets)), 0)
 
-	prunes, pctx := errgroup.WithContext(ctx)
+	// one set's failure leaves the others to prune
+	var (
+		prunes    errgroup.Group
+		mu        sync.Mutex
+		pruneErrs []error
+	)
+
 	prunes.SetLimit(pruneWorkers)
 
 	for setID, refs := range sets {
 		prunes.Go(func() error {
 			defer phase.Add(1, 0)
 
-			if err := x.pruneRefs(pctx, setID, refs); err != nil {
-				return err
+			err := x.pruneRefs(ctx, setID, refs)
+			if err == nil {
+				err = x.dropDeadRows(ctx, setID)
 			}
 
-			return x.dropDeadRows(pctx, setID)
+			if err != nil {
+				mu.Lock()
+				pruneErrs = append(pruneErrs, fmt.Errorf("pruning set %s: %w", names[setID], err))
+				mu.Unlock()
+			}
+
+			return nil
 		})
 	}
 
-	if err := prunes.Wait(); err != nil {
-		return retired, err
-	}
+	_ = prunes.Wait()
 
 	phases.done("prune")
 	phase.Finish()
 
-	return retired, x.closeEmptySets(ctx)
+	return retired, errors.Join(append(pruneErrs, x.closeEmptySets(ctx))...)
 }
 
 // RetiredCommits reports the retirement of each of the commits whose set

@@ -73,7 +73,9 @@ func (x *Index) pruneRefs(ctx context.Context, setID int64, tombstoned [][]byte)
 			trees = append(trees, &proto.Ref{Hash: commit.Tree})
 		}
 
-		err = x.walkRefs(ctx, trees, visited, false, func(hash []byte) { delete(dead, string(hash)) })
+		// what a live commit reaches only through an object the store lost
+		// cannot be read through it either
+		err = x.walkRefs(ctx, trees, visited, true, func(hash []byte) { delete(dead, string(hash)) })
 		if err != nil {
 			return fmt.Errorf("walking live commits: %w", err)
 		}
