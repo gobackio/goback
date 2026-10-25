@@ -252,6 +252,45 @@ func TestARebuildAsksAboutAPartTheVersionsShareOnce(t *testing.T) {
 	require.Equal(t, []string{"r.0.0.mca"}, grant.Damaged)
 }
 
+func TestARebuildFindsWhatTheStoreLostAPageOfFilesAtATime(t *testing.T) {
+	page := damagePage
+	damagePage = 1
+	t.Cleanup(func() { damagePage = page })
+
+	f := newFixture(t)
+	ctx := f.ctx
+
+	lost := proto.NewObject(&proto.Blob{Data: []byte("lost")})
+	require.NoError(t, f.store.Put(ctx, lost))
+
+	var nodes []*proto.TreeNode
+	for i := range 3 {
+		tail := proto.NewObject(&proto.Blob{Data: []byte{byte(i)}})
+		require.NoError(t, f.store.Put(ctx, tail))
+
+		version := proto.NewObject(&proto.File{Parts: []*proto.FilePart{
+			{Offset: 0, Length: 4, Ref: lost.Ref()},
+			{Offset: 4, Length: 1, Ref: tail.Ref()},
+		}})
+		require.NoError(t, f.store.Put(ctx, version))
+
+		nodes = append(nodes, &proto.TreeNode{
+			Stat: &proto.FileInfo{Name: fmt.Appendf(nil, "r.%d.mca", i), Type: proto.NodeType_NODE_FILE, MtimeNs: f.epoch.UnixNano(), Size: 5, Mode: 0644},
+			Ref:  version.Ref(),
+		})
+	}
+
+	f.commit("world", f.tree(nodes...), false)
+	f.forget(lost.Ref())
+
+	y := f.index()
+	require.NoError(t, reindexErr(y.ReIndex(ctx)))
+
+	grant, err := y.BeginCommit(ctx, "world")
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"r.0.mca", "r.1.mca", "r.2.mca"}, grant.Damaged)
+}
+
 // setID is the id of the fixture's named set.
 func (f *fixture) setID(name string) int64 {
 	f.t.Helper()

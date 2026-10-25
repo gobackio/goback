@@ -278,19 +278,89 @@ func (x *Index) LostVersions(ctx context.Context, name string) ([]index.LostVers
 // damageWorkers is how many file objects findDamage checks at once.
 const damageWorkers = 16
 
+// damagePage is how many distinct file objects findDamage reads the refs
+// of and checks at a time.
+var damagePage = 10000
+
 // findDamage marks what the indexed versions reference but the store no
 // longer holds, as the repair that lost it did in the index a rebuild
 // replaces.
 func (x *Index) findDamage(ctx context.Context) error {
-	var rows []struct {
-		Ref []byte `json:"ref"`
+	var (
+		lost    []*proto.Ref
+		named   = map[string]bool{}
+		after   []byte
+		checked int
+	)
+
+	began := time.Now()
+
+	for {
+		var rows []struct {
+			Ref []byte `json:"ref"`
+		}
+
+		query := x.client.File.Query().Where(file.RefNotNil())
+		if after != nil {
+			query.Where(file.RefGT(after))
+		}
+
+		err := query.Unique(true).Order(ent.Asc(file.FieldRef)).Limit(damagePage).Select(file.FieldRef).Scan(ctx, &rows)
+		if err != nil {
+			return err
+		}
+
+		if len(rows) == 0 {
+			break
+		}
+
+		refs := make([][]byte, len(rows))
+		for i, row := range rows {
+			refs[i] = row.Ref
+		}
+
+		gone, err := x.lostOf(ctx, refs)
+		if err != nil {
+			return err
+		}
+
+		// a part the versions of two pages share is found in both
+		for _, ref := range gone {
+			if !named[string(ref.GetHash())] {
+				named[string(ref.GetHash())] = true
+				lost = append(lost, ref)
+			}
+		}
+
+		after = refs[len(refs)-1]
+		checked += len(refs)
+
+		x.logger().Info("checking that the store holds what the versions reference", "files", checked, "elapsed", time.Since(began).Round(time.Second))
 	}
 
-	err := x.client.File.Query().Where(file.RefNotNil()).Unique(true).Select(file.FieldRef).Scan(ctx, &rows)
+	if len(lost) == 0 {
+		return nil
+	}
+
+	sets, err := x.client.Set.Query().IDs(ctx)
 	if err != nil {
 		return err
 	}
 
+	report, err := backup.ReportDamage(ctx, x.ObjectStore, x, sets, lost)
+	if err != nil {
+		return err
+	}
+
+	x.logger().Warn("the store lost objects its versions reference", "objects", len(lost),
+		"damaged sets", len(report.Paths), "unrecoverable versions", len(report.Lost), "sets to read again", len(report.Rescan))
+
+	return nil
+}
+
+// lostOf returns what of the file objects refs name, their parts and
+// their splits, the store no longer holds, each named once.
+func (x *Index) lostOf(ctx context.Context, refs [][]byte) ([]*proto.Ref, error) {
 	var (
 		mtx  sync.Mutex
 		seen = map[string]bool{}
@@ -334,18 +404,23 @@ func (x *Index) findDamage(ctx context.Context) error {
 			return err
 		}
 
+		var parts []*proto.Ref
 		for _, part := range obj.GetFile().GetParts() {
-			if !claim(part.GetRef()) {
-				continue
+			if claim(part.GetRef()) {
+				parts = append(parts, part.GetRef())
 			}
+		}
 
-			held, err := x.ObjectStore.Has(ctx, part.GetRef())
+		if len(parts) > 0 {
+			held, err := backup.HasAll(ctx, x.ObjectStore, parts)
 			if err != nil {
 				return err
 			}
 
-			if !held {
-				gone(part.GetRef())
+			for i, part := range parts {
+				if !held[i] {
+					gone(part)
+				}
 			}
 		}
 
@@ -361,42 +436,15 @@ func (x *Index) findDamage(ctx context.Context) error {
 	group, gctx := errgroup.WithContext(ctx)
 	group.SetLimit(damageWorkers)
 
-	began := time.Now()
-
-	for i, row := range rows {
-		if len(row.Ref) == 0 {
+	for _, ref := range refs {
+		if len(ref) == 0 {
 			continue
 		}
 
-		if i > 0 && i%10000 == 0 {
-			x.logger().Info("checking that the store holds what the versions reference", "files", i, "of", len(rows), "elapsed", time.Since(began).Round(time.Second))
-		}
-
 		group.Go(func() error {
-			return check(gctx, &proto.Ref{Hash: row.Ref})
+			return check(gctx, &proto.Ref{Hash: ref})
 		})
 	}
 
-	if err := group.Wait(); err != nil {
-		return err
-	}
-
-	if len(lost) == 0 {
-		return nil
-	}
-
-	sets, err := x.client.Set.Query().IDs(ctx)
-	if err != nil {
-		return err
-	}
-
-	report, err := backup.ReportDamage(ctx, x.ObjectStore, x, sets, lost)
-	if err != nil {
-		return err
-	}
-
-	x.logger().Warn("the store lost objects its versions reference", "objects", len(lost),
-		"damaged sets", len(report.Paths), "unrecoverable versions", len(report.Lost), "sets to read again", len(report.Rescan))
-
-	return nil
+	return lost, group.Wait()
 }
