@@ -23,6 +23,9 @@ var (
 	// ErrLost is returned for an entry of a tree whose content the store
 	// lost.
 	ErrLost = errors.New("the store lost the entry's content")
+	// ErrIncomplete is returned for a restore with Delete of a commit that
+	// lost entries, which would remove them from the directory.
+	ErrIncomplete = errors.New("the commit lost entries, which a restore deleting what it lacks would remove from the directory")
 	// ErrDanglingRef is returned when an object references objects the store
 	// does not hold.
 	ErrDanglingRef = errors.New("object references missing objects")

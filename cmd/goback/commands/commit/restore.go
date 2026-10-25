@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
@@ -158,8 +159,9 @@ func (c *commit) restore() error {
 	var unrestored atomic.Int64
 
 	err = c.restorer.RestoreTree(c.ctx, commit, c.base, backup.TreeOptions{
-		From:   c.from,
-		Delete: c.delete,
+		From:             c.from,
+		Delete:           c.delete,
+		DeleteIncomplete: c.force,
 		Listed: func(files, bytes int64) {
 			progress.filesTotal, progress.bytesTotal = files, bytes
 			stopProgress = progress.report(c.progressInterval)
@@ -203,27 +205,45 @@ func (c *commit) restore() error {
 
 	stopProgress()
 
+	if errors.Is(err, backup.ErrIncomplete) {
+		return fmt.Errorf("%w; restore without --delete, or pass --force", err)
+	}
+
 	if err != nil {
 		return err
 	}
 
 	stats, missed := c.restorer.Stats(), unrestored.Load()
+	incomplete := commit.GetIncomplete() || stats.Lost > 0 || stats.PartialDirs > 0
 
 	common.Result(struct {
 		Commit     views.CommitView    `json:"commit"`
 		DryRun     bool                `json:"dry_run"`
+		Incomplete bool                `json:"incomplete"`
 		Stats      backup.RestoreStats `json:"stats"`
 		Unrestored int64               `json:"unrestored"`
-	}{common.View.Commit(commit), c.restorer.DryRun, stats, int64(missed)}, func() {
+	}{common.View.Commit(commit), c.restorer.DryRun, incomplete, stats, int64(missed)}, func() {
 		logStats(stats)
 
 		if missed > 0 {
 			log.Printf("%d files could not be restored at all", missed)
 		}
+
+		if incomplete {
+			log.Printf("The commit is incomplete: the store lost some of its entries")
+		}
 	})
+
+	if incomplete {
+		return errLeftOut
+	}
 
 	return nil
 }
+
+// errLeftOut marks a restore that finished but left entries of the commit
+// out.
+var errLeftOut = errors.New("the restore left entries out")
 
 func logStats(stats backup.RestoreStats) {
 	log.Printf("%d files: %d written, %d unchanged, %d skipped by stat; bytes from destination %s, seeds %s, files already restored %s, cache %s, store %s",
@@ -246,6 +266,10 @@ func logStats(stats backup.RestoreStats) {
 
 	if stats.Lost > 0 {
 		log.Printf("%d entries left out: the store lost them", stats.Lost)
+	}
+
+	if stats.PartialDirs > 0 {
+		log.Printf("%d directories left without some of their entries: the store lost those with their names", stats.PartialDirs)
 	}
 
 	if stats.StreamsLeftOut > 0 {
@@ -312,6 +336,7 @@ func restoreAction(c *cli.Context) {
 		ref:      ref,
 		from:     c.String("from"),
 		delete:   c.Bool("delete"),
+		force:    c.Bool("force"),
 		restorer: restorer,
 		store:    store,
 		set:      c.GlobalString("set"),
@@ -320,13 +345,17 @@ func restoreAction(c *cli.Context) {
 	}
 
 	err = s.restore()
-	if err != nil {
+	if err != nil && !errors.Is(err, errLeftOut) {
 		common.Fatal(err)
 	}
 
 	common.SweepBlobCache(restorer.Cache)
 
 	common.CloseRepo(repo)
+
+	if err != nil {
+		os.Exit(1)
+	}
 }
 
 var restoreFlags = []cli.Flag{
@@ -383,7 +412,7 @@ var restoreCmd = cli.Command{
 		},
 		cli.BoolFlag{
 			Name:  "force",
-			Usage: "restore even if a running server holds a session.lock in the target",
+			Usage: "restore even if a running server holds a session.lock in the target, and allow --delete of an incomplete commit",
 		},
 		cli.DurationFlag{
 			Name:  "progress-interval",

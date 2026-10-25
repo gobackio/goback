@@ -33,6 +33,11 @@ type TreeOptions struct {
 	// Delete removes everything under the directory the tree does not
 	// hold, except the partial files a later restore resumes from.
 	Delete bool
+	// DeleteIncomplete lets Delete run on a commit or tree marked
+	// incomplete, removing what the store lost from the directory too.
+	// Without it such a restore fails with ErrIncomplete before it writes
+	// anything.
+	DeleteIncomplete bool
 	// Listed is handed the files and bytes the tree holds once it is
 	// listed, before anything is written.
 	Listed func(files, bytes int64)
@@ -82,6 +87,11 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 		return errors.New("a restore of some paths, or under other names, deletes nothing")
 	}
 
+	refuseDelete := opts.Delete && !opts.DeleteIncomplete
+	if refuseDelete && commit.GetIncomplete() {
+		return ErrIncomplete
+	}
+
 	tops, err := topPaths(opts.Paths)
 	if err != nil {
 		return err
@@ -118,6 +128,12 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 	if err != nil {
 		return err
 	}
+
+	if refuseDelete && l.incomplete {
+		return ErrIncomplete
+	}
+
+	atomic.AddInt64(&r.stats.PartialDirs, l.partial)
 
 	if !r.DryRun {
 		l.findLinks()
@@ -259,6 +275,11 @@ type treeList struct {
 	entries     []treeEntry
 	files, size int64
 	into        []string
+
+	// incomplete is whether a tree listed is marked incomplete, and
+	// partial counts the directories that lost entries with their names
+	incomplete bool
+	partial    int64
 }
 
 // addPaths lists each of tops at its path under dir.
@@ -319,7 +340,7 @@ func (l *treeList) addPaths(ctx context.Context, root *proto.Ref, dir string, to
 func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, under, named, at string) error {
 	renamed := map[string]string{}
 
-	return l.reader.WalkTree(ctx, ref, parent, func(rel string, info os.FileInfo, ref *proto.Ref) error {
+	incomplete, err := l.reader.walkTree(ctx, ref, parent, func(rel string, info os.FileInfo, ref *proto.Ref) error {
 		stat, _ := info.Sys().(*proto.FileInfo)
 		if stat == nil {
 			return fmt.Errorf("no stat for %s", rel)
@@ -353,7 +374,11 @@ func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, 
 		l.append(written, relPath(under, parts...), inCommit, info, stat, ref)
 
 		return nil
-	})
+	}, func(string) { l.partial++ })
+
+	l.incomplete = l.incomplete || incomplete || l.partial > 0
+
+	return err
 }
 
 // entry lists the node at the tree path top in the directory into, which
@@ -417,6 +442,7 @@ func (l *treeList) rename(path string, info os.FileInfo) (string, error) {
 
 func (l *treeList) append(path, rel, at string, info os.FileInfo, stat *proto.FileInfo, ref *proto.Ref) {
 	l.entries = append(l.entries, treeEntry{path: path, rel: rel, at: at, info: info, stat: stat, ref: ref, linkTo: -1})
+	l.incomplete = l.incomplete || stat.GetLost()
 
 	if !info.IsDir() && stat.GetType() != proto.NodeType_NODE_SYMLINK {
 		l.files++

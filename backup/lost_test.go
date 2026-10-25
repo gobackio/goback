@@ -2,13 +2,16 @@ package backup
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
+	pb "google.golang.org/protobuf/proto"
 )
 
 // markLost rewrites the fixture's commit past the given refs and makes it
@@ -85,4 +88,90 @@ func TestAnIncompleteCommitRestoresWhatItKeptAndListsWhatItLost(t *testing.T) {
 	require.False(t, top["other"].Stat.Lost, "the next run reads a lost directory again")
 	require.False(t, f.tree(top["sub"].Ref)["b.bin"].Stat.Lost, "and a lost file")
 	require.Equal(t, "four", f.content(top["other"].Ref, "d.txt"))
+}
+
+// splitLost makes a commit whose directory big lost one of its tree splits,
+// and a target directory that holds the live files the commit lost.
+func splitLost(t *testing.T) (f *walkerFixture, commit *proto.Commit, dst string, gone []string) {
+	f = newWalkerFixture(t)
+	f.write("a.txt", []byte("one"))
+
+	for i := range 3 * treeFanout {
+		f.write(fmt.Sprintf("big/%04d.txt", i), []byte(strconv.Itoa(i)))
+	}
+
+	result := f.run()
+	big := f.tree(result.Commit.Tree)["big"]
+
+	obj, err := f.store.Get(context.Background(), big.Ref)
+	require.NoError(t, err)
+	splits := obj.GetTree().GetSplits()
+	require.Greater(t, len(splits), 1)
+
+	for name := range f.tree(splits[0]) {
+		gone = append(gone, filepath.Join("big", name))
+	}
+
+	commit = f.markLost(result, splits[0])
+	require.True(t, commit.Incomplete)
+
+	dst = t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dst, "big"), 0o755))
+
+	for _, rel := range gone {
+		require.NoError(t, os.WriteFile(filepath.Join(dst, rel), []byte("live"), 0o644))
+	}
+
+	return f, commit, dst, gone
+}
+
+func TestARestoreDeletingWhatItLacksRefusesACommitThatLostASplit(t *testing.T) {
+	f, commit, dst, gone := splitLost(t)
+
+	restorer := &Restorer{Store: f.store}
+	err := restorer.RestoreTree(context.Background(), commit, dst, TreeOptions{Delete: true})
+	require.ErrorIs(t, err, ErrIncomplete)
+	require.NoFileExists(t, filepath.Join(dst, "a.txt"), "nothing is written")
+
+	for _, rel := range gone {
+		require.FileExists(t, filepath.Join(dst, rel))
+	}
+
+	unmarked := pb.Clone(commit).(*proto.Commit)
+	unmarked.Incomplete = false
+	err = restorer.RestoreTree(context.Background(), unmarked, dst, TreeOptions{Delete: true})
+	require.ErrorIs(t, err, ErrIncomplete, "a tree marked incomplete is refused as well")
+	require.NoFileExists(t, filepath.Join(dst, "a.txt"))
+
+	require.NoError(t, restorer.RestoreTree(context.Background(), commit, dst, TreeOptions{Delete: true, DeleteIncomplete: true}))
+	require.FileExists(t, filepath.Join(dst, "a.txt"))
+	require.NoFileExists(t, filepath.Join(dst, gone[0]), "allowed, the restore removes what the commit lost")
+}
+
+func TestARestoreOfACommitThatLostASplitCountsTheDirectory(t *testing.T) {
+	f, commit, dst, gone := splitLost(t)
+
+	restorer := &Restorer{Store: f.store}
+	require.NoError(t, restorer.RestoreTree(context.Background(), commit, dst, TreeOptions{}))
+	require.EqualValues(t, 1, restorer.Stats().PartialDirs)
+	require.Zero(t, restorer.Stats().Lost)
+	require.FileExists(t, filepath.Join(dst, "a.txt"))
+	require.FileExists(t, filepath.Join(dst, gone[0]), "what the commit lost is left as it is")
+}
+
+func TestARestoreOfACommitThatLostItsRootDeletesNothing(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.write("a.txt", []byte("one"))
+	result := f.run()
+	commit := f.markLost(result, result.Commit.Tree)
+
+	dst := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dst, "a.txt"), []byte("live"), 0o644))
+
+	restorer := &Restorer{Store: f.store}
+	require.ErrorIs(t, restorer.RestoreTree(context.Background(), commit, dst, TreeOptions{Delete: true}), ErrIncomplete)
+	require.FileExists(t, filepath.Join(dst, "a.txt"))
+
+	require.NoError(t, restorer.RestoreTree(context.Background(), commit, dst, TreeOptions{}))
+	require.EqualValues(t, 1, restorer.Stats().PartialDirs)
 }

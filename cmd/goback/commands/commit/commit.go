@@ -21,6 +21,7 @@ type commit struct {
 	from     string
 	set      string
 	delete   bool
+	force    bool
 
 	progressInterval time.Duration
 }

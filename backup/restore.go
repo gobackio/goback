@@ -158,8 +158,11 @@ type RestoreStats struct {
 	// CloudOnly counts the files left out because their content was only
 	// in a cloud sync service when they were backed up.
 	CloudOnly int64 `json:"cloud_only"`
-	// Lost counts the entries left out because the store lost them.
-	Lost int64 `json:"lost"`
+	// Lost counts the entries left out because the store lost them, and
+	// PartialDirs the directories that lost entries, names and all, with
+	// a part of their listing, so those entries go uncounted.
+	Lost        int64 `json:"lost"`
+	PartialDirs int64 `json:"partial_dirs"`
 
 	BytesFromDestination int64 `json:"bytes_from_destination"`
 	BytesFromSeeds       int64 `json:"bytes_from_seeds"`
@@ -282,6 +285,7 @@ func (r *Restorer) Stats() RestoreStats {
 		Linked:               atomic.LoadInt64(&r.stats.Linked),
 		CloudOnly:            atomic.LoadInt64(&r.stats.CloudOnly),
 		Lost:                 atomic.LoadInt64(&r.stats.Lost),
+		PartialDirs:          atomic.LoadInt64(&r.stats.PartialDirs),
 		BytesFromDestination: atomic.LoadInt64(&r.stats.BytesFromDestination),
 		BytesFromSeeds:       atomic.LoadInt64(&r.stats.BytesFromSeeds),
 		BytesFromRestored:    atomic.LoadInt64(&r.stats.BytesFromRestored),

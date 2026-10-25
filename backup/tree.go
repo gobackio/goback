@@ -253,7 +253,7 @@ func OpenTree(ctx context.Context, store Getter, ref *proto.Ref, key *storekey.K
 		return nil, err
 	}
 
-	return &proto.Tree{Nodes: nodes}, nil
+	return &proto.Tree{Nodes: nodes, Incomplete: tree.Incomplete}, nil
 }
 
 // LoadTree fetches a tree and flattens its splits into one node list.
@@ -281,7 +281,7 @@ func flatten(ctx context.Context, store Getter, tree *proto.Tree) (*proto.Tree, 
 		return nil, err
 	}
 
-	flat := &proto.Tree{}
+	flat := &proto.Tree{Incomplete: tree.Incomplete}
 	for _, obj := range objects {
 		if obj.Type() != proto.ObjectType_TREE {
 			return nil, errors.New("object is not a tree")
@@ -293,6 +293,7 @@ func flatten(ctx context.Context, store Getter, tree *proto.Tree) (*proto.Tree, 
 		}
 
 		flat.Nodes = append(flat.Nodes, sub.Nodes...)
+		flat.Incomplete = flat.Incomplete || sub.Incomplete
 	}
 
 	return flat, nil
