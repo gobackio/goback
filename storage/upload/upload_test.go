@@ -140,3 +140,18 @@ func TestIngestRefusesAFileWithMoreCommitsThanItHolds(t *testing.T) {
 	_, err = Ingest(context.Background(), bytes.NewReader(buf.Bytes()), int64(buf.Len()), &held{hashes: map[string]bool{}})
 	require.ErrorIs(t, err, ErrInvalid)
 }
+
+func TestIngestRefusesAFileWhoseCommitsTakeMoreThanItHolds(t *testing.T) {
+	var buf bytes.Buffer
+
+	w, err := NewWriter(&buf)
+	require.NoError(t, err)
+
+	for i := range 2 {
+		large := proto.NewObject(&proto.Commit{Timestamp: int64(i + 1), Tree: &proto.Ref{Hash: make([]byte, 32)}, BackupSet: string(make([]byte, MaxCommitBytes/2+1))})
+		require.NoError(t, w.Write(large))
+	}
+
+	_, err = Ingest(context.Background(), bytes.NewReader(buf.Bytes()), int64(buf.Len()), &held{hashes: map[string]bool{}})
+	require.ErrorIs(t, err, ErrInvalid)
+}

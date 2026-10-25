@@ -158,13 +158,19 @@ type Ingested struct {
 	Commits         []*proto.Object
 }
 
-// MaxCommits is the most commits an upload file holds.
-const MaxCommits = 1000
+const (
+	// MaxCommits is the most commits an upload file holds.
+	MaxCommits = 1000
+	// MaxCommitBytes is the most bytes the commits of an upload file take
+	// together, which Ingest holds until the file ends.
+	MaxCommitBytes = 16 << 20
+)
 
 // Ingest stores the objects of the upload file r in b, a batch at a time,
 // skipping those b holds already, so ingesting a file twice stores it once.
 // It asks b about at most 4,096 refs at once. The commits the file holds,
-// at most MaxCommits, are not stored but answered in Ingested.Commits.
+// at most MaxCommits of at most MaxCommitBytes together, are not stored
+// but answered in Ingested.Commits.
 // It reports its progress as progress.OpIngest, bytes counting the file's
 // bytes against size.
 func Ingest(ctx context.Context, r io.Reader, size int64, b backup.Batcher) (Ingested, error) {
@@ -179,9 +185,10 @@ func Ingest(ctx context.Context, r io.Reader, size int64, b backup.Batcher) (Ing
 	defer phase.Finish()
 
 	var (
-		batch []*proto.Object
-		bytes int
-		read  = rd.Read()
+		batch       []*proto.Object
+		bytes       int
+		commitBytes int
+		read        = rd.Read()
 	)
 
 	flush := func() error {
@@ -239,6 +246,10 @@ func Ingest(ctx context.Context, r io.Reader, size int64, b backup.Batcher) (Ing
 		if obj.GetCommit() != nil {
 			if len(done.Commits) == MaxCommits {
 				return done, fmt.Errorf("%w: it holds more than %d commits", ErrInvalid, MaxCommits)
+			}
+
+			if commitBytes += gproto.Size(obj); commitBytes > MaxCommitBytes {
+				return done, fmt.Errorf("%w: its commits take more than %d bytes", ErrInvalid, MaxCommitBytes)
 			}
 
 			done.Commits = append(done.Commits, obj)
