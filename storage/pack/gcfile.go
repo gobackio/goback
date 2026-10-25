@@ -186,8 +186,19 @@ func (g *gcFile) WriteTo(w io.Writer) (int64, error) {
 	return cw.count, bw.Flush()
 }
 
+// errGCFileLength is a length in a mark result that its bytes cannot hold.
+var errGCFileLength = errors.New("gc file length exceeds its bytes")
+
+// ReadFrom reads a mark result, refusing one whose lengths exceed its
+// bytes.
 func (g *gcFile) ReadFrom(r io.Reader) (int64, error) {
-	cr := &countingReader{reader: bufio.NewReader(r)}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return int64(len(data)), err
+	}
+
+	br := bytes.NewReader(data)
+	cr := &countingReader{reader: br}
 
 	magic := make([]byte, len(gcMagic))
 	if _, err := io.ReadFull(cr, magic); err != nil {
@@ -212,16 +223,18 @@ func (g *gcFile) ReadFrom(r io.Reader) (int64, error) {
 	g.DeadSince = fromUnixNano(deadSince)
 	g.Erase = erase == 1
 
-	g.Current = bitset.New(0)
-	if _, err := g.Current.ReadFrom(cr); err != nil {
+	if g.Current, err = readBitset(br, cr); err != nil {
 		return cr.count, err
 	}
 
 	if hasPrevious == 1 {
-		g.Previous = bitset.New(0)
-		if _, err := g.Previous.ReadFrom(cr); err != nil {
+		if g.Previous, err = readBitset(br, cr); err != nil {
 			return cr.count, err
 		}
+	}
+
+	if uint64(dead) > uint64(br.Len())/8 {
+		return cr.count, errGCFileLength
 	}
 
 	g.Dead = make([]uint64, dead)
@@ -240,6 +253,10 @@ func (g *gcFile) ReadFrom(r io.Reader) (int64, error) {
 		return cr.count, err
 	}
 
+	if uint64(n) > uint64(br.Len()) {
+		return cr.count, errGCFileLength
+	}
+
 	if n > 0 {
 		g.Death = make(deaths, n)
 		if _, err := io.ReadFull(cr, g.Death); err != nil {
@@ -248,6 +265,35 @@ func (g *gcFile) ReadFrom(r io.Reader) (int64, error) {
 	}
 
 	return cr.count, nil
+}
+
+// readBitset reads a bitset from br through cr once its length fits in
+// what br has left.
+func readBitset(br *bytes.Reader, cr *countingReader) (*bitset.BitSet, error) {
+	var length uint64
+	if err := binary.Read(br, binary.BigEndian, &length); err != nil {
+		return nil, err
+	}
+
+	words := length / 64
+	if length%64 != 0 {
+		words++
+	}
+
+	if words > uint64(br.Len())/8 {
+		return nil, errGCFileLength
+	}
+
+	if _, err := br.Seek(-8, io.SeekCurrent); err != nil {
+		return nil, err
+	}
+
+	set := bitset.New(0)
+	if _, err := set.ReadFrom(cr); err != nil {
+		return nil, err
+	}
+
+	return set, nil
 }
 
 type gcCounter struct {
