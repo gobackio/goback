@@ -2,7 +2,9 @@ package pack
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -30,12 +32,16 @@ func headName(setID uint64) string {
 
 // Heads lists the head of every set that has committed.
 func (ps *PackStorage) Heads() ([]Head, error) {
-	return HeadsOf(ps.storage)
+	return headsOf(ps.storage, ps.logger)
 }
 
 // HeadsOf lists the heads a store's storage holds, without opening the
-// store.
+// store. A head that does not decode is logged and left out.
 func HeadsOf(storage ArchiveStorage) ([]Head, error) {
+	return headsOf(storage, slog.Default())
+}
+
+func headsOf(storage ArchiveStorage, logger *slog.Logger) ([]Head, error) {
 	names, err := storage.List(HeadExt)
 	if err != nil {
 		return nil, err
@@ -49,6 +55,11 @@ func HeadsOf(storage ArchiveStorage) ([]Head, error) {
 		}
 
 		head, ok, err := readHead(storage, id)
+		if errors.Is(err, errHeadUnreadable) {
+			logger.Warn("leaving out a head that does not decode", "set", id, "err", err)
+			continue
+		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -60,6 +71,9 @@ func HeadsOf(storage ArchiveStorage) ([]Head, error) {
 
 	return heads, nil
 }
+
+// errHeadUnreadable is a head file whose bytes do not decode.
+var errHeadUnreadable = errors.New("head does not decode")
 
 func readHead(storage ArchiveStorage, setID uint64) (Head, bool, error) {
 	file, err := storage.Open(headName(setID))
@@ -74,7 +88,7 @@ func readHead(storage ArchiveStorage, setID uint64) (Head, bool, error) {
 
 	var head Head
 	if err := json.NewDecoder(file).Decode(&head); err != nil {
-		return Head{}, false, fmt.Errorf("reading the head of set %d: %w", setID, err)
+		return Head{}, false, fmt.Errorf("reading the head of set %d: %w: %w", setID, errHeadUnreadable, err)
 	}
 
 	return head, true, nil
@@ -90,8 +104,11 @@ func (ps *PackStorage) AdvanceHead(object *proto.Object) error {
 		return nil
 	}
 
+	// a head that does not decode is replaced
 	current, ok, err := readHead(ps.storage, commit.GetSetId())
-	if err != nil {
+	if errors.Is(err, errHeadUnreadable) {
+		ps.logger.Warn("replacing a head that does not decode", "set", commit.GetSetId(), "err", err)
+	} else if err != nil {
 		return err
 	}
 

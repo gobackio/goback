@@ -42,3 +42,38 @@ func TestASetsHeadIsItsLatestCompleteCommit(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, heads, Head{SetID: 1, Set: "world", Commit: latest.Ref().Hash, ReceivedAtNs: 30})
 }
+
+func TestAHeadThatDoesNotDecodeIsLeftOutAndReplaced(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+
+	tree := makeTestData(t, 1)[0]
+	putAll(t, store, []*proto.Object{tree})
+
+	commit := func(set uint64, received int64) *proto.Object {
+		obj := proto.NewObject(&proto.Commit{Tree: tree.Ref(), BackupSet: "world"})
+		obj.Stamp(set, time.Unix(0, received))
+		putAll(t, store, []*proto.Object{obj})
+
+		return obj
+	}
+
+	kept := commit(1, 10)
+	commit(2, 10)
+
+	file, err := store.storage.Create(headName(2))
+	require.NoError(t, err)
+	_, err = file.Write([]byte(`{"setId":`))
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	heads, err := store.Heads()
+	require.NoError(t, err)
+	require.Equal(t, []Head{{SetID: 1, Set: "world", Commit: kept.Ref().Hash, ReceivedAtNs: 10}}, heads)
+
+	replaced := commit(2, 5)
+
+	heads, err = store.Heads()
+	require.NoError(t, err)
+	require.Contains(t, heads, Head{SetID: 2, Set: "world", Commit: replaced.Ref().Hash, ReceivedAtNs: 5})
+}
