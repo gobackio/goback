@@ -4,8 +4,10 @@ package backup
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -23,6 +25,21 @@ func IsPermissionError(err error) bool {
 // a byte range lock.
 func IsLockError(err error) bool {
 	return errors.Is(err, windows.ERROR_LOCK_VIOLATION)
+}
+
+// vanished reports whether an operation on an entry failed because the
+// entry is gone, or is no longer the directory it was listed as.
+func vanished(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, windows.ERROR_DIRECTORY)
+}
+
+// entryError reports whether an open, read or listing failed for that entry
+// alone: for lack of access, on a failing medium or at a path too long or
+// unresolvable to reach.
+func entryError(err error) bool {
+	return IsPermissionError(err) || IsLockError(err) ||
+		errors.Is(err, windows.ERROR_CRC) || errors.Is(err, windows.ERROR_IO_DEVICE) ||
+		errors.Is(err, windows.ERROR_FILENAME_EXCED_RANGE) || errors.Is(err, windows.ERROR_CANT_RESOLVE_FILENAME)
 }
 
 // lockedElsewhere reports whether another process holds the file open

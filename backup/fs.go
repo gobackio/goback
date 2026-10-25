@@ -12,7 +12,8 @@ import (
 // FS is the file tree a Walker reads. Paths are the FS's own strings: Join
 // builds them from the Walker's Root, and the walker passes them back
 // unchanged. An error for lack of access wraps fs.ErrPermission, so the
-// walk keeps the previous version instead of failing.
+// walk keeps the previous version instead of failing, and one for an entry
+// that is gone wraps fs.ErrNotExist, so the walk leaves it out.
 type FS interface {
 	// ReadDir lists dir sorted by name, without following symlinks. Info on
 	// an entry may stat it; the walker only asks for entries it includes.

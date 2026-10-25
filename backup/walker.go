@@ -273,7 +273,12 @@ func (r *WalkResult) Dirty() bool {
 	return r.Torn > 0 || r.Unreadable > 0
 }
 
-var errUnreadable = errors.New("file could not be read")
+var (
+	errUnreadable = errors.New("file could not be read")
+	// errVanished is an entry gone since it was listed, which a walk leaves
+	// out of its commit
+	errVanished = errors.New("the entry is gone")
+)
 
 // DefaultProgressInterval is how often a walk reports when the caller
 // wants progress but names no interval.
@@ -784,13 +789,17 @@ func (w *Walker) included(rel string) bool {
 func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, base []*proto.TreeNode, root bool) ([]*proto.TreeNode, bool, error) {
 	found := w.scan.take(scanJob{dir: dir, rel: rel})
 	if err := found.err; err != nil {
-		if base != nil && IsPermissionError(err) {
+		if !root && vanished(err) {
+			return nil, false, fmt.Errorf("%w: listing %s: %v", errVanished, dir, err)
+		}
+
+		if base != nil && entryError(err) {
 			w.logger().Warn("listing failed, keeping the previous version", "dir", dir, "err", err)
 			atomic.AddInt64(&w.result.Unreadable, 1)
 			return base, false, nil
 		}
 
-		if IsPermissionError(err) && !root {
+		if entryError(err) && !root {
 			w.logger().Warn("listing failed, skipping", "dir", dir, "err", err)
 			atomic.AddInt64(&w.result.Unreadable, 1)
 			return nil, true, nil
@@ -838,9 +847,16 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 		}
 
 		if entry.err != nil {
-			w.logger().Warn("stat failed, skipping", "path", childPath, "err", entry.err)
+			if vanished(entry.err) {
+				if baseNode != nil {
+					markChanged()
+				}
+				continue
+			}
+
+			w.logger().Warn("stat failed, keeping the previous version", "path", childPath, "err", entry.err)
 			atomic.AddInt64(&w.result.Unreadable, 1)
-			markChanged()
+			results[i] = baseNode
 			continue
 		}
 
@@ -855,6 +871,12 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 
 			walk := func(ctx context.Context) error {
 				node, childChanged, err := w.walkChildDir(ctx, childPath, childRel, token, info, baseNode)
+				if errors.Is(err, errVanished) {
+					w.logger().Debug("the directory is gone, leaving it out", "dir", childPath)
+					markChanged()
+					return nil
+				}
+
 				if err != nil {
 					return err
 				}
@@ -886,9 +908,19 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 		case info.Mode()&os.ModeSymlink != 0:
 			target, err := fsys.Readlink(ctx, childPath)
 			if err != nil {
-				w.logger().Warn("reading symlink failed, skipping", "path", childPath, "err", err)
-				atomic.AddInt64(&w.result.Skipped, 1)
-				markChanged()
+				if !vanished(err) {
+					w.logger().Warn("reading symlink failed, keeping the previous version", "path", childPath, "err", err)
+					atomic.AddInt64(&w.result.Unreadable, 1)
+
+					if baseNode.GetStat().GetType() == proto.NodeType_NODE_SYMLINK {
+						results[i] = baseNode
+						continue
+					}
+				}
+
+				if baseNode != nil {
+					markChanged()
+				}
 				continue
 			}
 
@@ -1222,6 +1254,11 @@ func (w *Walker) backupFile(ctx context.Context, path, rel string, info os.FileI
 		}
 	}
 
+	if errors.Is(err, errVanished) {
+		w.logger().Debug("the file is gone, leaving it out", "path", path)
+		return nil, nil
+	}
+
 	if errors.Is(err, errUnreadable) {
 		atomic.AddInt64(&w.result.Unreadable, 1)
 
@@ -1260,17 +1297,13 @@ func (w *Walker) backupFile(ctx context.Context, path, rel string, info os.FileI
 func (w *Walker) readFile(ctx context.Context, path string, known map[string]struct{}, forced map[string]struct{}) (*proto.Ref, error) {
 	file, err := w.fs().Open(ctx, path)
 	if err != nil {
-		if IsPermissionError(err) || IsLockError(err) {
-			return nil, fmt.Errorf("%w: %v", errUnreadable, err)
-		}
-
-		return nil, fmt.Errorf("opening %s: %w", path, err)
+		return nil, entryFailed(fmt.Errorf("opening %s: %w", path, err))
 	}
 	defer file.Close()
 
 	info, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", path, err)
+		return nil, entryFailed(fmt.Errorf("stat %s: %w", path, err))
 	}
 
 	writer := newFileWriter(ctx, w.Objects, w.Key, info.Size())
@@ -1287,13 +1320,14 @@ func (w *Walker) readFile(ctx context.Context, path string, known map[string]str
 		writer.window = w.window
 	}
 
-	_, err = io.Copy(writer, contentReader(file, info))
+	read := &readErr{r: contentReader(file, info)}
+	_, err = io.Copy(writer, read)
 	if err != nil {
-		if IsLockError(err) {
-			return nil, fmt.Errorf("%w: %v", errUnreadable, err)
+		if read.err != nil {
+			return nil, entryFailed(fmt.Errorf("reading %s: %w", path, err))
 		}
 
-		return nil, fmt.Errorf("reading %s: %w", path, err)
+		return nil, fmt.Errorf("storing %s: %w", path, err)
 	}
 
 	err = writer.Close()
@@ -1310,6 +1344,20 @@ func (w *Walker) readFile(ctx context.Context, path string, known map[string]str
 	atomic.AddInt64(&w.result.Repaired, int64(writer.repaired))
 
 	return writer.Ref(), nil
+}
+
+// entryFailed classes a failure to open or read one file: errVanished when
+// it is gone, errUnreadable when the rest of the tree can still be read,
+// and err itself otherwise.
+func entryFailed(err error) error {
+	switch {
+	case vanished(err):
+		return fmt.Errorf("%w: %v", errVanished, err)
+	case entryError(err):
+		return fmt.Errorf("%w: %v", errUnreadable, err)
+	}
+
+	return err
 }
 
 // knownParts returns the blob refs of a changed file's base version and of

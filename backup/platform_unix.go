@@ -5,6 +5,7 @@ package backup
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/user"
 	"strconv"
@@ -23,6 +24,21 @@ func IsPermissionError(err error) bool {
 // the file; never on Unix.
 func IsLockError(err error) bool {
 	return false
+}
+
+// vanished reports whether an operation on an entry failed because the
+// entry is gone, or is no longer the directory it was listed as.
+func vanished(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+}
+
+// entryError reports whether an open, read or listing failed for that entry
+// alone: for lack of access, on a failing medium, through a stale network
+// handle or at a path too long or too deep in links to reach.
+func entryError(err error) bool {
+	return IsPermissionError(err) || IsLockError(err) ||
+		errors.Is(err, syscall.EIO) || errors.Is(err, syscall.ESTALE) ||
+		errors.Is(err, syscall.ENAMETOOLONG) || errors.Is(err, syscall.ELOOP)
 }
 
 // lockedElsewhere reports whether another process holds a POSIX record
