@@ -5,6 +5,7 @@
 package statcache
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -73,7 +74,7 @@ func encode(info os.FileInfo, ref *proto.Ref) []byte {
 	return rec
 }
 
-func matches(rec []byte, info os.FileInfo) bool {
+func matches(rec []byte, info os.FileInfo, ref *proto.Ref) bool {
 	if len(rec) != recordSize {
 		return false
 	}
@@ -84,7 +85,8 @@ func matches(rec []byte, info os.FileInfo) bool {
 		binary.BigEndian.Uint64(rec[recordCtime:]) == uint64(ctime) &&
 		binary.BigEndian.Uint64(rec[recordInode:]) == inode &&
 		binary.BigEndian.Uint64(rec[recordSize0:]) == uint64(info.Size()) &&
-		binary.BigEndian.Uint32(rec[recordMode:]) == uint32(info.Mode())
+		binary.BigEndian.Uint32(rec[recordMode:]) == uint32(info.Mode()) &&
+		bytes.Equal(rec[recordRef:], ref.GetHash())
 }
 
 func key(path string) []byte {
@@ -92,7 +94,7 @@ func key(path string) []byte {
 }
 
 // Lookup implements backup.StatCache.
-func (c *Cache) Lookup(path string, info os.FileInfo) (present bool, matched bool) {
+func (c *Cache) Lookup(path string, info os.FileInfo, ref *proto.Ref) (present bool, matched bool) {
 	_ = c.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(key(path))
 		if err != nil {
@@ -102,7 +104,7 @@ func (c *Cache) Lookup(path string, info os.FileInfo) (present bool, matched boo
 		present = true
 
 		return item.Value(func(val []byte) error {
-			matched = matches(val, info)
+			matched = matches(val, info, ref)
 			return nil
 		})
 	})

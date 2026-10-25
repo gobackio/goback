@@ -444,7 +444,7 @@ type vetoingStatCache struct {
 	calls atomic.Int64
 }
 
-func (c *vetoingStatCache) Lookup(string, os.FileInfo) (bool, bool) {
+func (c *vetoingStatCache) Lookup(string, os.FileInfo, *proto.Ref) (bool, bool) {
 	c.calls.Add(1)
 	return true, false
 }

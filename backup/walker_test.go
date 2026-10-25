@@ -1370,6 +1370,7 @@ func TestKnownPartsReachThePartsOfSplitFilesAndEarlierVersions(t *testing.T) {
 type identityCache struct {
 	mtx  sync.Mutex
 	seen map[string][2]any
+	refs map[string]*proto.Ref
 }
 
 func (c *identityCache) identity(info os.FileInfo) [2]any {
@@ -1377,20 +1378,24 @@ func (c *identityCache) identity(info os.FileInfo) [2]any {
 	return [2]any{[2]int64{ctime, int64(id)}, [2]int64{info.ModTime().UnixNano(), info.Size()}}
 }
 
-func (c *identityCache) Lookup(path string, info os.FileInfo) (bool, bool) {
+func (c *identityCache) Lookup(path string, info os.FileInfo, ref *proto.Ref) (bool, bool) {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
 	seen, ok := c.seen[path]
 
-	return ok, seen == c.identity(info)
+	return ok, seen == c.identity(info) && c.refs[path].Equal(ref)
 }
 
-func (c *identityCache) Store(path string, info os.FileInfo, _ *proto.Ref) error {
+func (c *identityCache) Store(path string, info os.FileInfo, ref *proto.Ref) error {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
 	c.seen[path] = c.identity(info)
+	if c.refs == nil {
+		c.refs = map[string]*proto.Ref{}
+	}
+	c.refs[path] = ref
 
 	return nil
 }
@@ -1413,6 +1418,31 @@ func TestTheStatCacheCatchesARewriteThatKeepsMtimeAndSize(t *testing.T) {
 	second := f.run()
 	require.EqualValues(t, 1, second.Read)
 	require.Equal(t, "version-2", f.content(second.Commit.Tree, "a.txt"))
+}
+
+func TestTheStatCacheCatchesARewriteAFailedRunReadButNeverCommitted(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.walker.FS = LocalFS{}
+	f.walker.Cache = &identityCache{seen: map[string][2]any{}}
+	f.write("a.txt", []byte("version-1"))
+
+	path := filepath.Join(f.root, "a.txt")
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+
+	f.run()
+
+	f.write("a.txt", []byte("version-2"))
+	require.NoError(t, os.Chtimes(path, info.ModTime(), info.ModTime()))
+
+	f.index.fail(errors.New("the index is gone"))
+	_, err = f.walker.Run(context.Background())
+	require.Error(t, err)
+	f.index.fail(nil)
+
+	third := f.run()
+	require.EqualValues(t, 1, third.Read)
+	require.Equal(t, "version-2", f.content(third.Commit.Tree, "a.txt"))
 }
 
 func TestAnUnchangedDirectoryIsTakenFromThePreviousCommitUnread(t *testing.T) {

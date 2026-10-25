@@ -32,8 +32,8 @@ import (
 // a hit alone never justifies reuse.
 type StatCache interface {
 	// Lookup reports whether an entry exists for path and whether it still
-	// matches the file's identity.
-	Lookup(path string, info os.FileInfo) (present bool, matches bool)
+	// matches the file's identity and was stored with ref.
+	Lookup(path string, info os.FileInfo, ref *proto.Ref) (present bool, matches bool)
 	// Store records the file's identity and the ref its read produced.
 	Store(path string, info os.FileInfo, ref *proto.Ref) error
 }
@@ -1303,7 +1303,7 @@ func (w *Walker) reusable(ctx context.Context, path, rel string, parent, info os
 	}
 
 	if w.Cache != nil && w.traits.Identity {
-		if present, matches := w.Cache.Lookup(path, info); present && !matches {
+		if present, matches := w.Cache.Lookup(path, info, baseNode.Ref); present && !matches {
 			return false
 		}
 	}
