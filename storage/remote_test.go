@@ -244,7 +244,8 @@ func serveAs(t *testing.T, store *Store, register ...func(*grpc.Server)) func(se
 	return serveRemote(t, remote, remote, register...)
 }
 
-// serveRemote serves as over bufnet behind remote's interceptors.
+// serveRemote serves as over bufnet behind remote's interceptors; a nil as
+// leaves the store service to register.
 func serveRemote(t *testing.T, remote *Server, as proto.StoreServer, register ...func(*grpc.Server)) func(secret, agent string) *Client {
 	t.Helper()
 
@@ -255,7 +256,9 @@ func serveRemote(t *testing.T, remote *Server, as proto.StoreServer, register ..
 		grpc.ChainUnaryInterceptor(auth.UnaryInterceptor(testSecret), remote.UnaryInterceptor()),
 		grpc.ChainStreamInterceptor(auth.StreamInterceptor(testSecret), remote.StreamInterceptor()),
 	)
-	proto.RegisterStoreServer(srv, as)
+	if as != nil {
+		proto.RegisterStoreServer(srv, as)
+	}
 
 	for _, r := range register {
 		r(srv)

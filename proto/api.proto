@@ -535,6 +535,30 @@ message GetTreeResponse {
     repeated LocatedRun runs = 3;
 }
 
+// ReportScheduleRequest is how often agent_id plans a snapshot of each set
+// it writes; it replaces what the agent reported before, so a set it no
+// longer lists expects nothing.
+message ReportScheduleRequest {
+    string agent_id = 1;
+    repeated SetSchedule sets = 2;
+}
+
+// SetSchedule is how often one set gets a snapshot by its agent's plan.
+message SetSchedule {
+    string backup_set = 1;
+    // every, cron or receiver
+    string kind = 2;
+    // the most time the plan allows between two snapshots; 0 for a
+    // receiver
+    int64 longest_gap_seconds = 3;
+    // the window the plan's slots move by
+    int64 jitter_seconds = 4;
+    // how often a receiver commits while its database writes
+    int64 commit_every_seconds = 5;
+}
+
+message ReportScheduleResponse {}
+
 service Store {
     rpc Put (PutRequest) returns (PutResponse) {}
     // PutCommits commits several commits of the caller's session at once
@@ -599,4 +623,7 @@ service Store {
     // EscrowedKeys returns every escrowed copy of the store key the store
     // keeps, for an agent that holds only the passphrase
     rpc EscrowedKeys(EscrowedKeysRequest) returns (EscrowedKeysResponse) {}
+    // ReportSchedule records how often the caller's agent snapshots each
+    // set it writes; a store that takes no reports is Unimplemented
+    rpc ReportSchedule(ReportScheduleRequest) returns (ReportScheduleResponse) {}
 }

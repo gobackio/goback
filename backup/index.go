@@ -95,6 +95,13 @@ type SetScope interface {
 	Reachable(ctx context.Context, sets []string, ref *proto.Ref) (bool, error)
 }
 
+// SetReach is implemented by indexes whose callers may act on only some of
+// the store's sets, as a key bound to a set does.
+type SetReach interface {
+	// Reaches reports whether the caller of ctx may act on the named set.
+	Reaches(ctx context.Context, set string) (bool, error)
+}
+
 // CommitGrant is the answer to an allowed BeginCommit.
 type CommitGrant struct {
 	// Policy is the store's write policy for this run; nil when the server

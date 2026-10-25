@@ -14,6 +14,7 @@ import (
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/retention"
+	"github.com/gobackio/goback/backup/schedule"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
@@ -913,6 +914,47 @@ func (s *Store) Policies() (Policies, error) {
 	}
 
 	return p, nil
+}
+
+// ReportSchedule hands an agent's report to the index, a
+// schedule.Reporter, or is backup.ErrNotImplemented for an index that takes
+// none. The caller reports only for its own agent and, where the index is a
+// backup.SetReach, only sets it reaches; anything else is auth.ErrForbidden.
+func (s *Store) ReportSchedule(ctx context.Context, r schedule.Report) error {
+	p, err := auth.Require(ctx)
+	if err != nil {
+		return err
+	}
+
+	if r.Agent == "" || (p.AgentID != "" && r.Agent != p.AgentID) {
+		return fmt.Errorf("%w: a report for agent %q", auth.ErrForbidden, r.Agent)
+	}
+
+	for _, e := range r.Sets {
+		if err := e.Validate(); err != nil {
+			return err
+		}
+	}
+
+	reporter, ok := s.Index.(schedule.Reporter)
+	if !ok {
+		return fmt.Errorf("%w: index %T takes no schedule reports", backup.ErrNotImplemented, s.Index)
+	}
+
+	if reach, ok := s.Index.(backup.SetReach); ok {
+		for _, e := range r.Sets {
+			reached, err := reach.Reaches(ctx, e.Set)
+			if err != nil {
+				return err
+			}
+
+			if !reached {
+				return fmt.Errorf("%w: set %q", auth.ErrForbidden, e.Set)
+			}
+		}
+	}
+
+	return reporter.ReportSchedule(ctx, r)
 }
 
 // Escrow returns where the store keeps its escrowed key.

@@ -5,6 +5,7 @@ package gen
 import (
 	backup "github.com/gobackio/goback/backup"
 	retention "github.com/gobackio/goback/backup/retention"
+	schedule "github.com/gobackio/goback/backup/schedule"
 	storekey "github.com/gobackio/goback/backup/storekey"
 	index "github.com/gobackio/goback/index"
 	proto "github.com/gobackio/goback/proto"
@@ -37,6 +38,21 @@ func (m MapperImpl) FromEffective(in *proto.RetentionPolicy) retention.Policy {
 		Brackets:   tmp0,
 		KeepLast:   int(in.KeepLast),
 		KeepWithin: mapping.Duration(in.KeepWithin),
+	}
+}
+
+func (m MapperImpl) FromReportSchedule(in *proto.ReportScheduleRequest) schedule.Report {
+	if in == nil {
+		return schedule.Report{}
+	}
+	tmp0 := make([]schedule.Expectation, len(in.Sets))
+	for i := range in.Sets {
+		tmp0[i] = m.FromSetSchedule(in.Sets[i])
+	}
+
+	return schedule.Report{
+		Agent: in.AgentId,
+		Sets:  tmp0,
 	}
 }
 
@@ -79,6 +95,20 @@ func (m MapperImpl) FromSetRetention(in *proto.GetRetentionResponse) index.SetRe
 	}
 }
 
+func (m MapperImpl) FromSetSchedule(in *proto.SetSchedule) schedule.Expectation {
+	if in == nil {
+		return schedule.Expectation{}
+	}
+
+	return schedule.Expectation{
+		Set:         in.BackupSet,
+		Kind:        in.Kind,
+		LongestGap:  mapping.Duration(in.LongestGapSeconds),
+		Jitter:      mapping.Duration(in.JitterSeconds),
+		CommitEvery: mapping.Duration(in.CommitEverySeconds),
+	}
+}
+
 func (m MapperImpl) FromStorePolicy(in *proto.StorePolicy) *storekey.Policy {
 	if in == nil {
 		return nil
@@ -113,6 +143,18 @@ func (m MapperImpl) FromUploadStatus(in *proto.UploadStatus) backup.UploadStatus
 	}
 }
 
+func (m MapperImpl) ReportSchedule(in schedule.Report) *proto.ReportScheduleRequest {
+	tmp0 := make([]*proto.SetSchedule, len(in.Sets))
+	for i := range in.Sets {
+		tmp0[i] = m.SetSchedule(in.Sets[i])
+	}
+
+	return &proto.ReportScheduleRequest{
+		AgentId: in.Agent,
+		Sets:    tmp0,
+	}
+}
+
 func (m MapperImpl) RetentionBracket(in retention.Bracket) *proto.RetentionBracket {
 
 	return &proto.RetentionBracket{
@@ -143,6 +185,17 @@ func (m MapperImpl) SetRetention(in index.SetRetention) *proto.GetRetentionRespo
 		Policy:    m.RetentionPolicy(in.Policy),
 		Effective: m.Effective(in.Effective),
 		Paused:    in.Paused,
+	}
+}
+
+func (m MapperImpl) SetSchedule(in schedule.Expectation) *proto.SetSchedule {
+
+	return &proto.SetSchedule{
+		BackupSet:          in.Set,
+		Kind:               in.Kind,
+		LongestGapSeconds:  mapping.Seconds(in.LongestGap),
+		JitterSeconds:      mapping.Seconds(in.Jitter),
+		CommitEverySeconds: mapping.Seconds(in.CommitEvery),
 	}
 }
 

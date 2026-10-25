@@ -19,6 +19,7 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/presence"
 	"github.com/gobackio/goback/backup/retention"
+	"github.com/gobackio/goback/backup/schedule"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
 	adminpb "github.com/gobackio/goback/proto/admin"
@@ -185,6 +186,8 @@ var (
 	_ backup.FilesReader = (*Client)(nil)
 	_ backup.DirLister   = (*Client)(nil)
 	_ backup.CommitGate  = (*Client)(nil)
+
+	_ schedule.Reporter = (*Client)(nil)
 )
 
 // Client is a backup.Index over a store server's gRPC API.
@@ -1242,6 +1245,17 @@ func (r *Client) Pins(ctx context.Context) ([]*proto.PinInfo, error) {
 	return resp.GetPins(), nil
 }
 
+// ReportSchedule implements schedule.Reporter; a server without the call,
+// or whose store takes no reports, is backup.ErrNotImplemented.
+func (r *Client) ReportSchedule(ctx context.Context, report schedule.Report) error {
+	_, err := r.store.ReportSchedule(r.outgoing(ctx), m.ReportSchedule(report))
+	if status.Code(err) == codes.Unimplemented {
+		return fmt.Errorf("%w: %s", backup.ErrNotImplemented, status.Convert(err).Message())
+	}
+
+	return err
+}
+
 // Has is not offered by the server; presence filters answer it.
 func (r *Client) Has(context.Context, *proto.Ref) (bool, error) {
 	return false, backup.ErrNotImplemented
@@ -1503,7 +1517,7 @@ func ToStatus(err error) error {
 		return status.Error(codes.PermissionDenied, err.Error())
 	case errors.Is(err, ErrInvalidRequest), errors.Is(err, proto.ErrRefMismatch), errors.Is(err, proto.ErrInvalidObject),
 		errors.Is(err, backup.ErrInvalidEscrow), errors.Is(err, backup.ErrSetName), errors.Is(err, backup.ErrInvalidCount),
-		errors.Is(err, retention.ErrInvalidPolicy), errors.Is(err, upload.ErrInvalid):
+		errors.Is(err, retention.ErrInvalidPolicy), errors.Is(err, upload.ErrInvalid), errors.Is(err, schedule.ErrInvalid):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, backup.ErrDanglingRef), errors.Is(err, backup.ErrSetClosed),
 		errors.Is(err, backup.ErrTombstoned), errors.Is(err, backup.ErrNewestCommit),
@@ -1704,6 +1718,15 @@ func (r *Server) EscrowedKeys(ctx context.Context, _ *proto.EscrowedKeysRequest)
 	}
 
 	return response, nil
+}
+
+// ReportSchedule implements proto.StoreServer.
+func (r *Server) ReportSchedule(ctx context.Context, request *proto.ReportScheduleRequest) (*proto.ReportScheduleResponse, error) {
+	if err := r.store.ReportSchedule(ctx, m.FromReportSchedule(request)); err != nil {
+		return nil, ToStatus(err)
+	}
+
+	return &proto.ReportScheduleResponse{}, nil
 }
 
 // presencePiece is the largest data slice one GetPresence message carries.

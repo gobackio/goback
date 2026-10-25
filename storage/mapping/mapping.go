@@ -8,6 +8,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/retention"
+	"github.com/gobackio/goback/backup/schedule"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
@@ -44,6 +45,22 @@ type Mapper interface {
 	// field:ID from:"UploadId"
 	// field:CommitsMissing using:"FromMissingRefs"
 	FromUploadStatus(in *proto.UploadStatus) backup.UploadStatus
+
+	// field:AgentId from:"Agent"
+	ReportSchedule(in schedule.Report) *proto.ReportScheduleRequest
+	// field:Agent from:"AgentId"
+	FromReportSchedule(in *proto.ReportScheduleRequest) schedule.Report
+
+	// field:BackupSet from:"Set"
+	// field:LongestGapSeconds from:"LongestGap" using:"Seconds"
+	// field:JitterSeconds from:"Jitter" using:"Seconds"
+	// field:CommitEverySeconds from:"CommitEvery" using:"Seconds"
+	SetSchedule(in schedule.Expectation) *proto.SetSchedule
+	// field:Set from:"BackupSet"
+	// field:LongestGap from:"LongestGapSeconds" using:"Duration"
+	// field:Jitter from:"JitterSeconds" using:"Duration"
+	// field:CommitEvery from:"CommitEverySeconds" using:"Duration"
+	FromSetSchedule(in *proto.SetSchedule) schedule.Expectation
 }
 
 // MissingRefs is what each of several commits lacks, as the store service

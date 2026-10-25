@@ -50,6 +50,7 @@ const (
 	Store_Unpin_FullMethodName          = "/proto.Store/Unpin"
 	Store_ListPins_FullMethodName       = "/proto.Store/ListPins"
 	Store_EscrowedKeys_FullMethodName   = "/proto.Store/EscrowedKeys"
+	Store_ReportSchedule_FullMethodName = "/proto.Store/ReportSchedule"
 )
 
 // StoreClient is the client API for Store service.
@@ -118,6 +119,9 @@ type StoreClient interface {
 	// EscrowedKeys returns every escrowed copy of the store key the store
 	// keeps, for an agent that holds only the passphrase
 	EscrowedKeys(ctx context.Context, in *EscrowedKeysRequest, opts ...grpc.CallOption) (*EscrowedKeysResponse, error)
+	// ReportSchedule records how often the caller's agent snapshots each
+	// set it writes; a store that takes no reports is Unimplemented
+	ReportSchedule(ctx context.Context, in *ReportScheduleRequest, opts ...grpc.CallOption) (*ReportScheduleResponse, error)
 }
 
 type storeClient struct {
@@ -480,6 +484,16 @@ func (c *storeClient) EscrowedKeys(ctx context.Context, in *EscrowedKeysRequest,
 	return out, nil
 }
 
+func (c *storeClient) ReportSchedule(ctx context.Context, in *ReportScheduleRequest, opts ...grpc.CallOption) (*ReportScheduleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportScheduleResponse)
+	err := c.cc.Invoke(ctx, Store_ReportSchedule_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StoreServer is the server API for Store service.
 // All implementations must embed UnimplementedStoreServer
 // for forward compatibility.
@@ -546,6 +560,9 @@ type StoreServer interface {
 	// EscrowedKeys returns every escrowed copy of the store key the store
 	// keeps, for an agent that holds only the passphrase
 	EscrowedKeys(context.Context, *EscrowedKeysRequest) (*EscrowedKeysResponse, error)
+	// ReportSchedule records how often the caller's agent snapshots each
+	// set it writes; a store that takes no reports is Unimplemented
+	ReportSchedule(context.Context, *ReportScheduleRequest) (*ReportScheduleResponse, error)
 	mustEmbedUnimplementedStoreServer()
 }
 
@@ -648,6 +665,9 @@ func (UnimplementedStoreServer) ListPins(context.Context, *ListPinsRequest) (*Li
 }
 func (UnimplementedStoreServer) EscrowedKeys(context.Context, *EscrowedKeysRequest) (*EscrowedKeysResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method EscrowedKeys not implemented")
+}
+func (UnimplementedStoreServer) ReportSchedule(context.Context, *ReportScheduleRequest) (*ReportScheduleResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportSchedule not implemented")
 }
 func (UnimplementedStoreServer) mustEmbedUnimplementedStoreServer() {}
 func (UnimplementedStoreServer) testEmbeddedByValue()               {}
@@ -1178,6 +1198,24 @@ func _Store_EscrowedKeys_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Store_ReportSchedule_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportScheduleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServer).ReportSchedule(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Store_ReportSchedule_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServer).ReportSchedule(ctx, req.(*ReportScheduleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Store_ServiceDesc is the grpc.ServiceDesc for Store service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1284,6 +1322,10 @@ var Store_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EscrowedKeys",
 			Handler:    _Store_EscrowedKeys_Handler,
+		},
+		{
+			MethodName: "ReportSchedule",
+			Handler:    _Store_ReportSchedule_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

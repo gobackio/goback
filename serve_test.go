@@ -220,6 +220,15 @@ func (b *syncBuffer) String() string {
 func servedWithKeys(t *testing.T, adminKey string) string {
 	t.Helper()
 
+	addr, _ := servedRepo(t, adminKey)
+
+	return addr
+}
+
+// servedRepo is servedWithKeys that also returns the served repo.
+func servedRepo(t *testing.T, adminKey string) (string, *Repo) {
+	t.Helper()
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	repo, err := Open(ctx, Settings{Storage: t.TempDir(), Index: t.TempDir()})
@@ -239,7 +248,7 @@ func servedWithKeys(t *testing.T, adminKey string) string {
 		_ = repo.Close()
 	})
 
-	return listener.Addr().String()
+	return listener.Addr().String(), repo
 }
 
 // clientWith is a client of the store server at addr presenting key.
