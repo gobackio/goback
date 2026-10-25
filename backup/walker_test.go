@@ -1012,6 +1012,50 @@ func TestWalkerRunsInASessionAndUploadsEachChunkOnce(t *testing.T) {
 	require.Equal(t, "test", sessions.began[0].Set)
 }
 
+// touchedSessions are memSessions that count what renews each session.
+type touchedSessions struct {
+	memSessions
+	touches map[string]int
+}
+
+func (s *touchedSessions) TouchSession(ctx context.Context) error {
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return errors.New("no session on the context")
+	}
+
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	if s.touches == nil {
+		s.touches = map[string]int{}
+	}
+	s.touches[session.ID]++
+
+	return nil
+}
+
+func TestALongWalkRenewsItsSession(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.write("slow/a.txt", []byte("a"))
+
+	sessions := &touchedSessions{}
+	f.walker.Sessions = sessions
+	f.walker.touchEvery = 5 * time.Millisecond
+	f.walker.FS = &hookFS{beforeReadDir: func(dir string) {
+		if filepath.Base(dir) == "slow" {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}}
+
+	f.run()
+
+	sessions.mtx.Lock()
+	defer sessions.mtx.Unlock()
+	require.Greater(t, sessions.touches["session-1"], 1)
+	require.Len(t, sessions.touches, 1)
+}
+
 // remoteSessions refuses to end a session under a context that is done,
 // as a call to a remote store does.
 type remoteSessions struct{ memSessions }

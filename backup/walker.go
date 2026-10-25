@@ -210,9 +210,77 @@ type Walker struct {
 	// outside is the run's context outside any session, and session the
 	// context of the session it writes in now, which a checkpoint renews
 	outside, session context.Context
+	// live is session for the goroutine renewing it
+	live atomic.Pointer[context.Context]
+	// touchEvery, when set, is how often the session is renewed in place of
+	// what the store's lease asks
+	touchEvery time.Duration
 	// clock stands in for time.Now in tests; the Windows monotonic clock
 	// ticks too coarsely for a short run to see any time pass
 	clock func() time.Time
+}
+
+// defaultSessionTouch is how often a run renews a session whose store
+// names no lease, a fifth of the shortest lease a store gives.
+const defaultSessionTouch = 2 * time.Minute
+
+// setSession makes ctx the session the run writes in and renews.
+func (w *Walker) setSession(ctx context.Context) {
+	w.session = ctx
+	w.live.Store(&ctx)
+}
+
+// touchSessions renews the run's session, as a write would, until the
+// returned stop is called, so a walk that reads for longer than the lease
+// without writing keeps it. It does nothing for a store that does not end
+// sessions on a lease.
+func (w *Walker) touchSessions() (stop func()) {
+	toucher, ok := w.Sessions.(SessionToucher)
+	if !ok {
+		return func() {}
+	}
+
+	every := defaultSessionTouch
+	if leased, ok := w.Sessions.(Leased); ok && leased.SessionLease() > 0 {
+		every = leased.SessionLease() / 4
+	}
+
+	if w.touchEvery > 0 {
+		every = w.touchEvery
+	}
+
+	done := make(chan struct{})
+	gone := make(chan struct{})
+
+	go func() {
+		defer close(gone)
+
+		ticker := time.NewTicker(every)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+			}
+
+			ctx := *w.live.Load()
+			if ctx.Err() != nil {
+				continue
+			}
+
+			// a session a commit ended is renewed in its successor next time
+			if err := toucher.TouchSession(ctx); err != nil && !errors.Is(err, ErrNoSession) && ctx.Err() == nil {
+				w.logger().Warn("renewing the session failed", "err", err)
+			}
+		}
+	}()
+
+	return func() {
+		close(done)
+		<-gone
+	}
 }
 
 func (w *Walker) now() time.Time {
@@ -387,17 +455,21 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 	}
 	w.rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	w.outside, w.session = ctx, ctx
+	w.outside = ctx
+	w.setSession(ctx)
 	if w.Sessions != nil {
 		sctx, err := w.beginSession(ctx)
 		if err != nil {
 			return nil, err
 		}
 
-		w.session = sctx
+		w.setSession(sctx)
 		ctx = sctx
 
 		defer func() { w.endSession(w.session) }()
+
+		stopTouching := w.touchSessions()
+		defer stopTouching()
 	}
 
 	w.policyVersion = 0
@@ -443,7 +515,7 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 			}
 
 			w.endSession(w.session)
-			w.session = sctx
+			w.setSession(sctx)
 		}
 	}
 }
@@ -1606,7 +1678,7 @@ func (w *Walker) checkpoint(ctx context.Context, done []*proto.TreeNode, base []
 		}
 
 		w.endSession(ctx)
-		w.session = sctx
+		w.setSession(sctx)
 	}
 	atomic.AddInt64(&w.result.Checkpoints, 1)
 	w.last = w.now()
