@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -178,6 +179,10 @@ type Runner struct {
 	Logger *slog.Logger
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+
+	// retireMu and collectMu keep a job asked for, as through Admin, off
+	// the same job run on schedule
+	retireMu, collectMu sync.Mutex
 }
 
 func (r *Runner) logger() *slog.Logger {
@@ -197,38 +202,49 @@ func (r *Runner) now() time.Time {
 }
 
 // Run sweeps once, then runs every scheduled job at its interval until ctx
-// ends. Jobs of one runner never overlap.
+// ends, and returns once the job under way has stopped. Compactions,
+// collections and retirements never overlap one another, nor do sweeps
+// and presence builds, which go on while one of the others runs.
 func (r *Runner) Run(ctx context.Context) {
 	r.Sweep()
 
-	jobs := []struct {
-		every time.Duration
-		run   func(context.Context)
-	}{
-		{r.Schedule.Sweep, func(context.Context) { r.Sweep() }},
-		{r.Schedule.Compact, r.logCompact},
-		{r.Schedule.Collect, r.logCollect},
-		{r.Schedule.Retire, r.logRetire},
-		{r.Schedule.Presence, func(ctx context.Context) { r.BuildPresence(ctx); r.MeasureSets(ctx) }},
-	}
+	var light sync.WaitGroup
+	light.Go(func() {
+		tick(ctx,
+			job{r.Schedule.Sweep, func(context.Context) { r.Sweep() }},
+			job{r.Schedule.Presence, func(ctx context.Context) { r.BuildPresence(ctx); r.MeasureSets(ctx) }},
+		)
+	})
 
-	var tickers []*time.Ticker
-	cases := make([]<-chan time.Time, len(jobs))
+	tick(ctx,
+		job{r.Schedule.Compact, r.logCompact},
+		job{r.Schedule.Collect, r.logCollect},
+		job{r.Schedule.Retire, r.logRetire},
+	)
+
+	light.Wait()
+}
+
+type job struct {
+	every time.Duration
+	run   func(context.Context)
+}
+
+// tick runs each of up to three jobs at its interval, one at a time, until
+// ctx ends.
+func tick(ctx context.Context, jobs ...job) {
+	var cases [3]<-chan time.Time
+
 	for i, job := range jobs {
 		if job.every <= 0 {
 			continue
 		}
 
 		t := time.NewTicker(job.every)
-		tickers = append(tickers, t)
+		defer t.Stop()
+
 		cases[i] = t.C
 	}
-
-	defer func() {
-		for _, t := range tickers {
-			t.Stop()
-		}
-	}()
 
 	for {
 		select {
@@ -240,10 +256,6 @@ func (r *Runner) Run(ctx context.Context) {
 			jobs[1].run(ctx)
 		case <-cases[2]:
 			jobs[2].run(ctx)
-		case <-cases[3]:
-			jobs[3].run(ctx)
-		case <-cases[4]:
-			jobs[4].run(ctx)
 		}
 	}
 }
@@ -366,6 +378,9 @@ func (r *Runner) Collect(ctx context.Context) (*pack.CollectReport, error) {
 		return nil, nil
 	}
 
+	r.collectMu.Lock()
+	defer r.collectMu.Unlock()
+
 	report, err := collect(ctx, r.Collector, r.Attributor, r.Forecaster, r.Reindexer, pack.CollectOptions{})
 	if report != nil && r.OnCollect != nil {
 		r.OnCollect(report)
@@ -408,6 +423,9 @@ func (r *Runner) Retire(ctx context.Context) (int, error) {
 	if r.Retirer == nil {
 		return 0, nil
 	}
+
+	r.retireMu.Lock()
+	defer r.retireMu.Unlock()
 
 	n, err := r.Retirer.Retire(ctx, r.now())
 

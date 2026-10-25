@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -82,6 +83,38 @@ func TestRunnerTicksEveryScheduledJob(t *testing.T) {
 	require.GreaterOrEqual(t, presence.runs.Load(), int32(1))
 	require.Zero(t, retirer.runs.Load(), "retirement was not scheduled")
 	require.Equal(t, collector.runs.Load()+store.compactions.Load(), reindexer.runs.Load(), "every compaction and collection is followed by a reindex")
+}
+
+type stuckCollector struct{ release chan struct{} }
+
+func (s *stuckCollector) Collect(ctx context.Context, _ pack.CollectOptions) (*pack.CollectReport, error) {
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+	}
+
+	return &pack.CollectReport{}, nil
+}
+
+func TestSweepsGoOnWhileACollectionRuns(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store, collector := &fakeStore{}, &stuckCollector{release: make(chan struct{})}
+		r := &Runner{Store: store, Collector: collector, Schedule: Schedule{Sweep: 30 * time.Second, Collect: time.Minute}}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		ran := make(chan struct{})
+
+		go func() {
+			defer close(ran)
+			r.Run(ctx)
+		}()
+
+		time.Sleep(10*time.Minute + time.Second)
+		require.GreaterOrEqual(t, store.sweeps.Load(), int32(20), "sweeps every 30s while the collection that started at 1m runs")
+
+		cancel()
+		<-ran
+	})
 }
 
 func TestRunnerSkipsWhatItDoesNotHave(t *testing.T) {
