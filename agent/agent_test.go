@@ -24,11 +24,16 @@ type fakeIndex struct {
 
 	mu      sync.Mutex
 	commits map[string][]*proto.Commit
+	err     error
 }
 
 func (f *fakeIndex) CommitInfo(_ context.Context, set string, _ time.Time, _ int) ([]*proto.Commit, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	if f.err != nil {
+		return nil, f.err
+	}
 
 	cs := f.commits[set]
 	if len(cs) == 0 {
@@ -484,6 +489,34 @@ func TestAnAgentThatNeverOpensItsStoreBecomesUnhealthy(t *testing.T) {
 
 		require.Equal(t, JobPlanning, status.Jobs[0].State)
 		require.Len(t, status.Problems(h.a.now()), 1)
+		require.Equal(t, "access denied", status.OpenError)
+	})
+}
+
+func TestTheStatusSaysWhyTheLastRunCannotBeRead(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.a.StateDir = t.TempDir()
+		h.idx.err = errors.New("index unreachable")
+
+		h.run(h.fake("w", Every(time.Hour), 0, nil))
+		time.Sleep(10 * time.Second)
+
+		status, err := ReadStatus(h.a.StateDir)
+		require.NoError(t, err)
+		require.Empty(t, status.OpenError)
+		require.Equal(t, "index unreachable", status.Jobs[0].PlanError)
+
+		h.idx.mu.Lock()
+		h.idx.err = nil
+		h.idx.mu.Unlock()
+		time.Sleep(10 * time.Minute)
+
+		status, err = ReadStatus(h.a.StateDir)
+		require.NoError(t, err)
+		require.Empty(t, status.Jobs[0].PlanError)
+
+		h.stop()
 	})
 }
 

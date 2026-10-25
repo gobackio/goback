@@ -16,10 +16,12 @@ const StatusFile = "status.json"
 // Status is what the status file reports: the agent and each of its tasks.
 // The agent writes it and never reads it.
 type Status struct {
-	PID       int         `json:"pid"`
-	State     string      `json:"state"`
-	StartedAt time.Time   `json:"started_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
+	PID       int       `json:"pid"`
+	State     string    `json:"state"`
+	StartedAt time.Time `json:"started_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	// OpenError is why the store last failed to open, until it opens.
+	OpenError string      `json:"open_error,omitempty"`
 	Jobs      []JobStatus `json:"jobs"`
 }
 
@@ -43,6 +45,9 @@ type JobStatus struct {
 	LastStart  time.Time `json:"last_start,omitzero"`
 	LastResult string    `json:"last_result,omitempty"`
 	LastError  string    `json:"last_error,omitempty"`
+	// PlanError is why reading the set's last run from the store last
+	// failed, until it is read.
+	PlanError string `json:"plan_error,omitempty"`
 	// LastSuccess is when the last clean run started, and LastDirty the
 	// last dirty one, which committed but left out torn or unreadable
 	// files; DirtyRuns counts the dirty runs since the last clean one.

@@ -312,6 +312,7 @@ type loop struct {
 	planning    bool
 	openAt      time.Time
 	openBackoff time.Duration
+	openErr     error
 
 	entries []*entry
 	// retired are entries a reload removed while they ran.
@@ -503,10 +504,14 @@ func (l *loop) opened(o openResult) {
 	if o.err != nil {
 		l.openBackoff = double(l.openBackoff, storeRetryFirst, storeRetryMax)
 		l.openAt = now.Add(l.openBackoff)
+		l.openErr = o.err
+		l.dirty = true
 		l.a.logger().Warn("opening the store failed", "error", o.err, "retry", l.openBackoff)
 
 		return
 	}
+
+	l.openErr = nil
 
 	if l.stopping {
 		if l.a.Close != nil {
@@ -579,12 +584,15 @@ func (l *loop) planned(results []planResult) {
 		if p.err != nil {
 			e.planBackoff = double(e.planBackoff, storeRetryFirst, storeRetryMax)
 			e.planAt = now.Add(e.planBackoff)
+			e.status.PlanError = p.err.Error()
+			l.dirty = true
 			l.a.logger().Warn("reading the last run failed", "job", e.task.Name, "set", e.task.Set, "error", p.err, "retry", e.planBackoff)
 
 			continue
 		}
 
 		e.known = true
+		e.status.PlanError = ""
 		e.committed = commit != nil
 		e.lastEnd = last
 		e.status.LastSuccess = last
@@ -1112,6 +1120,9 @@ func (l *loop) writeStatus() error {
 	}
 
 	s := &Status{PID: os.Getpid(), State: l.state(), StartedAt: l.started, UpdatedAt: now}
+	if l.openErr != nil {
+		s.OpenError = l.openErr.Error()
+	}
 
 	for _, e := range l.entries {
 		j := e.status

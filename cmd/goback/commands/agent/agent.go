@@ -259,7 +259,15 @@ func statusAction(c *cli.Context) error {
 
 		_ = w.Flush()
 
+		if status.OpenError != "" {
+			fmt.Printf("opening the store: %s\n", status.OpenError)
+		}
+
 		for _, j := range status.Jobs {
+			if j.PlanError != "" {
+				fmt.Printf("%s: reading the last run: %s\n", j.Name, j.PlanError)
+			}
+
 			if j.LastError != "" {
 				fmt.Printf("%s: %s\n", j.Name, j.LastError)
 			}
