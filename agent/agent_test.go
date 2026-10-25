@@ -468,6 +468,25 @@ func TestAServeTaskRestartsWithBackoffAndCommitsOnStop(t *testing.T) {
 	})
 }
 
+func TestAnAgentThatNeverOpensItsStoreBecomesUnhealthy(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.a.StateDir = t.TempDir()
+		h.a.Open = func(context.Context) (*job.Env, error) { return nil, errors.New("access denied") }
+
+		h.run(h.fake("w", Every(time.Hour), 0, nil))
+
+		time.Sleep(3*time.Hour + 10*time.Minute)
+
+		status, err := ReadStatus(h.a.StateDir)
+		require.NoError(t, err)
+		h.stop()
+
+		require.Equal(t, JobPlanning, status.Jobs[0].State)
+		require.Len(t, status.Problems(h.a.now()), 1)
+	})
+}
+
 func TestADatabaseShutdownRestartsTheReceiverWithoutAFailure(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t)

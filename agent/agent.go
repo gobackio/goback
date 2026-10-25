@@ -1028,14 +1028,19 @@ func (l *loop) writeStatus() error {
 			j.State = JobIdle
 		}
 
-		if e.known && e.task.Plan != nil {
+		// a task whose last run could not be read yet is judged as one
+		// that never succeeded, so a store the agent cannot open shows
+		if e.task.Plan != nil {
 			since := j.LastSuccess
 			if since.IsZero() {
 				since = l.started
 			}
 
-			j.NextDue = e.due
 			j.StaleAfter = int64(e.task.Plan.staleAfter(since) / time.Second)
+		}
+
+		if e.known && e.task.Plan != nil {
+			j.NextDue = e.due
 		}
 
 		if e.task.Serve != nil {
