@@ -2,18 +2,28 @@ package storage_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage"
 	"github.com/gobackio/goback/storage/pack"
 	"github.com/gobackio/goback/testing/tests3"
 
+	gcs "cloud.google.com/go/storage"
 	"github.com/stretchr/testify/require"
 	"gocloud.dev/blob"
+	"gocloud.dev/blob/gcsblob"
 	_ "gocloud.dev/blob/memblob"
+	"google.golang.org/api/option"
 )
 
 // archive is the whole of one stored file, of which a location addresses
@@ -109,4 +119,60 @@ func TestAStoreWithNoBytesToAddressSaysSo(t *testing.T) {
 
 	_, err = storage.NewBucketStore(bucket).SignRange(ctx, "one.pack", 0, 6, time.Minute)
 	require.ErrorIs(t, err, pack.ErrNoSignedURL, "an in-memory bucket hands out no URLs")
+}
+
+// signedHeaders is the set of headers the V4 signature of a location's URL
+// covers, lowercased.
+func signedHeaders(t *testing.T, location *proto.Location) []string {
+	t.Helper()
+
+	u, err := url.Parse(location.GetUrl())
+	require.NoError(t, err)
+
+	names := u.Query().Get("X-Goog-SignedHeaders")
+	if names == "" {
+		names = u.Query().Get("X-Amz-SignedHeaders")
+	}
+
+	return strings.Split(names, ";")
+}
+
+func TestACloudStorageRangeSignsTheRange(t *testing.T) {
+	ctx := context.Background()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	pemKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+
+	client, err := gcs.NewClient(ctx, option.WithoutAuthentication())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	bucket, err := gcsblob.OpenBucket(ctx, nil, "bucket", &gcsblob.Options{
+		Client:         client,
+		GoogleAccessID: "signer@example.iam.gserviceaccount.com",
+		PrivateKey:     pemKey,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bucket.Close() })
+
+	location, err := storage.SignArchiveRange(ctx, bucket, storage.SignedRange{
+		Name: "one.pack", Offset: 10, Length: 6, TTL: time.Minute,
+		Header: map[string]string{"x-goog-custom-audit-goback": "t1"},
+	})
+	require.NoError(t, err)
+	require.Subset(t, signedHeaders(t, location), []string{"range", "x-goog-custom-audit-goback"})
+}
+
+func TestAnS3RangeSignsTheRange(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "signer")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+
+	bucket, err := blob.OpenBucket(context.Background(), "s3://goback?endpoint=http://127.0.0.1:1&region=us-east-1&use_path_style=true&disable_https=true")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bucket.Close() })
+
+	location, err := storage.NewBucketStore(bucket).SignRange(context.Background(), "one.pack", 10, 6, time.Minute)
+	require.NoError(t, err)
+	require.Contains(t, signedHeaders(t, location), "range")
 }

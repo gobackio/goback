@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gobackio/goback/proto"
@@ -50,7 +52,7 @@ func SignArchiveRange(ctx context.Context, bucket *blob.Bucket, r SignedRange) (
 	value := fmt.Sprintf("bytes=%d-%d", r.Offset, r.Offset+r.Length-1)
 
 	bound := false
-	url, err := bucket.SignedURL(ctx, ArchiveKey(r.Name), &blob.SignedURLOptions{
+	signed, err := bucket.SignedURL(ctx, ArchiveKey(r.Name), &blob.SignedURLOptions{
 		Expiry: r.TTL,
 		Method: "GET",
 		BeforeSign: func(as func(any) bool) error {
@@ -64,17 +66,17 @@ func SignArchiveRange(ctx context.Context, bucket *blob.Bucket, r SignedRange) (
 		return nil, fmt.Errorf("%w: %v", pack.ErrNoSignedURL, err)
 	}
 
-	if !bound {
-		return nil, fmt.Errorf("%w: this bucket cannot bind the range and its headers", pack.ErrNoSignedURL)
-	}
-
 	header := map[string]string{rangeHeader: value}
 	for name, v := range r.Header {
 		header[name] = v
 	}
 
+	if !bound || !signsHeaders(signed, header) {
+		return nil, fmt.Errorf("%w: this bucket cannot bind the range and its headers", pack.ErrNoSignedURL)
+	}
+
 	return &proto.Location{
-		Url:     url,
+		Url:     signed,
 		Header:  header,
 		Length:  r.Length,
 		Expires: timestamppb.New(now.Add(r.TTL)),
@@ -86,6 +88,8 @@ func SignArchiveRange(ctx context.Context, bucket *blob.Bucket, r SignedRange) (
 func bind(as func(any) bool, value string, extra map[string]string) bool {
 	var gcsOptions *gcs.SignedURLOptions
 	if as(&gcsOptions) {
+		// V2, the library's default, signs no Range header
+		gcsOptions.Scheme = gcs.SigningSchemeV4
 		gcsOptions.Headers = append(gcsOptions.Headers, rangeHeader+":"+value)
 		for name, v := range extra {
 			gcsOptions.Headers = append(gcsOptions.Headers, name+":"+v)
@@ -102,6 +106,34 @@ func bind(as func(any) bool, value string, extra map[string]string) bool {
 	}
 
 	return false
+}
+
+// signsHeaders reports whether the V4 signature of signed, on Cloud
+// Storage or S3, covers every header in header.
+func signsHeaders(signed string, header map[string]string) bool {
+	u, err := url.Parse(signed)
+	if err != nil {
+		return false
+	}
+
+	query := u.Query()
+	names := query.Get("X-Goog-SignedHeaders")
+	if names == "" {
+		names = query.Get("X-Amz-SignedHeaders")
+	}
+
+	covered := map[string]bool{}
+	for _, name := range strings.Split(names, ";") {
+		covered[strings.ToLower(name)] = true
+	}
+
+	for name := range header {
+		if !covered[strings.ToLower(name)] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // SignRange implements pack.RangeSigner. The URL is bound to the range,
