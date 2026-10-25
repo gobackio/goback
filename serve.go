@@ -46,6 +46,13 @@ var serveKeepalive = keepalive.ServerParameters{
 	Timeout:           20 * time.Second,
 }
 
+// serveFailures and serveFailureEvery are how often one address may
+// present a wrong key: ten times at once, then once every six seconds.
+const (
+	serveFailures     = 10
+	serveFailureEvery = 6 * time.Second
+)
+
 // ServeOptions say how Serve serves a store.
 type ServeOptions struct {
 	// Secret is the backup key every agent presents, which backs up, reads
@@ -71,6 +78,7 @@ type ServeOptions struct {
 // policy, with the calls that delete or change anything open to the admin
 // key alone, health checks, whose readiness fails while the index does not
 // answer or the server drains, and the maintenance jobs of opts.Schedule.
+// An address that presents wrong keys too often is refused for a while.
 // It returns once ctx ends, after the calls in flight finish, or when the
 // listener fails, and in either case once the maintenance job under way
 // has stopped, so the repo may be closed then.
@@ -116,7 +124,11 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 	}
 
 	remote := storage.NewServer(storage.NewStore(r.Index, sessions))
-	keys := auth.Keys(opts.Secret, opts.AdminKey)
+	keys := auth.LimitFailures(auth.Keys(opts.Secret, opts.AdminKey), auth.FailureLimit{
+		Burst:     serveFailures,
+		Every:     serveFailureEvery,
+		Forwarded: opts.PlaintextBehindProxy,
+	})
 
 	srv := grpc.NewServer(
 		grpc.Creds(creds),

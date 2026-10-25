@@ -328,6 +328,21 @@ func TestWithoutAnAdminKeyNoCallOverTheNetworkDeletes(t *testing.T) {
 	require.Equal(t, codes.Unauthenticated, status.Code(guess.DeleteSet(ctx, "world", false)))
 }
 
+func TestAServerHoldsBackAnAddressThatGuessesKeys(t *testing.T) {
+	ctx := context.Background()
+	addr := servedWithKeys(t, "")
+
+	guess, _ := clientWith(t, addr, "guess")
+	for range serveFailures {
+		_, err := guess.LatestCommit(ctx, "world")
+		require.Equal(t, codes.Unauthenticated, status.Code(err))
+	}
+
+	agent, _ := clientWith(t, addr, "backup")
+	_, err := agent.LatestCommit(ctx, "world")
+	require.Equal(t, codes.ResourceExhausted, status.Code(err))
+}
+
 func TestServeRefusesAnAdminKeyThatIsTheBackupKey(t *testing.T) {
 	repo := &Repo{}
 
