@@ -210,3 +210,18 @@ func TestLiveRunsReportARunThatEndsWithinAnEntry(t *testing.T) {
 	require.False(t, ok)
 	require.Error(t, it.err())
 }
+
+func TestAMergeRefusesALiveSetThatLacksARoot(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+
+	putAll(t, store, makeChain(makeTestData(t, 5)))
+
+	r := snapshotRun(t, store, nil)
+	live, err := r.mark(context.Background())
+	require.NoError(t, err)
+
+	live.close()
+	_, err = r.merge(live)
+	require.Error(t, err)
+}

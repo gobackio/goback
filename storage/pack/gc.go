@@ -1674,12 +1674,26 @@ func (h *mergeHeap) Pop() interface{} {
 
 // merge walks the live set and every archive index in lockstep and sets the
 // bit of each index position that is live. A tombstone is live while the
-// snapshot still holds its target.
+// snapshot still holds its target. A root the snapshot holds that the live
+// set lacks fails the merge: the mark missed it, and what it reaches.
 func (r *gcRun) merge(live *liveRuns) (uint64, error) {
 	var marked uint64
 
+	// reached is whether the live set holds each root, held whether the
+	// snapshot does
+	reached := make(map[refKey]bool, len(r.roots))
+	for _, root := range r.roots {
+		reached[root.key] = false
+	}
+
+	held := make(map[refKey]bool)
+
 	var counted refKey
 	err := r.scan(live, func(ga *gcArchive, pos int, rec *IndexRecord, found reach) {
+		if _, root := reached[rec.Sum]; root {
+			reached[rec.Sum] = true
+		}
+
 		ga.cur.Set(uint(pos))
 		ga.death.set(pos, ga.count, found.death)
 		marked++
@@ -1722,9 +1736,24 @@ func (r *gcRun) merge(live *liveRuns) (uint64, error) {
 		if _, isTarget := r.targets[sum]; isTarget {
 			r.targets[sum] = true
 		}
+
+		if _, root := reached[sum]; root {
+			held[sum] = true
+		}
 	})
 	if err != nil {
 		return 0, err
+	}
+
+	var unmarked []refKey
+	for key := range held {
+		if !reached[key] {
+			unmarked = append(unmarked, key)
+		}
+	}
+
+	if len(unmarked) > 0 {
+		return 0, errors.Errorf("the mark left %d of %d roots unmarked, %x among them", len(unmarked), len(r.roots), unmarked[0])
 	}
 
 	for _, t := range r.tombstones {
