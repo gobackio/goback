@@ -876,6 +876,10 @@ func TestWalkerUnreadableFileKeepsPreviousVersion(t *testing.T) {
 		t.Skip("permission bits are not enforced on windows")
 	}
 
+	if os.Geteuid() == 0 {
+		t.Skip("root reads whatever the permission bits say")
+	}
+
 	f := newWalkerFixture(t)
 	f.write("secret.txt", []byte("v1"))
 
@@ -1217,6 +1221,10 @@ func TestWalkerRereadsAFileWrittenThroughAHeldHandle(t *testing.T) {
 func TestWalkerRefusesAnUnlistableRootOnTheFirstRun(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("directory permissions are ACLs on Windows")
+	}
+
+	if os.Geteuid() == 0 {
+		t.Skip("root reads whatever the permission bits say")
 	}
 
 	f := newWalkerFixture(t)
