@@ -2,6 +2,8 @@ package pack
 
 import (
 	"bytes"
+	"encoding/binary"
+	"io"
 	"math/rand"
 	"testing"
 
@@ -36,4 +38,17 @@ func TestIndex(t *testing.T) {
 	assert.Nil(t, err)
 
 	assert.Equal(t, idx, newIdx)
+}
+
+func TestAnIndexWhoseCountExceedsItsRecordsFailsToRead(t *testing.T) {
+	buf := new(bytes.Buffer)
+	_, err := makeIndex().WriteTo(buf)
+	assert.Nil(t, err)
+
+	corrupt := buf.Bytes()
+	binary.BigEndian.PutUint32(corrupt[len(indexFileMagicBytes):], 0xffffffff)
+
+	var idx IndexFile
+	_, err = (&idx).ReadFrom(bytes.NewReader(corrupt))
+	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }

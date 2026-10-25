@@ -180,6 +180,10 @@ func (s *sliceScanner) next() (*IndexRecord, error) {
 
 func (s *sliceScanner) close() error { return nil }
 
+// indexReserve bounds the records ReadFrom reserves room for before it
+// reads them.
+const indexReserve = 1 << 16
+
 // ReadFrom implements io.ReaderFrom.
 func (idx *IndexFile) ReadFrom(reader io.Reader) (int64, error) {
 	buf := bufio.NewReader(reader)
@@ -192,13 +196,19 @@ func (idx *IndexFile) ReadFrom(reader io.Reader) (int64, error) {
 		return byteCounter.count, err
 	}
 
-	*idx = make([]IndexRecord, count)
+	// the count is only as good as the file, so it bounds what is reserved
+	// up front but not what is read
+	*idx = make([]IndexRecord, 0, min(count, indexReserve))
 
-	for i := range *idx {
-		err = read(source, &(*idx)[i])
-		if err != nil {
+	for range count {
+		var record IndexRecord
+		if err := read(source, &record); errors.Is(err, io.EOF) {
+			return 0, io.ErrUnexpectedEOF
+		} else if err != nil {
 			return 0, err
 		}
+
+		*idx = append(*idx, record)
 	}
 
 	return byteCounter.count, nil
