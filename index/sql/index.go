@@ -374,7 +374,18 @@ func (x *Index) HasAll(ctx context.Context, refs []*proto.Ref) ([]bool, error) {
 	return backup.HasAll(ctx, x.ObjectStore, refs)
 }
 
-var _ backup.Batcher = (*Index)(nil)
+// HasVerified implements backup.VerifiedHaser as the store answers.
+func (x *Index) HasVerified(ctx context.Context, refs []*proto.Ref) ([]bool, error) {
+	return backup.HasVerified(ctx, x.ObjectStore, refs)
+}
+
+// MissingVerified implements backup.VerifiedBatcher as HasVerified would
+// answer.
+func (x *Index) MissingVerified(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error) {
+	return backup.MissingVerified(ctx, x, refs)
+}
+
+var _ backup.VerifiedBatcher = (*Index)(nil)
 
 // Missing implements backup.Batcher as HasAll would answer.
 func (x *Index) Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error) {

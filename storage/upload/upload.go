@@ -166,6 +166,45 @@ const (
 	MaxCommitBytes = 16 << 20
 )
 
+// missingOf returns the refs of batch b lacks: for a sealed object any
+// copy b holds, and for one in the clear only a copy b verified where it
+// tells them apart, so a sealed copy forged under its ref is no reason to
+// skip it.
+func missingOf(ctx context.Context, b backup.Batcher, batch []*proto.Object) ([]*proto.Ref, error) {
+	verifier, verifies := b.(backup.VerifiedBatcher)
+
+	var sealed, plain []*proto.Ref
+	for _, obj := range batch {
+		if obj.GetSealed() != nil || !verifies {
+			sealed = append(sealed, obj.Ref())
+		} else {
+			plain = append(plain, obj.Ref())
+		}
+	}
+
+	var missing []*proto.Ref
+
+	if len(sealed) > 0 {
+		lacks, err := b.Missing(ctx, sealed)
+		if err != nil {
+			return nil, err
+		}
+
+		missing = append(missing, lacks...)
+	}
+
+	if len(plain) > 0 {
+		lacks, err := verifier.MissingVerified(ctx, plain)
+		if err != nil {
+			return nil, err
+		}
+
+		missing = append(missing, lacks...)
+	}
+
+	return missing, nil
+}
+
 // Ingest stores the objects of the upload file r in b, a batch at a time,
 // skipping those b holds already, so ingesting a file twice stores it once.
 // It asks b about at most 4,096 refs at once. The commits the file holds,
@@ -196,12 +235,7 @@ func Ingest(ctx context.Context, r io.Reader, size int64, b backup.Batcher) (Ing
 			return nil
 		}
 
-		refs := make([]*proto.Ref, len(batch))
-		for i, obj := range batch {
-			refs[i] = obj.Ref()
-		}
-
-		missing, err := b.Missing(ctx, refs)
+		missing, err := missingOf(ctx, b, batch)
 		if err != nil {
 			return err
 		}

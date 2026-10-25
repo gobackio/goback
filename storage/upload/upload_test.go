@@ -42,6 +42,37 @@ func (h *held) PutObjects(_ context.Context, objects []*proto.Object) error {
 	return nil
 }
 
+// verifying is held where some hashes are held only as sealed copies.
+type verifying struct {
+	*held
+	sealedOnly map[string]bool
+}
+
+func (v *verifying) MissingVerified(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error) {
+	missing, err := v.Missing(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, ref := range refs {
+		if v.sealedOnly[string(ref.GetHash())] {
+			missing = append(missing, ref)
+		}
+	}
+
+	return missing, nil
+}
+
+func TestIngestStoresAPlaintextObjectHeldOnlySealed(t *testing.T) {
+	data := file(t, 2)
+	forged := proto.NewObject(&proto.Blob{Data: []byte("0")}).Ref()
+	store := &verifying{held: &held{hashes: map[string]bool{string(forged.Hash): true}}, sealedOnly: map[string]bool{string(forged.Hash): true}}
+
+	done, err := Ingest(context.Background(), bytes.NewReader(data), int64(len(data)), store)
+	require.NoError(t, err)
+	require.Equal(t, Ingested{Objects: 2, Stored: 2}, done)
+}
+
 func file(t *testing.T, n int) []byte {
 	t.Helper()
 

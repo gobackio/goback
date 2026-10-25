@@ -338,6 +338,9 @@ type rewrite struct {
 	// deaths those it expected to die
 	unmarked map[string]unmarkedIn
 	deaths   map[string]deathClass
+	// blobCopies holds every copy of the blobs of the chunk that have
+	// more than one, where a sealed copy may shadow a verified one
+	blobCopies map[string][]IndexLocation
 	// tombs holds the newest record of each tombstone the chunk keeps, which
 	// it writes once every candidate is read: two tombstones of one ref
 	// differ by their versions
@@ -393,6 +396,8 @@ func shares(chunk []*archive, workers int) [][]int {
 
 // chunk rewrites some of the group's candidates and retires them.
 func (rw *rewrite) chunk(ctx context.Context, chunk []*archive, workers int) error {
+	rw.blobCopies = make(map[string][]IndexLocation)
+
 	indexes, standIn, err := rw.lookUp(ctx, chunk, workers)
 	if err != nil {
 		return err
@@ -599,8 +604,13 @@ func (rw *rewrite) lookUp(ctx context.Context, chunk []*archive, workers int) ([
 			}
 
 			found := make(map[string]*Version)
+			shared := make(map[string][]IndexLocation)
 
 			for _, ref := range batch {
+				if all := copies[string(ref.Hash)]; len(all) > 1 && proto.ObjectType(all[0].Record.Type) == proto.ObjectType_BLOB {
+					shared[string(ref.Hash)] = all
+				}
+
 				locs := rw.standIns(copies[string(ref.Hash)])
 				if len(locs) == 0 {
 					continue
@@ -624,6 +634,10 @@ func (rw *rewrite) lookUp(ctx context.Context, chunk []*archive, workers int) ([
 			mtx.Lock()
 			maps.Copy(standIn, found)
 			mtx.Unlock()
+
+			rw.mtx.Lock()
+			maps.Copy(rw.blobCopies, shared)
+			rw.mtx.Unlock()
 
 			return nil
 		})
@@ -758,6 +772,57 @@ func (rw *rewrite) claim(hash []byte, mark *gcFile, pos int) bool {
 	}
 
 	return true
+}
+
+// shadows weighs the blob of hdr at offset in candidate against its other
+// copies: a sealed one is shadowed, and left behind, where a verified copy
+// of its ref is rewritten with it or stands in outside the group, and a
+// verified one is kept unless a verified copy stands in for it. A copy
+// whose kind cannot be read counts as neither.
+func (rw *rewrite) shadows(candidate *archive, offset uint32, hdr *proto.ObjectHeader) (shadowed, keepPlain bool) {
+	if hdr.Type != proto.ObjectType_BLOB {
+		return false, false
+	}
+
+	rw.mtx.Lock()
+	copies := rw.blobCopies[string(hdr.Ref.Hash)]
+	rw.mtx.Unlock()
+
+	var others []IndexLocation
+	for _, loc := range copies {
+		if loc.Archive != candidate.name || loc.Record.Offset != offset {
+			others = append(others, loc)
+		}
+	}
+
+	if len(others) == 0 {
+		return false, false
+	}
+
+	var inGroup []IndexLocation
+	for _, loc := range others {
+		if rw.inGroup[loc.Archive] {
+			inGroup = append(inGroup, loc)
+		}
+	}
+
+	outside := rw.standIns(others)
+
+	if hdr.Encryption != proto.Encryption_PLAINTEXT {
+		return rw.anyPlain(inGroup) || rw.anyPlain(outside), false
+	}
+
+	return false, !rw.anyPlain(outside)
+}
+
+func (rw *rewrite) anyPlain(copies []IndexLocation) bool {
+	for _, loc := range copies {
+		if plain, err := rw.ps.plainAt(loc); err == nil && plain {
+			return true
+		}
+	}
+
+	return false
 }
 
 // standIns returns the copies outside the group that may stand in for the
@@ -947,7 +1012,13 @@ func (rw *rewrite) candidate(ctx context.Context, worker int, candidate *archive
 		version := idx[pos].Version(candidate.created)
 		tomb := hdr.Type == proto.ObjectType_TOMBSTONE
 
-		if newer, ok := standIn[string(hdr.Ref.Hash)]; ok && (!tomb || newer != nil && !newer.Before(version)) {
+		shadowed, keepPlain := rw.shadows(candidate, offset, hdr)
+		if shadowed {
+			superseded++
+			return nil
+		}
+
+		if newer, ok := standIn[string(hdr.Ref.Hash)]; ok && !keepPlain && (!tomb || newer != nil && !newer.Before(version)) {
 			superseded++
 			return nil
 		}

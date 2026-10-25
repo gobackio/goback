@@ -92,6 +92,50 @@ type HasAller interface {
 	HasAll(ctx context.Context, refs []*proto.Ref) ([]bool, error)
 }
 
+// VerifiedHaser is implemented by stores that tell the copies they
+// verified, stored in the clear with the ref recomputed from their bytes,
+// from sealed copies, whose ref is the writer's word.
+type VerifiedHaser interface {
+	// HasVerified is HasAll counting only verified copies.
+	HasVerified(ctx context.Context, refs []*proto.Ref) ([]bool, error)
+}
+
+// HasVerified is HasAll counting only the copies the store verified, where
+// it is a VerifiedHaser, and every copy where it is not. A plaintext writer
+// relies on it, so that a sealed copy forged under a plaintext ref never
+// stands in for that content.
+func HasVerified(ctx context.Context, store ObjectStore, refs []*proto.Ref) ([]bool, error) {
+	if verifier, ok := store.(VerifiedHaser); ok {
+		return verifier.HasVerified(ctx, refs)
+	}
+
+	return HasAll(ctx, store, refs)
+}
+
+// MissingVerified is Missing by HasVerified.
+func MissingVerified(ctx context.Context, store ObjectStore, refs []*proto.Ref) ([]*proto.Ref, error) {
+	present, err := HasVerified(ctx, store, refs)
+	if err != nil {
+		return nil, err
+	}
+
+	var missing []*proto.Ref
+	for i, ref := range refs {
+		if !present[i] {
+			missing = append(missing, ref)
+		}
+	}
+
+	return missing, nil
+}
+
+// VerifiedBatcher is a Batcher that also answers which refs it holds no
+// verified copy of, as MissingVerified does.
+type VerifiedBatcher interface {
+	Batcher
+	MissingVerified(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error)
+}
+
 // HasAll reports Has for each of refs, in their order, through the store's
 // HasAller when it is one.
 func HasAll(ctx context.Context, store ObjectStore, refs []*proto.Ref) ([]bool, error) {

@@ -83,6 +83,9 @@ type archive struct {
 	name       string
 	atRest     *archiveKey
 	logger     *slog.Logger
+	// sealedAt holds the offsets of the sealed records of an archive this
+	// process wrote, nil for one it opened from storage
+	sealedAt map[uint32]bool
 	// listed is what a listing said of the archive file, nil when no
 	// listing did
 	listed *ListedFile
@@ -239,6 +242,7 @@ func (a *archive) open() (err error) {
 
 		a.size = archiveHeaderSize
 		a.writeIndex = make(map[string]*IndexRecord)
+		a.sealedAt = make(map[uint32]bool)
 		a.headerChecked.Store(true)
 	}
 
@@ -665,6 +669,9 @@ func (a *archive) putVersioned(ctx context.Context, hdr *proto.ObjectHeader, byt
 	}
 
 	a.writeIndex[string(ref.Hash)] = record
+	if hdr.Encryption != proto.Encryption_PLAINTEXT && a.sealedAt != nil {
+		a.sealedAt[record.Offset] = true
+	}
 
 	a.size += uint64(record.Length)
 	a.last = ref
