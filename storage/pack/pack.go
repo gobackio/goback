@@ -133,6 +133,10 @@ type PackStorage struct {
 	idleFinalize     time.Duration
 	sessionLease     time.Duration
 
+	// headMtx holds a set's head between reading and writing it, a set
+	// taking the lock its id falls on
+	headMtx [16]sync.Mutex
+
 	// claims is the index again when it lets several processes write one
 	// session, nil when this process is the only writer
 	claims     ClaimIndex

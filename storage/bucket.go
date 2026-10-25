@@ -198,11 +198,15 @@ func (s *bucketFile) Close() error {
 
 	err := s.writer.Close()
 	s.store.count(OpPut, s.written)
+	s.writer = nil
 
 	if err != nil {
+		if s.onClose != nil {
+			s.onClose()
+		}
+
 		return err
 	}
-	s.writer = nil
 
 	if s.upload != nil {
 		if attrs := s.upload.Attrs(); attrs != nil {
@@ -235,7 +239,7 @@ func (s *bucketFile) Write(buf []byte) (int, error) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	if s.readOnly {
+	if s.readOnly || s.writer == nil {
 		return 0, errors.New("Cannot write to read only file")
 	}
 
@@ -305,13 +309,18 @@ func (c *BucketStore) Sync(name string) error {
 	return c.sync(c.key(name))
 }
 
-func (c *BucketStore) openFile(key string) (pack.File, error) {
-	// a file still uploading is not in the bucket yet
+// uploading is a handle on a file still uploading, which is not in the
+// bucket yet: it reads nothing, and closing it leaves the upload alone.
+func (c *BucketStore) uploading(key string) (pack.File, bool) {
 	c.openFilesMtx.Lock()
-	file, ok := c.openFiles[key]
+	_, ok := c.openFiles[key]
 	c.openFilesMtx.Unlock()
 
-	if ok {
+	return &bucketFile{key: key, store: c}, ok
+}
+
+func (c *BucketStore) openFile(key string) (pack.File, error) {
+	if file, ok := c.uploading(key); ok {
 		return file, nil
 	}
 
@@ -390,11 +399,7 @@ func (c *BucketStore) Open(name string) (pack.File, error) {
 func (c *BucketStore) OpenListed(file pack.ListedFile) (pack.File, error) {
 	key := c.key(file.Name)
 
-	c.openFilesMtx.Lock()
-	open, ok := c.openFiles[key]
-	c.openFilesMtx.Unlock()
-
-	if ok {
+	if open, ok := c.uploading(key); ok {
 		return open, nil
 	}
 
