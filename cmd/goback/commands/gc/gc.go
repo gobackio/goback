@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/storage/maintenance"
 	"github.com/gobackio/goback/storage/pack"
@@ -57,7 +58,7 @@ func gcAction(c *cli.Context) {
 
 	collector, ok := wrapped.Innermost(store).(pack.Collector)
 	if !ok {
-		common.Fatalf("storage %s cannot be garbage collected", c.GlobalString("storage"))
+		common.Fatalf("storage %s cannot be garbage collected", goback.Redacted(c.GlobalString("storage")))
 	}
 
 	opts := pack.CollectOptions{

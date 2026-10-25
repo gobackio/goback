@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
 	"github.com/gobackio/goback/storage/maintenance"
@@ -28,7 +29,7 @@ func scrubAction(c *cli.Context) {
 
 	scrubber, ok := wrapped.Innermost(store).(maintenance.Scrubber)
 	if !ok {
-		common.Fatalf("storage %s cannot be scrubbed", c.GlobalString("storage"))
+		common.Fatalf("storage %s cannot be scrubbed", goback.Redacted(c.GlobalString("storage")))
 	}
 
 	report, err := scrubber.Scrub(context.Background())

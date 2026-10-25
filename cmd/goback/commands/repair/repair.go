@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
@@ -29,7 +30,7 @@ func repairAction(c *cli.Context) {
 
 	report, damage, err := maintenance.Repair(ctx, repo.Store, repo.Index)
 	if errors.Is(err, errors.ErrUnsupported) {
-		common.Fatalf("storage %s cannot be repaired", c.GlobalString("storage"))
+		common.Fatalf("storage %s cannot be repaired", goback.Redacted(c.GlobalString("storage")))
 	}
 
 	if err != nil {

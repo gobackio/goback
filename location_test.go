@@ -160,3 +160,20 @@ func TestALocationWithoutASchemeIsThePathAsWritten(t *testing.T) {
 	_, err = parseLocation("sqlite:///var/lib/goback#2")
 	require.Error(t, err, "a url's fragment would be dropped from the path")
 }
+
+func TestARedactedLocationLeavesTheKeyOut(t *testing.T) {
+	for raw, want := range map[string]string{
+		"goback://gbk_live_xyz@backup.example":           "goback://xxxxx@backup.example",
+		"gobak://gbk_live_xyz@backup.example:abc/x?y=1":  "gobak://xxxxx@backup.example:abc/x?y=1",
+		"postgres://goback:s3cret@db.example/goback":     "postgres://xxxxx@db.example/goback",
+		"gs://bucket/prefix":                             "gs://bucket/prefix",
+		"/media/me/user@host/store":                      "/media/me/user@host/store",
+		"goback://backup.example?key-file=/etc/key@home": "goback://backup.example?key-file=/etc/key@home",
+	} {
+		require.Equal(t, want, Redacted(raw), raw)
+	}
+
+	_, err := Open(context.Background(), Settings{Storage: "goback://gbk_live_xyz@backup.example:abc"})
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "gbk_live_xyz")
+}

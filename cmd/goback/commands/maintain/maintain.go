@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
@@ -46,7 +47,7 @@ var Command = cli.Command{
 			Action: action(func(m *members) {
 				runner := m.runner(maintenance.DefaultSchedule)
 				if runner.Store == nil {
-					common.Fatalf("storage %s has no archives to maintain", m.c.GlobalString("storage"))
+					common.Fatalf("storage %s has no archives to maintain", goback.Redacted(m.c.GlobalString("storage")))
 				}
 
 				report, err := runner.Compact(common.Context(m.c))
@@ -208,7 +209,7 @@ func (m *members) runner(schedule maintenance.Schedule) *maintenance.Runner {
 func (m *members) store() maintenance.Store {
 	store, ok := wrapped.Innermost(m.objects).(maintenance.Store)
 	if !ok {
-		common.Fatalf("storage %s has no archives to maintain", m.c.GlobalString("storage"))
+		common.Fatalf("storage %s has no archives to maintain", goback.Redacted(m.c.GlobalString("storage")))
 	}
 
 	return store

@@ -53,11 +53,40 @@ func parseLocation(raw string) (*url.URL, error) {
 	}
 
 	u, err := url.Parse(raw)
+
+	// the url's own error repeats it, api key and all
+	var parsing *url.Error
+	if errors.As(err, &parsing) {
+		err = parsing.Err
+	}
+
 	if err == nil && u.Fragment != "" {
 		err = errors.New("a location carries no #fragment")
 	}
 
 	return u, err
+}
+
+// Redacted is location with the user part of a URL, which holds a store
+// server's api key or a database password, left out, for printing.
+func Redacted(location string) string {
+	if !hasScheme(location) {
+		return location
+	}
+
+	scheme, rest, _ := strings.Cut(location, "://")
+
+	authority := rest
+	if end := strings.IndexAny(rest, "/?#"); end >= 0 {
+		authority = rest[:end]
+	}
+
+	at := strings.LastIndex(authority, "@")
+	if at < 0 {
+		return location
+	}
+
+	return scheme + "://xxxxx" + rest[at:]
 }
 
 // hasScheme reports whether raw starts with a URL scheme and ://.
@@ -267,7 +296,7 @@ func (s Settings) withIndex(build func(*sql.Index) (*pack.PackStorage, error)) (
 
 	u, err := parseLocation(s.Index)
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid index location %s: %w", s.Index, err)
+		return nil, nil, fmt.Errorf("invalid index location %s: %w", Redacted(s.Index), err)
 	}
 
 	location := u.String()
@@ -279,7 +308,7 @@ func (s Settings) withIndex(build func(*sql.Index) (*pack.PackStorage, error)) (
 		}
 	}
 
-	s.logger().Info("opening the index", "location", location)
+	s.logger().Info("opening the index", "location", Redacted(location))
 
 	// a local index keeps every commit until a policy is set
 	var opts []sql.Option

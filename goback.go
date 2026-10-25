@@ -105,12 +105,12 @@ func Open(ctx context.Context, s Settings) (*Repo, error) {
 
 	u, err := parseLocation(s.Storage)
 	if err != nil {
-		return nil, fmt.Errorf("invalid storage location %s: %w", s.Storage, err)
+		return nil, fmt.Errorf("invalid storage location %s: %w", Redacted(s.Storage), err)
 	}
 
 	driver, ok := drivers[u.Scheme]
 	if !ok {
-		return nil, fmt.Errorf("no driver for storage location %s", u.String())
+		return nil, fmt.Errorf("no driver for storage location %s", Redacted(s.Storage))
 	}
 
 	r := &Repo{settings: s}
