@@ -44,7 +44,8 @@ goback --store-key store.key --set home \
 ```
 
 `--storage` also takes `gcs://bucket`, `s3://bucket?endpoint=…`, or
-`goback://<secret>@host:port` for a goback server. `--storage` and `--index`
+`goback://<secret>@host:port` for a goback server. A path after the bucket,
+as in `gcs://bucket/web1`, keeps the store under that prefix. `--storage` and `--index`
 (or `GOBACK_STORAGE` and `GOBACK_INDEX`) have no defaults; a command that
 needs one says so. `--cache-dir` (or
 `GOBACK_CACHE_DIR`) names a per-machine directory for every cache: a backup

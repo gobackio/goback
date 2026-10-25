@@ -32,8 +32,9 @@ const (
 // left zero.
 type Settings struct {
 	// Storage is the store's location: a directory, gs:// or s3:// with
-	// the bucket's query parameters, or goback:// and goback+insecure://
-	// for a store server.
+	// the bucket's query parameters and a path for the prefix the store
+	// keeps its keys under, or goback:// and goback+insecure:// for a store
+	// server.
 	Storage string
 	// Index is where a directory or bucket store keeps its index: a
 	// directory for SQLite, or a postgres:// URL. A store server brings

@@ -29,6 +29,31 @@ func parse(t *testing.T, raw string) *url.URL {
 	return u
 }
 
+func TestABucketURLsPathIsThePrefixItsKeysGoUnder(t *testing.T) {
+	prefix := func(raw string) string {
+		t.Helper()
+
+		location, err := bucketURL("s3", parse(t, raw))
+		require.NoError(t, err)
+
+		return parse(t, location).Query().Get("prefix")
+	}
+
+	require.Equal(t, "web1/", prefix("s3://backups/web1"))
+	require.Equal(t, "hosts/web1/", prefix("s3://backups/hosts/web1/"))
+	require.Equal(t, "web2/", prefix("s3://backups?prefix=web2/"))
+	require.Empty(t, prefix("s3://backups/"))
+
+	location, err := bucketURL("s3", parse(t, "s3://backups/web1?region=eu-central-1&endpoint=http://127.0.0.1:9000"))
+	require.NoError(t, err)
+	query := parse(t, location).Query()
+	require.Equal(t, "eu-central-1", query.Get("region"), "the other parameters go to the bucket")
+	require.Equal(t, "http://127.0.0.1:9000", query.Get("endpoint"))
+
+	_, err = bucketURL("gs", parse(t, "gs://backups/web1?prefix=web2/"))
+	require.Error(t, err, "a path and a prefix parameter both")
+}
+
 func TestADrivePathIsAPath(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("only Windows paths start with a volume")

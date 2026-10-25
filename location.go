@@ -249,18 +249,39 @@ func writeAside(dir string, data []byte) (string, error) {
 	return file.Name(), nil
 }
 
-// openBucket opens a Cloud Storage or S3-compatible bucket. Every query
-// parameter (prefix, endpoint, region, ...) goes to the bucket; the index
-// is Settings.Index and the metadata cache sits under Settings.CacheDir.
-func openBucket(scheme string) driver {
-	return func(ctx context.Context, u *url.URL, s Settings) (backup.ObjectStore, backup.Index, error) {
-		query := u.Query()
-		if query.Has("index") {
-			return nil, nil, errors.New("a bucket url takes no index; the index location is the store's index")
+// bucketURL is the gocloud URL of the bucket a gs:// or s3:// location
+// names: the location's path, such as a/b in gs://bucket/a/b, is the
+// prefix a/b/ its keys go under, as is a prefix parameter, and every other
+// query parameter (endpoint, region, ...) goes to the bucket as it is.
+func bucketURL(scheme string, u *url.URL) (string, error) {
+	query := u.Query()
+	if query.Has("index") {
+		return "", errors.New("a bucket url takes no index; the index location is the store's index")
+	}
+
+	if query.Has("cache") {
+		return "", errors.New("a bucket url takes no cache; the cache directory names where caches go")
+	}
+
+	if prefix := strings.Trim(u.Path, "/"); prefix != "" {
+		if query.Has("prefix") {
+			return "", fmt.Errorf("a bucket url takes its prefix as the path /%s or as prefix=, not both", prefix)
 		}
 
-		if query.Has("cache") {
-			return nil, nil, errors.New("a bucket url takes no cache; the cache directory names where caches go")
+		query.Set("prefix", prefix+"/")
+	}
+
+	return (&url.URL{Scheme: scheme, Host: u.Host, RawQuery: query.Encode()}).String(), nil
+}
+
+// openBucket opens a Cloud Storage or S3-compatible bucket, as bucketURL
+// says; the index is Settings.Index and the metadata cache sits under
+// Settings.CacheDir.
+func openBucket(scheme string) driver {
+	return func(ctx context.Context, u *url.URL, s Settings) (backup.ObjectStore, backup.Index, error) {
+		location, err := bucketURL(scheme, u)
+		if err != nil {
+			return nil, nil, err
 		}
 
 		options, err := s.packOptions()
@@ -268,7 +289,7 @@ func openBucket(scheme string) driver {
 			return nil, nil, err
 		}
 
-		bucket, err := blob.OpenBucket(ctx, (&url.URL{Scheme: scheme, Host: u.Host, RawQuery: query.Encode()}).String())
+		bucket, err := blob.OpenBucket(ctx, location)
 		if err != nil {
 			return nil, nil, err
 		}
