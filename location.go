@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gobackio/goback/auth"
@@ -77,7 +78,7 @@ func openDirectory(_ context.Context, u *url.URL, s Settings) (backup.ObjectStor
 
 	return s.withIndex(func(x *sql.Index) (*pack.PackStorage, error) {
 		return pack.NewPackStorage(append(options,
-			pack.WithArchiveStorage(storage.NewBucketStore(file, storage.WithSync(syncUnder(dir)))),
+			pack.WithArchiveStorage(storage.NewBucketStore(file, storage.WithSync(syncUnder(dir)), storage.WithCreateNew(createUnder(dir)))),
 			pack.WithArchiveIndex(x),
 			pack.WithOwned(x),
 			pack.WithMaxParallel(1),
@@ -117,6 +118,78 @@ func syncUnder(dir string) func(key string) error {
 
 		return parent.Sync()
 	}
+}
+
+// createNewMtx makes creating a file only if it is absent exclusive in
+// this process where the filesystem cannot link a file into place.
+var createNewMtx sync.Mutex
+
+// createUnder creates the file a directory bucket keeps under key unless
+// one is there already: it writes the data aside and links it into place,
+// which fails when the name is taken, so neither another writer nor a
+// reader ever sees the file half written.
+func createUnder(dir string) func(key string, data []byte) error {
+	return func(key string, data []byte) error {
+		path := filepath.Join(dir, filepath.FromSlash(key))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+
+		// outside the keys the store lists
+		aside := filepath.Join(dir, ".create")
+		if err := os.MkdirAll(aside, 0o700); err != nil {
+			return err
+		}
+
+		temp, err := writeAside(aside, data)
+		if err != nil {
+			return err
+		}
+		defer os.Remove(temp)
+
+		err = os.Link(temp, path)
+		if err == nil {
+			return nil
+		}
+
+		if os.IsExist(err) {
+			return pack.ErrFileExists
+		}
+
+		createNewMtx.Lock()
+		defer createNewMtx.Unlock()
+
+		if _, err := os.Lstat(path); err == nil {
+			return pack.ErrFileExists
+		}
+
+		return os.Rename(temp, path)
+	}
+}
+
+// writeAside writes data to a new file in dir, synced, and returns its path.
+func writeAside(dir string, data []byte) (string, error) {
+	file, err := os.CreateTemp(dir, "*.tmp")
+	if err != nil {
+		return "", err
+	}
+
+	_, err = file.Write(data)
+	if err == nil {
+		err = file.Sync()
+	}
+
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+
+	if err != nil {
+		_ = os.Remove(file.Name())
+
+		return "", err
+	}
+
+	return file.Name(), nil
 }
 
 // openBucket opens a Cloud Storage or S3-compatible bucket. Every query

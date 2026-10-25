@@ -2,13 +2,17 @@ package goback
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gobackio/goback/storage"
+	"github.com/gobackio/goback/storage/pack"
 	"github.com/stretchr/testify/require"
 	"gocloud.dev/blob/fileblob"
 )
@@ -100,4 +104,41 @@ func TestADirectoryStoreSyncsTheFileItsBucketKeepsUnderAKey(t *testing.T) {
 	require.NoError(t, bucket.WriteAll(context.Background(), key, []byte("archive"), nil))
 
 	require.NoError(t, syncUnder(dir)(key))
+}
+
+func TestADirectoryStoreCreatesAFileOnceHoweverManyTryAtOnce(t *testing.T) {
+	dir := t.TempDir()
+
+	bucket, err := fileblob.OpenBucket(dir, &fileblob.Options{NoTempDir: true})
+	require.NoError(t, err)
+	defer bucket.Close()
+
+	store := storage.NewBucketStore(bucket, storage.WithCreateNew(createUnder(dir)))
+
+	for round := range 20 {
+		name := fmt.Sprintf("%d.end", round)
+
+		var (
+			won   atomic.Int32
+			tries sync.WaitGroup
+		)
+
+		for i := range 16 {
+			tries.Go(func() {
+				err := store.CreateNew(name, fmt.Appendf(nil, "writer %d", i))
+				if err == nil {
+					won.Add(1)
+				} else {
+					require.ErrorIs(t, err, pack.ErrFileExists)
+				}
+			})
+		}
+
+		tries.Wait()
+		require.EqualValues(t, 1, won.Load(), "round %d", round)
+	}
+
+	names, err := store.List(".end")
+	require.NoError(t, err)
+	require.Len(t, names, 20, "nothing written aside is listed")
 }

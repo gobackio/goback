@@ -264,7 +264,8 @@ type BucketStore struct {
 	openFilesMtx sync.Mutex
 	openFiles    map[string]*bucketFile
 
-	sync func(key string) error
+	sync      func(key string) error
+	createNew func(key string, data []byte) error
 
 	onGCS bool
 }
@@ -297,6 +298,16 @@ func WithStoreName(name string) BucketOption {
 func WithSync(sync func(key string) error) BucketOption {
 	return func(c *BucketStore) {
 		c.sync = sync
+	}
+}
+
+// WithCreateNew has CreateNew call create with the file's bucket key, for
+// a bucket whose own precondition does not exclude a concurrent writer, as
+// a directory's does not. create returns pack.ErrFileExists when the key
+// is taken.
+func WithCreateNew(create func(key string, data []byte) error) BucketOption {
+	return func(c *BucketStore) {
+		c.createNew = create
 	}
 }
 
@@ -417,9 +428,15 @@ func (c *BucketStore) Create(name string) (pack.File, error) {
 }
 
 // CreateNew implements pack.ArchiveStorage with the bucket's own
-// precondition, so it holds across processes on GCS and S3; a file://
-// bucket only checks within one process.
+// precondition, so it holds across processes on GCS and S3, or with the
+// WithCreateNew function.
 func (c *BucketStore) CreateNew(name string, data []byte) error {
+	if c.createNew != nil {
+		c.count(OpPut, int64(len(data)))
+
+		return c.createNew(c.key(name), data)
+	}
+
 	err := c.bucket.WriteAll(context.Background(), c.key(name), data, &blob.WriterOptions{IfNotExist: true, BufferSize: c.bufferSize(len(data))})
 	c.count(OpPut, int64(len(data)))
 
