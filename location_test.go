@@ -142,3 +142,21 @@ func TestADirectoryStoreCreatesAFileOnceHoweverManyTryAtOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, names, 20, "nothing written aside is listed")
 }
+
+func TestALocationWithoutASchemeIsThePathAsWritten(t *testing.T) {
+	for _, raw := range []string{"/media/me/Backup #2/goback", "/srv/q?x/store", "/srv/50%off", "//srv/store", "store #1"} {
+		u, err := parseLocation(raw)
+		require.NoError(t, err, raw)
+		require.Empty(t, u.Scheme, raw)
+		require.Empty(t, u.Host, raw)
+		require.Equal(t, raw, u.Path)
+	}
+
+	u, err := parseLocation("goback://gbk_key@backup.example:9000")
+	require.NoError(t, err)
+	require.Equal(t, "goback", u.Scheme)
+	require.Equal(t, "backup.example:9000", u.Host)
+
+	_, err = parseLocation("sqlite:///var/lib/goback#2")
+	require.Error(t, err, "a url's fragment would be dropped from the path")
+}

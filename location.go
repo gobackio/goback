@@ -39,14 +39,42 @@ var drivers = map[string]driver{
 	"goback+insecure": openRemote,
 }
 
-// parseLocation reads a storage or index location. A path that starts
-// with a volume, such as e:/backups, is a path, not a URL with scheme e.
+// parseLocation reads a storage or index location: a URL when it starts
+// with a scheme and ://, and otherwise a path, taken as it is written, so
+// a # or ? or % in it is part of the path. A path that starts with a
+// volume, such as e:/backups, is a path, not a URL with scheme e.
 func parseLocation(raw string) (*url.URL, error) {
 	if filepath.VolumeName(raw) != "" {
 		return &url.URL{Path: filepath.ToSlash(raw)}, nil
 	}
 
-	return url.Parse(raw)
+	if !hasScheme(raw) {
+		return &url.URL{Path: raw}, nil
+	}
+
+	u, err := url.Parse(raw)
+	if err == nil && u.Fragment != "" {
+		err = errors.New("a location carries no #fragment")
+	}
+
+	return u, err
+}
+
+// hasScheme reports whether raw starts with a URL scheme and ://.
+func hasScheme(raw string) bool {
+	scheme, _, ok := strings.Cut(raw, "://")
+	if !ok || scheme == "" {
+		return false
+	}
+
+	for i, c := range scheme {
+		letter := 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
+		if !letter && (i == 0 || !('0' <= c && c <= '9' || c == '+' || c == '-' || c == '.')) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // localDir is the absolute directory a location without a scheme names,
