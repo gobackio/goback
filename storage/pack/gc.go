@@ -476,6 +476,10 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 		return nil, err
 	}
 
+	// nothing after the erasure walk places an object, and the check before
+	// a sweep places them anew
+	run.located, run.pendingAt = nil, nil
+
 	if err := run.writeResults(); err != nil {
 		return nil, err
 	}
