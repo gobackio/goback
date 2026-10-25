@@ -400,6 +400,11 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 		defer func() { w.endSession(w.session) }()
 	}
 
+	w.policyVersion = 0
+	if w.Key != nil {
+		w.policyVersion = w.Key.Policy.Version
+	}
+
 	// inside the session, so a set the gate creates starts with the
 	// session's initial retention
 	if gate, ok := w.Index.(CommitGate); ok {
@@ -415,11 +420,6 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 
 		w.adoptDamage(grant)
 		w.every = grant.Every
-	}
-
-	w.policyVersion = 0
-	if w.Key != nil {
-		w.policyVersion = w.Key.Policy.Version
 	}
 
 	for retry := 0; ; retry++ {
@@ -636,9 +636,9 @@ func (w *Walker) recent(base *proto.Commit) bool {
 }
 
 // adoptPolicy writes this run under the store's policy instead of the key
-// file's; a policy the operator never set (version 0) leaves the key file
-// in charge. The policy can refuse a keyless run but never unseal a keyed
-// one.
+// file's, leaving the key itself as it is; a policy the operator never set
+// (version 0) leaves the key file in charge. The policy can refuse a
+// keyless run but never unseal a keyed one.
 func (w *Walker) adoptPolicy(policy *storekey.Policy) error {
 	if policy == nil || policy.Version == 0 {
 		return nil
@@ -656,7 +656,7 @@ func (w *Walker) adoptPolicy(policy *storekey.Policy) error {
 		w.logger().Info("store policy from the server replaces the key file's", "server", policy.Version, "keyfile", w.Key.Policy.Version)
 	}
 
-	w.Key.Policy = *policy
+	w.policyVersion = policy.Version
 
 	return nil
 }

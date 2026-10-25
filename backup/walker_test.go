@@ -356,7 +356,7 @@ func TestWalkerAdoptsTheStorePolicyFromTheGrant(t *testing.T) {
 	f.write("a.txt", []byte("two"))
 	result = f.run()
 	require.EqualValues(t, 3, result.Commit.PolicyVersion, "the commit records the policy it was written under")
-	require.Equal(t, served, key.Policy)
+	require.Equal(t, storekey.DefaultPolicy(), key.Policy, "walkers sharing the key never write to it")
 
 	// an agent without a key cannot honour a policy that encrypts
 	f.walker.Key = nil
