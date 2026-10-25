@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/gobackio/goback/auth"
@@ -403,7 +404,8 @@ const (
 
 // Tree walks the tree at ref breadth-first, its splits, and the trees of
 // directories below it down to maxDepth levels, handing fn each of them
-// in walk order.
+// in walk order. A tree reached again, no shallower than before, is not
+// handed over again.
 func (s *Store) Tree(ctx context.Context, ref *proto.Ref, maxDepth uint32, fn func(*proto.GetTreeResponse) error) error {
 	if err := s.readable(ctx, ref); err != nil {
 		return err
@@ -415,6 +417,16 @@ func (s *Store) Tree(ctx context.Context, ref *proto.Ref, maxDepth uint32, fn fu
 	}
 
 	queue := []*pending{{ref: ref}}
+	queued := map[string]uint32{string(ref.Hash): 0}
+
+	// a split keeps its tree's depth, so a tree first reached deeper can
+	// later be reached shallower and must be walked again from there
+	enqueue := func(ref *proto.Ref, depth uint32) {
+		if at, ok := queued[string(ref.GetHash())]; !ok || depth < at {
+			queued[string(ref.GetHash())] = depth
+			queue = append(queue, &pending{ref: ref, depth: depth})
+		}
+	}
 
 	for read := 0; read < len(queue); {
 		batch := queue[read:min(read+treeBatch, len(queue))]
@@ -440,7 +452,7 @@ func (s *Store) Tree(ctx context.Context, ref *proto.Ref, maxDepth uint32, fn fu
 			}
 
 			for _, split := range tree.Splits {
-				queue = append(queue, &pending{ref: split, depth: next.depth})
+				enqueue(split, next.depth)
 			}
 
 			if next.depth >= maxDepth {
@@ -449,7 +461,7 @@ func (s *Store) Tree(ctx context.Context, ref *proto.Ref, maxDepth uint32, fn fu
 
 			for _, node := range tree.Nodes {
 				if node.GetStat().IsDir() && node.Ref != nil {
-					queue = append(queue, &pending{ref: node.Ref, depth: next.depth + 1})
+					enqueue(node.Ref, next.depth+1)
 				}
 			}
 		}
@@ -505,40 +517,57 @@ func (s *Store) ReadFile(ctx context.Context, ref *proto.Ref, skip []uint32, fn 
 		return fmt.Errorf("%w: object %x is not a file", ErrInvalidRequest, ref.GetHash())
 	}
 
-	parts, err := backup.FileParts(ctx, s.Index, obj.GetFile())
-	if err != nil {
-		return err
-	}
-
 	skipped := make(map[uint32]bool, len(skip))
 	for _, i := range skip {
 		skipped[i] = true
 	}
 
-	var (
-		wanted []int
-		refs   []*proto.Ref
-	)
+	walk := newPartWalk(ctx, s.Index, obj.GetFile())
+	walk.entered = []*proto.Ref{ref}
 
-	for i, part := range parts {
-		if !skipped[uint32(i)] && part.Ref != nil {
-			wanted = append(wanted, i)
-			refs = append(refs, part.Ref)
+	next := func() ([]wantedPart, error) {
+		var batch []wantedPart
+
+		for len(batch) < readFileBatch {
+			i, part, err := walk.next()
+			if err != nil {
+				return nil, err
+			}
+
+			if part == nil {
+				break
+			}
+
+			if !skipped[uint32(i)] && part.Ref != nil {
+				batch = append(batch, wantedPart{ref: part.Ref, index: i})
+			}
 		}
+
+		if len(batch) == 0 {
+			return nil, nil
+		}
+
+		for _, entered := range walk.entered {
+			batch = append(batch, wantedPart{ref: entered, around: true})
+		}
+
+		walk.entered = nil
+
+		return batch, nil
 	}
 
-	err = s.streamParts(ctx, refs, readFileBatch, func(i int) string {
-		return fmt.Sprintf("part %d", wanted[i])
-	}, func(runs []*proto.LocatedRun) error {
+	err = s.streamParts(ctx, next, func(p wantedPart) string {
+		return fmt.Sprintf("part %d", p.index)
+	}, func(batch []wantedPart, runs []*proto.LocatedRun) error {
 		for _, run := range runs {
 			for _, record := range run.Records {
-				record.Index = uint32(wanted[record.Index])
+				record.Index = uint32(batch[record.Index].index)
 			}
 		}
 
 		return fn(&proto.ReadFileResponse{Runs: runs})
-	}, func(i int, obj *proto.Object) error {
-		return fn(&proto.ReadFileResponse{Index: uint32(wanted[i]), Object: obj})
+	}, func(p wantedPart, obj *proto.Object) error {
+		return fn(&proto.ReadFileResponse{Index: uint32(p.index), Object: obj})
 	})
 	if err != nil {
 		return fmt.Errorf("file %x: %w", ref.GetHash(), err)
@@ -567,7 +596,8 @@ func (s *Store) ReadFiles(ctx context.Context, files []*proto.ReadFilesEntry, ob
 	}
 
 	objects := make([]*proto.Object, len(files))
-	parts := make([][]*proto.FilePart, len(files))
+	parts := make([][]wantedPart, len(files))
+	entered := make([][]*proto.Ref, len(files))
 
 	grp, gctx := errgroup.WithContext(ctx)
 	grp.SetLimit(readFileWorkers)
@@ -591,7 +621,7 @@ func (s *Store) ReadFiles(ctx context.Context, files []*proto.ReadFilesEntry, ob
 				return nil
 			}
 
-			parts[i], err = backup.FileParts(gctx, s.Index, obj.GetFile())
+			parts[i], entered[i], err = firstParts(gctx, s.Index, obj.GetFile(), files[i].GetSkipParts())
 
 			return err
 		})
@@ -611,63 +641,116 @@ func (s *Store) ReadFiles(ctx context.Context, files []*proto.ReadFilesEntry, ob
 		return nil
 	}
 
-	type slot struct{ file, index int }
-
 	var (
-		slots  []slot
-		wanted []*proto.Ref
+		wanted []wantedPart
 		seen   = map[string]bool{}
 	)
 
-	for i, file := range files {
-		skipped := make(map[uint32]bool, len(file.GetSkipParts()))
-		for _, j := range file.GetSkipParts() {
-			skipped[j] = true
-		}
-
-		for j, part := range parts[i] {
-			if part.Ref == nil || skipped[uint32(j)] || seen[string(part.Ref.Hash)] {
-				continue
+	for i := range files {
+		for _, part := range parts[i] {
+			if !seen[string(part.ref.Hash)] {
+				seen[string(part.ref.Hash)] = true
+				part.file = i
+				wanted = append(wanted, part)
 			}
-
-			seen[string(part.Ref.Hash)] = true
-			slots = append(slots, slot{file: i, index: j})
-			wanted = append(wanted, part.Ref)
 		}
 	}
 
-	return s.streamParts(ctx, wanted, max(1, len(wanted)), func(i int) string {
-		return fmt.Sprintf("part %d of file %x", slots[i].index, refs[slots[i].file].GetHash())
-	}, func(runs []*proto.LocatedRun) error {
+	if len(wanted) > 0 {
+		for i, ref := range refs {
+			for _, around := range append([]*proto.Ref{ref}, entered[i]...) {
+				wanted = append(wanted, wantedPart{ref: around, file: i, around: true})
+			}
+		}
+	}
+
+	return s.streamParts(ctx, func() ([]wantedPart, error) {
+		batch := wanted
+		wanted = nil
+
+		return batch, nil
+	}, func(p wantedPart) string {
+		return fmt.Sprintf("part %d of file %x", p.index, refs[p.file].GetHash())
+	}, func(batch []wantedPart, runs []*proto.LocatedRun) error {
 		for _, run := range runs {
 			for _, record := range run.Records {
-				at := slots[record.Index]
+				at := batch[record.Index]
 				record.File, record.Index = uint32(at.file), uint32(at.index)
 			}
 		}
 
 		return fn(&proto.ReadFilesResponse{Runs: runs})
-	}, func(i int, obj *proto.Object) error {
-		return fn(&proto.ReadFilesResponse{File: uint32(slots[i].file), Part: true, Index: uint32(slots[i].index), Object: obj})
+	}, func(p wantedPart, obj *proto.Object) error {
+		return fn(&proto.ReadFilesResponse{File: uint32(p.file), Part: true, Index: uint32(p.index), Object: obj})
 	})
 }
 
-// streamParts hands runs the runs of refs the index can locate, batch refs
-// at a time, their record indexes counting refs, and object the stored
-// objects of the rest in order, read readFileWorkers at a time. name says
-// which part a failed read was.
-func (s *Store) streamParts(ctx context.Context, refs []*proto.Ref, batch int, name func(i int) string,
-	runs func([]*proto.LocatedRun) error, object func(i int, obj *proto.Object) error) error {
+// firstParts lists, in order, each part of file that is not inline and
+// not at an index in skip and whose ref no earlier part listed holds, and
+// the sub-files it went into for them.
+func firstParts(ctx context.Context, store backup.Getter, file *proto.File, skip []uint32) ([]wantedPart, []*proto.Ref, error) {
+	skipped := make(map[uint32]bool, len(skip))
+	for _, i := range skip {
+		skipped[i] = true
+	}
+
+	walk := newPartWalk(ctx, store, file)
+	walk.stepOver = true
+
+	var (
+		parts []wantedPart
+		seen  = map[string]bool{}
+	)
+
+	for {
+		i, part, err := walk.next()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if part == nil {
+			return parts, walk.entered, nil
+		}
+
+		switch {
+		case part.Ref == nil:
+		case seen[string(part.Ref.Hash)]:
+		case skipped[uint32(i)]:
+			walk.miss()
+		default:
+			seen[string(part.Ref.Hash)] = true
+			parts = append(parts, wantedPart{ref: part.Ref, index: i})
+		}
+	}
+}
+
+// wantedPart is a part to hand over: part index of file. An around part
+// is not handed over but is the caller's to read, the file or a sub-file
+// of it, so a located run may span its bytes.
+type wantedPart struct {
+	ref         *proto.Ref
+	file, index int
+	around      bool
+}
+
+// streamParts hands runs the runs of the parts the index can locate, each
+// batch next returns at a time, their record indexes counting that batch,
+// and object the stored objects of the rest in order, read readFileWorkers
+// at a time, until next returns none. name says which part a failed read
+// was.
+func (s *Store) streamParts(ctx context.Context, next func() ([]wantedPart, error), name func(wantedPart) string,
+	runs func([]wantedPart, []*proto.LocatedRun) error, object func(wantedPart, *proto.Object) error) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	locator, _ := s.Index.(backup.RecordLocator)
 
 	type result struct {
-		i    int
-		obj  *proto.Object
-		runs []*proto.LocatedRun
-		err  error
+		part  wantedPart
+		obj   *proto.Object
+		batch []wantedPart
+		runs  []*proto.LocatedRun
+		err   error
 	}
 
 	pending := make(chan chan result, readFileWorkers)
@@ -691,31 +774,48 @@ func (s *Store) streamParts(ctx context.Context, refs []*proto.Ref, batch int, n
 	go func() {
 		defer close(pending)
 
-		for start := 0; start < len(refs); start += batch {
-			end := min(start+batch, len(refs))
+		for {
+			batch, err := next()
+			if err != nil {
+				push(ready(result{err: err}))
+				return
+			}
+
+			if len(batch) == 0 {
+				return
+			}
+
 			located := make(map[int]bool)
 
 			if locator != nil {
-				found, err := locator.LocateRecords(ctx, refs[start:end])
+				refs := make([]*proto.Ref, len(batch))
+				for i, part := range batch {
+					refs[i] = part.ref
+				}
+
+				found, err := locator.LocateRecords(ctx, refs)
 				if err != nil {
 					push(ready(result{err: fmt.Errorf("locating parts: %w", err)}))
 					return
 				}
 
 				for _, run := range found {
+					run.Records = slices.DeleteFunc(run.Records, func(record *proto.LocatedRecord) bool {
+						return int(record.Index) >= len(batch) || batch[record.Index].around
+					})
+
 					for _, record := range run.Records {
-						record.Index += uint32(start)
 						located[int(record.Index)] = true
 					}
 				}
 
-				if len(found) > 0 && !push(ready(result{runs: found})) {
+				if len(found) > 0 && !push(ready(result{batch: batch, runs: found})) {
 					return
 				}
 			}
 
-			for i := start; i < end; i++ {
-				if located[i] {
+			for i, part := range batch {
+				if located[i] || part.around {
 					continue
 				}
 
@@ -725,12 +825,12 @@ func (s *Store) streamParts(ctx context.Context, refs []*proto.Ref, batch int, n
 				}
 
 				go func() {
-					obj, err := s.Index.Get(ctx, refs[i])
+					obj, err := s.Index.Get(ctx, part.ref)
 					if err != nil {
-						err = fmt.Errorf("%s: %w", name(i), err)
+						err = fmt.Errorf("%s: %w", name(part), err)
 					}
 
-					done <- result{i: i, obj: obj, err: err}
+					done <- result{part: part, obj: obj, err: err}
 				}()
 			}
 		}
@@ -744,9 +844,9 @@ func (s *Store) streamParts(ctx context.Context, refs []*proto.Ref, batch int, n
 
 		var err error
 		if res.runs != nil {
-			err = runs(res.runs)
+			err = runs(res.batch, res.runs)
 		} else {
-			err = object(res.i, res.obj)
+			err = object(res.part, res.obj)
 		}
 
 		if err != nil {
