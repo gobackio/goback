@@ -955,6 +955,8 @@ type memSessions struct {
 	mtx   sync.Mutex
 	began []*Session
 	ended []*Session
+	// again counts the calls ending a session that had ended
+	again int
 }
 
 func (m *memSessions) BeginSession(ctx context.Context, s *Session) (context.Context, error) {
@@ -977,6 +979,7 @@ func (m *memSessions) EndSession(ctx context.Context) error {
 	defer m.mtx.Unlock()
 
 	if slices.Contains(m.ended, s) {
+		m.again++
 		return ErrNoSession
 	}
 
@@ -998,6 +1001,7 @@ func TestWalkerRunsInASessionAndUploadsEachChunkOnce(t *testing.T) {
 	f := newWalkerFixture(t)
 	sessions := &memSessions{}
 	f.walker.Sessions = sessions
+	f.walker.Index = &endingIndex{Index: f.index, puts: &endingStore{ObjectStore: f.index, sessions: sessions}}
 	f.write("a.bin", content)
 	f.write("b.bin", content)
 
@@ -1102,7 +1106,7 @@ func TestACancelledWalkerStillEndsItsSession(t *testing.T) {
 // losingIndex refuses the first commit with ErrSessionLost and ends its
 // session, as a store does when a collection took what the run reused, or
 // with missing, naming what is gone; it refuses anything later put in an
-// ended session.
+// ended session, and a commit it stores ends its session.
 type losingIndex struct {
 	*memIndex
 	sessions *memSessions
@@ -1130,7 +1134,11 @@ func (l *losingIndex) Put(ctx context.Context, obj *proto.Object) error {
 		return ErrSessionLost
 	}
 
-	return l.memIndex.Put(ctx, obj)
+	if err := l.memIndex.Put(ctx, obj); err != nil || obj.GetCommit() == nil {
+		return err
+	}
+
+	return l.sessions.EndSession(ctx)
 }
 
 func TestWalkerRetriesALostSessionInANewOne(t *testing.T) {
@@ -1218,6 +1226,25 @@ func TestWalkerGoesOnInANewSessionAfterACheckpoint(t *testing.T) {
 
 	require.Len(t, sessions.began, int(result.Checkpoints)+1, "one session per commit")
 	require.ElementsMatch(t, sessions.began, sessions.ended)
+	require.Zero(t, sessions.again, "a session a commit ended is not ended again")
+}
+
+func TestAWalkerEndsOnlyTheSessionsNoCommitEnded(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.write("a.txt", []byte("a"))
+
+	sessions := &memSessions{}
+	f.walker.Sessions = sessions
+	f.walker.Objects = &endingStore{ObjectStore: f.objects, sessions: sessions}
+	f.walker.Index = &endingIndex{Index: f.index, puts: &endingStore{ObjectStore: f.index, sessions: sessions}}
+
+	require.False(t, f.run().SameTree)
+	require.Equal(t, sessions.began, sessions.ended)
+	require.Zero(t, sessions.again, "the commit ended the session")
+
+	require.True(t, f.run().SameTree)
+	require.Equal(t, sessions.began, sessions.ended, "a run that commits nothing ends its session")
+	require.Zero(t, sessions.again)
 }
 
 // TestWalkerCheckpointKeepsTheBaseRunsRacyWindow interrupts a run right

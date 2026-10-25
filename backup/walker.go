@@ -221,6 +221,8 @@ type Walker struct {
 	outside, session context.Context
 	// live is session for the goroutine renewing it
 	live atomic.Pointer[context.Context]
+	// committed is the last session a stored commit ended
+	committed atomic.Pointer[Session]
 	// touchEvery, when set, is how often the session is renewed in place of
 	// what the store's lease asks
 	touchEvery time.Duration
@@ -546,6 +548,10 @@ const endSessionWait = 10 * time.Second
 // ended it, also when the run was cancelled: a store keeps a session left
 // open until its lease runs out.
 func (w *Walker) endSession(ctx context.Context) {
+	if s, ok := SessionFromContext(ctx); ok && w.committed.Load() == s {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endSessionWait)
 	defer cancel()
 
@@ -868,6 +874,10 @@ func (w *Walker) putCommit(ctx context.Context, tree *proto.Ref, partial bool) (
 	err := w.Index.Put(ctx, obj)
 	if err != nil {
 		return nil, nil, fmt.Errorf("storing commit: %w", err)
+	}
+
+	if s, ok := SessionFromContext(ctx); ok {
+		w.committed.Store(s)
 	}
 
 	if keeper, ok := w.Objects.(Keeper); ok {
