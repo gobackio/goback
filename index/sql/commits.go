@@ -395,7 +395,7 @@ func (x *Index) planCommit(ctx context.Context, commit *proto.Commit, ref *proto
 	}
 
 	if err == nil {
-		err = diff.walk(ctx, root)
+		err = diff.walk(ctx, commit.Tree, root)
 	}
 
 	steps.Lap("walk")
@@ -634,16 +634,31 @@ type fileRow struct {
 	node      *proto.TreeNode
 }
 
-// level is a directory to diff and its flattened tree.
+// level is a directory to diff, its flattened tree, the ref of that tree
+// and the level of the directory it is in.
 type level struct {
-	dir  string
-	tree *proto.Tree
+	dir    string
+	tree   *proto.Tree
+	ref    []byte
+	parent *level
+}
+
+// holds reports whether ref is the tree of l or of a directory above it.
+func (l *level) holds(ref []byte) bool {
+	for ; l != nil; l = l.parent {
+		if bytes.Equal(l.ref, ref) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // descent is a node below a level the walk reads on.
 type descent struct {
 	path string
 	node *proto.TreeNode
+	from *level
 }
 
 // diffWorkers bounds the objects a level of the walk reads at once.
@@ -734,10 +749,25 @@ func setRef(ctx context.Context, c *ent.Client, setID int64, hash []byte) error 
 // flatten records a tree and its split trees and returns the flat node
 // list, like backup.LoadTree.
 func (d *treeDiff) flatten(ctx context.Context, dir string, ref *proto.Ref, t *proto.Tree) (*proto.Tree, error) {
+	return d.flattenWithin(ctx, dir, ref, t, map[string]bool{})
+}
+
+// flattenWithin is flatten below the split trees above, which a split
+// must not name again.
+func (d *treeDiff) flattenWithin(ctx context.Context, dir string, ref *proto.Ref, t *proto.Tree, above map[string]bool) (*proto.Tree, error) {
 	d.ref(ref.GetHash())
 
 	if len(t.Splits) == 0 {
 		return t, nil
+	}
+
+	above[string(ref.GetHash())] = true
+	defer delete(above, string(ref.GetHash()))
+
+	for _, split := range t.Splits {
+		if above[string(split.GetHash())] {
+			return nil, fmt.Errorf("tree %x of %q splits into itself", split.GetHash(), dir)
+		}
 	}
 
 	objects, errs := backup.ReadObjects(ctx, d.store, t.Splits)
@@ -758,7 +788,7 @@ func (d *treeDiff) flatten(ctx context.Context, dir string, ref *proto.Ref, t *p
 			return nil, fmt.Errorf("split %x is not a tree", split.GetHash())
 		}
 
-		sub, err := d.flatten(ctx, dir, split, obj.GetTree())
+		sub, err := d.flattenWithin(ctx, dir, split, obj.GetTree(), above)
 		if err != nil {
 			return nil, err
 		}
@@ -912,8 +942,8 @@ func (d *treeDiff) closeSubtrees(ctx context.Context, dirs []string) error {
 // walk plans the commit's flattened root tree a level of directories at
 // a time: their open rows are read together and their subtrees in
 // parallel.
-func (d *treeDiff) walk(ctx context.Context, root *proto.Tree) error {
-	next := []level{{dir: "", tree: root}}
+func (d *treeDiff) walk(ctx context.Context, rootRef *proto.Ref, root *proto.Tree) error {
+	next := []*level{{dir: "", tree: root, ref: rootRef.GetHash()}}
 
 	phase := progress.Start(ctx, progress.OpCommit, progress.PhaseIndex, 0, 0)
 	defer phase.Finish()
@@ -985,12 +1015,17 @@ func (d *treeDiff) walk(ctx context.Context, root *proto.Tree) error {
 				continue
 			}
 
+			ref := sub.node.GetRef().GetHash()
+			if sub.from.holds(ref) {
+				return fmt.Errorf("directory %q holds its own tree %x", sub.path, ref)
+			}
+
 			flat, err := d.flatten(ctx, sub.path, sub.node.GetRef(), subtrees[i].GetTree())
 			if err != nil {
 				return err
 			}
 
-			next = append(next, level{dir: sub.path, tree: flat})
+			next = append(next, &level{dir: sub.path, tree: flat, ref: ref, parent: sub.from})
 		}
 
 		if err := d.closeSubtrees(ctx, unlisted); err != nil {
@@ -1004,7 +1039,7 @@ func (d *treeDiff) walk(ctx context.Context, root *proto.Tree) error {
 // dir plans one directory against its open rows and returns the
 // directories to descend into, the large files to read and the
 // directories that vanished.
-func (d *treeDiff) dir(l level, trees map[string][]byte, files map[string]*ent.File) (descend, large []descent, vanished []string) {
+func (d *treeDiff) dir(l *level, trees map[string][]byte, files map[string]*ent.File) (descend, large []descent, vanished []string) {
 	seen := make(map[string]bool, len(l.tree.GetNodes()))
 
 	for _, node := range l.tree.GetNodes() {
@@ -1040,7 +1075,7 @@ func (d *treeDiff) dir(l level, trees map[string][]byte, files map[string]*ent.F
 			}
 
 			d.trees = append(d.trees, treeRow{path: child, dir: l.dir, ref: node.GetRef().GetHash()})
-			descend = append(descend, descent{path: child, node: node})
+			descend = append(descend, descent{path: child, node: node, from: l})
 
 			continue
 		}

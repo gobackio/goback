@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"testing"
@@ -413,4 +414,72 @@ var treeDiffGolden = []string{
 	"ref sub:p1",
 	"ref sub:p2",
 	"ref sub:p3",
+}
+
+// forge stores obj under ref, as a store that does not check what it is
+// handed would.
+func (f *fixture) forge(ref *proto.Ref, obj *proto.Object) {
+	f.store.mu.Lock()
+	f.store.objects[string(ref.Hash)] = obj
+	f.store.mu.Unlock()
+}
+
+// indexWithin indexes a commit of root and fails the test unless that
+// ends within a few seconds.
+func (f *fixture) indexWithin(root *proto.Ref) error {
+	f.t.Helper()
+
+	obj := proto.NewObject(&proto.Commit{Timestamp: f.clock.Unix(), Tree: root, BackupSet: "world", AgentId: "node-1"})
+	done := make(chan error, 1)
+
+	go func() { done <- f.x.Put(f.ctx, obj) }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(2 * time.Second):
+		f.t.Fatal("indexing the commit does not end")
+		return nil
+	}
+}
+
+func TestIndexingRefusesATreeThatHoldsItself(t *testing.T) {
+	f := newFixture(t)
+	forged := &proto.Ref{Hash: bytes.Repeat([]byte{1}, proto.HashSize)}
+
+	loop := f.tree(f.file("a.txt", "one"), &proto.TreeNode{
+		Stat: &proto.FileInfo{Name: []byte("loop"), Type: proto.NodeType_NODE_DIRECTORY, Mode: 0755},
+		Ref:  forged,
+	})
+	f.forge(forged, loop)
+
+	require.ErrorIs(t, f.indexWithin(loop.Ref()), backup.ErrDanglingRef)
+
+	split := &proto.Ref{Hash: bytes.Repeat([]byte{2}, proto.HashSize)}
+	f.forge(split, proto.NewObject(&proto.Tree{Splits: []*proto.Ref{split}}))
+
+	root := f.tree(&proto.TreeNode{
+		Stat: &proto.FileInfo{Name: []byte("d"), Type: proto.NodeType_NODE_DIRECTORY, Mode: 0755},
+		Ref:  split,
+	})
+
+	require.ErrorIs(t, f.indexWithin(root.Ref()), backup.ErrDanglingRef)
+}
+
+func TestIndexingRecordsEveryPathOfASubtreeSharedByManyDirectories(t *testing.T) {
+	f := newFixture(t)
+	shared := f.dir("x", f.file("a.txt", "one"))
+
+	var nodes []*proto.TreeNode
+	for _, name := range []string{"p", "q"} {
+		nodes = append(nodes, &proto.TreeNode{Stat: &proto.FileInfo{Name: []byte(name), Type: proto.NodeType_NODE_DIRECTORY, Mode: 0755}, Ref: shared.Ref})
+	}
+
+	require.NoError(t, f.indexWithin(f.tree(nodes...).Ref()))
+
+	for _, dir := range []string{"p", "q"} {
+		entries, err := f.x.ReadDir(f.ctx, "world", dir, f.clock)
+		require.NoError(t, err)
+		require.Len(t, entries, 1, dir)
+	}
 }
