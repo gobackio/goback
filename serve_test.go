@@ -2,6 +2,7 @@ package goback
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 
@@ -85,6 +86,54 @@ func TestAServedRepoIsReadyOnlyWhileItsIndexAnswers(t *testing.T) {
 
 	cancel()
 	require.NoError(t, <-served)
+}
+
+// failingListener accepts one connection, then fails once fail is closed.
+type failingListener struct {
+	net.Listener
+	accepted int
+	fail     chan struct{}
+}
+
+func (l *failingListener) Accept() (net.Conn, error) {
+	if l.accepted++; l.accepted > 1 {
+		<-l.fail
+		return nil, errors.New("the listener broke")
+	}
+
+	return l.Listener.Accept()
+}
+
+func TestServeStopsServingWhenItsListenerFails(t *testing.T) {
+	repo, err := Open(context.Background(), Settings{Storage: t.TempDir(), Index: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = repo.Close() })
+
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = inner.Close() })
+
+	listener := &failingListener{Listener: inner, fail: make(chan struct{})}
+
+	served := make(chan error, 1)
+	go func() {
+		served <- repo.Serve(context.Background(), listener, ServeOptions{Secret: "s3cret", PlaintextBehindProxy: true})
+	}()
+
+	conn, err := grpc.NewClient(inner.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	check := func() error {
+		_, err := healthpb.NewHealthClient(conn).Check(context.Background(), &healthpb.HealthCheckRequest{Service: "liveness"})
+		return err
+	}
+
+	require.NoError(t, check())
+
+	close(listener.fail)
+	require.ErrorContains(t, <-served, "the listener broke")
+	require.Error(t, check(), "a connection the server took before is served no more")
 }
 
 func TestServeRefusesNoSecretAndUndeclaredPlaintext(t *testing.T) {

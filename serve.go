@@ -61,7 +61,8 @@ type ServeOptions struct {
 // policy, health checks, whose readiness fails while the index does not
 // answer or the server drains, and the maintenance jobs of opts.Schedule.
 // It returns once ctx ends, after the calls in flight finish, or when the
-// listener fails.
+// listener fails, and in either case once the maintenance job under way
+// has stopped, so the repo may be closed then.
 func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptions) error {
 	if opts.Secret == "" {
 		return errors.New("no secret: a store server accepts no anonymous calls")
@@ -134,7 +135,17 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	go runner.Run(ctx)
+	ran := make(chan struct{})
+
+	go func() {
+		defer close(ran)
+		runner.Run(ctx)
+	}()
+
+	defer func() {
+		cancel()
+		<-ran
+	}()
 
 	stopped := context.AfterFunc(ctx, func() {
 		probe.Drain()
@@ -147,6 +158,10 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 	err := srv.Serve(listener)
 	if ctx.Err() != nil {
 		return nil
+	}
+
+	if stopped() {
+		srv.Stop()
 	}
 
 	return err
