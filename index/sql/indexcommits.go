@@ -143,12 +143,16 @@ func (x *Index) groupSetRow(ctx context.Context, wantID int64, name string) (*en
 		}
 	}
 
-	s, err := x.client.Set.Query().Where(set.Name(name)).Only(ctx)
+	id, err := liveSet(ctx, x.client, name)
 	if ent.IsNotFound(err) {
 		return nil, nil
 	}
 
-	return s, err
+	if err != nil {
+		return nil, err
+	}
+
+	return x.client.Set.Get(ctx, id)
 }
 
 // placeholderLimit bounds the placeholder names tried.
@@ -172,7 +176,7 @@ func (x *Index) placeholderSet(ctx context.Context, wantID int64, dryRun bool) (
 			name += "-" + strconv.Itoa(n)
 		}
 
-		taken, err := x.client.Set.Query().Where(set.Name(name)).Exist(ctx)
+		taken, err := x.client.Set.Query().Where(set.Name(name), set.StateNEQ(set.StateDeleted)).Exist(ctx)
 		if err != nil {
 			return nil, false, err
 		}

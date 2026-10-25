@@ -59,7 +59,8 @@ func (Set) Edges() []ent.Edge {
 // Indexes of Set.
 func (Set) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("name").Unique(),
+		// a deleted set gives its name up to the next set of that name
+		index.Fields("name").Unique().Annotations(entsql.IndexWhere("state <> 'deleted'")),
 		index.Fields("physical_size", "name").Annotations(entsql.DescColumns("physical_size")).
 			StorageKey("sets_by_size"),
 	}

@@ -286,6 +286,9 @@ func TestPostgres(t *testing.T) {
 		"PastTheBindLimit":                 TestASetWithMoreCommitsThanOneStatementBindsKeepsWorking,
 		"CommitAfterATombstonedNewest":     TestACommitAfterATombstonedNewestOneHoldsOnlyWhatItHolds,
 		"CommitPlannedAsNewestTombstoned":  TestACommitPlannedWhileItsSetsNewestIsTombstonedKeepsWhatTheyShare,
+		"DeletedSetNameTakesANewSet":       TestTheNameOfADeletedSetTakesANewSet,
+		"PruneRetriedAfterAFailure":        TestARetirementRetriesThePruneOfASetWhosePruneFailed,
+		"RetirementFarPastTheLastRun":      TestARetirementFarPastTheLastRunRetiresNothing,
 	} {
 		t.Run(name, test)
 	}

@@ -2,7 +2,6 @@ package sql
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -46,14 +45,26 @@ func anys[T any](values []T) []any {
 	return out
 }
 
-// findSet returns the id of the named set, or backup.ErrNotFound.
+// findSet returns the id of the named set, or backup.ErrNotFound: the set
+// that holds the name, or else the newest deleted set that held it.
 func findSet(ctx context.Context, c *ent.Client, name string) (int64, error) {
-	id, err := c.Set.Query().Where(set.Name(name)).OnlyID(ctx)
+	id, err := liveSet(ctx, c, name)
+	if !ent.IsNotFound(err) {
+		return id, err
+	}
+
+	id, err = c.Set.Query().Where(set.Name(name)).Order(ent.Desc(set.FieldID)).FirstID(ctx)
 	if ent.IsNotFound(err) {
 		return 0, fmt.Errorf("%w: set %q", backup.ErrNotFound, name)
 	}
 
 	return id, err
+}
+
+// liveSet returns the id of the set that holds the name, one that is not
+// deleted, or an ent not-found error.
+func liveSet(ctx context.Context, c *ent.Client, name string) (int64, error) {
+	return c.Set.Query().Where(set.Name(name), set.StateNEQ(set.StateDeleted)).OnlyID(ctx)
 }
 
 // setNamed returns the id of the named set, creating it if needed. A
@@ -80,7 +91,7 @@ func (x *Index) setNamed(ctx context.Context, c *ent.Client, name string, wantID
 		}
 	}
 
-	id, err := c.Set.Query().Where(set.Name(name)).OnlyID(ctx)
+	id, err := liveSet(ctx, c, name)
 	if !ent.IsNotFound(err) {
 		return id, err
 	}
@@ -95,20 +106,20 @@ func (x *Index) setNamed(ctx context.Context, c *ent.Client, name string, wantID
 		return 0, err
 	}
 
-	return c.Set.Query().Where(set.Name(name)).OnlyID(ctx)
+	return liveSet(ctx, c, name)
 }
 
-// openSet returns the id of the named set, creating it if needed. A set
-// created under a session for it that carries an initial retention
-// policy starts with that policy as its own.
+// openSet returns the id of the set that holds the name, creating it if
+// there is none. A set created under a session for it that carries an
+// initial retention policy starts with that policy as its own.
 func (x *Index) openSet(ctx context.Context, name string) (int64, error) {
 	s, ok := backup.SessionFromContext(ctx)
 	if !ok || s.InitialRetention == nil || s.Set != name {
 		return x.setNamed(ctx, x.client, name, 0)
 	}
 
-	id, err := findSet(ctx, x.client, name)
-	if !errors.Is(err, backup.ErrNotFound) {
+	id, err := liveSet(ctx, x.client, name)
+	if !ent.IsNotFound(err) {
 		return id, err
 	}
 
@@ -137,7 +148,7 @@ func (x *Index) createSet(ctx context.Context, name string, policy *retention.Po
 		return setScope(s, time.Time{}), nil
 	})
 	if ent.IsConstraintError(err) {
-		return findSet(ctx, x.client, name)
+		return liveSet(ctx, x.client, name)
 	}
 
 	return id, err
@@ -199,11 +210,12 @@ func (x *Index) ListSets(ctx context.Context) ([]index.SetInfo, error) {
 // GetSet returns the named set as ListSets describes it, or
 // backup.ErrNotFound.
 func (x *Index) GetSet(ctx context.Context, name string) (index.SetInfo, error) {
-	row, err := x.client.Set.Query().Where(set.Name(name)).Only(ctx)
-	if ent.IsNotFound(err) {
-		return index.SetInfo{}, fmt.Errorf("%w: set %q", backup.ErrNotFound, name)
+	id, err := findSet(ctx, x.client, name)
+	if err != nil {
+		return index.SetInfo{}, err
 	}
 
+	row, err := x.client.Set.Get(ctx, id)
 	if err != nil {
 		return index.SetInfo{}, err
 	}

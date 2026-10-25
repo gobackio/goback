@@ -383,6 +383,9 @@ var (
 				Name:    "set_name",
 				Unique:  true,
 				Columns: []*schema.Column{SetsColumns[1]},
+				Annotation: &entsql.IndexAnnotation{
+					Where: "state <> 'deleted'",
+				},
 			},
 			{
 				Name:    "sets_by_size",

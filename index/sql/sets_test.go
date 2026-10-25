@@ -236,6 +236,40 @@ func TestBeginCommitGates(t *testing.T) {
 	require.ErrorIs(t, err, backup.ErrSetClosed)
 }
 
+func TestTheNameOfADeletedSetTakesANewSet(t *testing.T) {
+	f := newFixture(t)
+
+	f.commit("world", f.tree(f.file("a.txt", "one")), false)
+	old, err := f.x.GetSet(f.ctx, "world")
+	require.NoError(t, err)
+
+	require.NoError(t, f.x.DeleteSet(f.ctx, "world", false))
+	_, err = f.x.BeginCommit(f.ctx, "world")
+	require.ErrorIs(t, err, backup.ErrSetClosed, "the trash still holds the name")
+
+	_, err = f.x.Retire(f.ctx, f.clock.Add(15*24*time.Hour))
+	require.NoError(t, err)
+
+	gone, err := f.x.GetSet(f.ctx, "world")
+	require.NoError(t, err)
+	require.Equal(t, "deleted", gone.State)
+
+	_, err = f.x.BeginCommit(f.ctx, "world")
+	require.NoError(t, err)
+
+	f.advance(time.Hour)
+	f.commit("world", f.tree(f.file("a.txt", "two")), false)
+
+	fresh, err := f.x.GetSet(f.ctx, "world")
+	require.NoError(t, err)
+	require.NotEqual(t, old.ID, fresh.ID)
+	require.Equal(t, "active", fresh.State)
+
+	commits, err := f.x.CommitInfo(f.ctx, "world", f.clock, 10)
+	require.NoError(t, err)
+	require.Len(t, commits, 1, "nothing of the old set joins the new one")
+}
+
 func TestStorePolicyVersionsAndAcknowledgement(t *testing.T) {
 	f := newFixture(t)
 
