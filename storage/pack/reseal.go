@@ -391,9 +391,8 @@ func (rs *resealer) commit(ctx context.Context, ref *proto.Ref) error {
 	return nil
 }
 
-// standIn is the commit that stands for parent now: its replacement, or
-// for a parent an earlier run replaced, the live commit received with it
-// in its set; parent itself where there is neither.
+// standIn is the commit that stands for parent now: its replacement, made
+// by this run or an earlier one; parent itself where there is none.
 func (rs *resealer) standIn(parent *proto.Ref) *proto.Ref {
 	if parent == nil {
 		return nil
@@ -409,7 +408,7 @@ func (rs *resealer) standIn(parent *proto.Ref) *proto.Ref {
 	}
 
 	for _, twin := range rs.received[receiptOf(old)] {
-		if ref, ok := rs.replaced[twin]; ok {
+		if ref, ok := rs.replaced[twin]; ok && replaces(rs.all[twin].GetCommit(), old.GetCommit()) {
 			return ref
 		}
 	}
@@ -417,8 +416,16 @@ func (rs *resealer) standIn(parent *proto.Ref) *proto.Ref {
 	return parent
 }
 
-// receipt is when a commit was received in its set, which no two commits
-// of a set share but a replacement and the commit it replaced.
+// replaces reports whether next can be what a reseal replaced old with:
+// the same commit but for its tree and parent.
+func replaces(next, old *proto.Commit) bool {
+	a, b := pb.Clone(next).(*proto.Commit), pb.Clone(old).(*proto.Commit)
+	a.Tree, a.Parent, b.Tree, b.Parent = nil, nil, nil, nil
+
+	return pb.Equal(a, b)
+}
+
+// receipt is when a commit was received in its set.
 type receipt struct {
 	set uint64
 	at  int64

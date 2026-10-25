@@ -585,3 +585,57 @@ func TestACollectionAfterAResealDropsWhatOnlyTheOldCommitsReached(t *testing.T) 
 		require.Equal(t, f.want[name], f.read(t, next), name)
 	}
 }
+
+func TestAResealTakesAReplacedParentOnlyFromItsOwnReplacement(t *testing.T) {
+	key, _ := resealKeys(t)
+	ctx := context.Background()
+	opener := func(context.Context, []byte) (*storekey.Key, error) { return key, nil }
+
+	// two commits of a set received at once, and a child of the first
+	build := func(store *PackStorage) (p, q, c *proto.Ref) {
+		l := newLegacy(t, store, key)
+		p = l.commit("world", 1, 100, l.tree(nil, fileNode("p", 1, l.file([]byte("p"), 1))), nil)
+		q = l.put(&proto.Commit{Timestamp: 100, Tree: l.tree(nil, fileNode("q", 1, l.file([]byte("q"), 1))), BackupSet: "world",
+			AgentId: "agent", SetId: 1, ReceivedAtNs: 100 * int64(time.Second), KeyId: key.ID()})
+		c = l.commit("world", 1, 200, l.tree(nil, fileNode("c", 1, l.file([]byte("c"), 1))), p)
+		require.NoError(t, store.Flush())
+
+		return p, q, c
+	}
+
+	whole := newTestStore(t, t.TempDir())
+	t.Cleanup(func() { _ = whole.Close() })
+	p, _, c := build(whole)
+
+	want, err := whole.Reseal(ctx, opener)
+	require.NoError(t, err)
+
+	pNew := &proto.Ref{Hash: []byte(replacements(want)[string(p.Hash)])}
+
+	// map order decides which commit received with the parent is met first
+	for range 8 {
+		store := newTestStore(t, t.TempDir())
+		build(store)
+
+		// an earlier run replaced the parent and stopped once it retired it
+		var copyOver func(ref *proto.Ref)
+		copyOver = func(ref *proto.Ref) {
+			obj, err := whole.Get(ctx, ref)
+			require.NoError(t, err)
+			require.NoError(t, store.Put(ctx, obj))
+
+			for _, below := range backup.References(obj) {
+				copyOver(below)
+			}
+		}
+		copyOver(pNew)
+		require.NoError(t, store.Flush())
+		require.NoError(t, store.Delete(ctx, p))
+		require.NoError(t, store.Flush())
+
+		report, err := store.Reseal(ctx, opener)
+		require.NoError(t, err)
+		require.Equal(t, replacements(want)[string(c.Hash)], replacements(report)[string(c.Hash)], "the child's parent is the parent's replacement")
+		require.NoError(t, store.Close())
+	}
+}
