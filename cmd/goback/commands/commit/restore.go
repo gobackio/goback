@@ -299,6 +299,9 @@ func logStats(stats backup.RestoreStats) {
 
 func restoreAction(c *cli.Context) {
 	dst := c.Args().Get(0)
+	if dst == "" {
+		common.Fatal(errors.New("usage: commit restore <directory> [age]"))
+	}
 
 	when, err := restoreTarget(time.Now(), c.Args().Get(1), c.String("at"), c.String("ref"))
 	if err != nil {
@@ -313,6 +316,12 @@ func restoreAction(c *cli.Context) {
 	base := filepath.Clean(dst)
 
 	if !c.Bool("force") {
+		if c.Bool("delete") {
+			if err := checkDeleteTarget(base); err != nil {
+				common.Fatal(err)
+			}
+		}
+
 		held, err := backup.LiveMarkers(base)
 		if err != nil {
 			common.Fatal(err)
@@ -356,6 +365,42 @@ func restoreAction(c *cli.Context) {
 	if err != nil {
 		os.Exit(1)
 	}
+}
+
+// checkDeleteTarget refuses a restore with --delete into the working
+// directory or a filesystem root, which an empty or mistyped argument
+// names more often than an intended target.
+func checkDeleteTarget(dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+
+	if filepath.Dir(abs) == abs {
+		return fmt.Errorf("refusing --delete on %s, a filesystem root; pass --force to restore there", abs)
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	if wd == abs || sameDir(wd, abs) {
+		return fmt.Errorf("refusing --delete on the working directory %s; pass --force to restore there", abs)
+	}
+
+	return nil
+}
+
+func sameDir(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+
+	bi, err := os.Stat(b)
+
+	return err == nil && os.SameFile(ai, bi)
 }
 
 var restoreFlags = []cli.Flag{
@@ -412,7 +457,7 @@ var restoreCmd = cli.Command{
 		},
 		cli.BoolFlag{
 			Name:  "force",
-			Usage: "restore even if a running server holds a session.lock in the target, and allow --delete of an incomplete commit",
+			Usage: "restore even if a running server holds a session.lock in the target, and allow --delete on the working directory, a filesystem root or an incomplete commit",
 		},
 		cli.DurationFlag{
 			Name:  "progress-interval",

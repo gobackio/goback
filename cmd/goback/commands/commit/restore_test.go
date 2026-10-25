@@ -45,6 +45,22 @@ func TestRestoreTarget(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestARestoreDeletesNeitherInTheWorkingDirectoryNorInARoot(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, os.Mkdir("sub", 0o755))
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+
+	require.Error(t, checkDeleteTarget("."))
+	require.Error(t, checkDeleteTarget(wd))
+	require.Error(t, checkDeleteTarget(filepath.Join("sub", "..")))
+	require.Error(t, checkDeleteTarget(filepath.VolumeName(wd)+string(filepath.Separator)))
+	require.NoError(t, checkDeleteTarget("sub"))
+	require.NoError(t, checkDeleteTarget(filepath.Join(wd, "sub")))
+}
+
 type restoreProgressRecord struct {
 	Msg        string `json:"msg"`
 	FilesDone  int64  `json:"files_done"`
