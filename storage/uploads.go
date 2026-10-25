@@ -17,8 +17,15 @@ import (
 // MaxUpload is the largest upload file a store takes.
 const MaxUpload = 1 << 30
 
-// uploadTTL is how long an upload id waits for its file.
-const uploadTTL = time.Hour
+const (
+	// uploadTTL is how long an upload id waits for its file.
+	uploadTTL = time.Hour
+	// uploadPurge is how often BeginUpload forgets the ids that expired.
+	uploadPurge = time.Minute
+	// MaxPendingUploads is how many upload ids one agent may hold that no
+	// file was sent under yet.
+	MaxPendingUploads = 256
+)
 
 // issued is what BeginUpload answered an upload id with.
 type issued struct {
@@ -29,8 +36,10 @@ type issued struct {
 }
 
 type uploads struct {
-	mtx sync.Mutex
-	ids map[string]issued
+	mtx     sync.Mutex
+	ids     map[string]issued
+	pending map[string]int
+	purged  time.Time
 }
 
 // BeginUpload issues the id under which the caller sends SendUpload an
@@ -53,22 +62,49 @@ func (s *Store) BeginUpload(ctx context.Context, size int64) (string, error) {
 	id := rand.Text()
 	now := time.Now()
 
-	s.uploads.mtx.Lock()
-	defer s.uploads.mtx.Unlock()
-
-	if s.uploads.ids == nil {
-		s.uploads.ids = map[string]issued{}
+	if err := s.uploads.issue(id, issued{agent: p.AgentID, session: session, size: size, expires: now.Add(uploadTTL)}, now); err != nil {
+		return "", err
 	}
-
-	for other, up := range s.uploads.ids {
-		if now.After(up.expires) {
-			delete(s.uploads.ids, other)
-		}
-	}
-
-	s.uploads.ids[id] = issued{agent: p.AgentID, session: session, size: size, expires: now.Add(uploadTTL)}
 
 	return id, nil
+}
+
+// issue records up under id, unless its agent holds MaxPendingUploads ids
+// already.
+func (u *uploads) issue(id string, up issued, now time.Time) error {
+	u.mtx.Lock()
+	defer u.mtx.Unlock()
+
+	if u.ids == nil {
+		u.ids, u.pending = map[string]issued{}, map[string]int{}
+	}
+
+	if now.Sub(u.purged) >= uploadPurge {
+		for other, was := range u.ids {
+			if now.After(was.expires) {
+				u.forget(other, was)
+			}
+		}
+
+		u.purged = now
+	}
+
+	if u.pending[up.agent] >= MaxPendingUploads {
+		return fmt.Errorf("%w: %d uploads begun and not sent", ErrInvalidRequest, u.pending[up.agent])
+	}
+
+	u.ids[id] = up
+	u.pending[up.agent]++
+
+	return nil
+}
+
+func (u *uploads) forget(id string, up issued) {
+	delete(u.ids, id)
+
+	if u.pending[up.agent]--; u.pending[up.agent] <= 0 {
+		delete(u.pending, up.agent)
+	}
 }
 
 // SendUpload ingests the upload file r under id, which BeginUpload issued
@@ -155,7 +191,12 @@ func (u *uploads) take(id, agent, session string) (issued, error) {
 	defer u.mtx.Unlock()
 
 	up, ok := u.ids[id]
-	if !ok || time.Now().After(up.expires) {
+	if ok && time.Now().After(up.expires) {
+		u.forget(id, up)
+		ok = false
+	}
+
+	if !ok {
 		return issued{}, fmt.Errorf("upload %s: %w", id, backup.ErrNotFound)
 	}
 
@@ -163,7 +204,7 @@ func (u *uploads) take(id, agent, session string) (issued, error) {
 		return issued{}, fmt.Errorf("%w: upload %s belongs to another session", auth.ErrForbidden, id)
 	}
 
-	delete(u.ids, id)
+	u.forget(id, up)
 
 	return up, nil
 }

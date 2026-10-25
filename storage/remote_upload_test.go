@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage/upload"
@@ -232,4 +233,29 @@ func TestRemoteUploadOfACommitOverWhatTheStoreLacksNamesIt(t *testing.T) {
 	require.Equal(t, gone[0].Hash, failed.Missing[0].Hash)
 	require.Equal(t, gone[1].Hash, failed.Missing[1].Hash)
 	require.Nil(t, failed.Commit)
+}
+
+func TestAnAgentHoldsABoundedNumberOfUploadIDs(t *testing.T) {
+	store := NewStore(newMemIndex(), nil)
+	agent := auth.WithPrincipal(context.Background(), &auth.Principal{AgentID: "node-1"})
+	other := auth.WithPrincipal(context.Background(), &auth.Principal{AgentID: "node-2"})
+
+	var ids []string
+	for range MaxPendingUploads {
+		id, err := store.BeginUpload(agent, 10)
+		require.NoError(t, err)
+		ids = append(ids, id)
+	}
+
+	_, err := store.BeginUpload(agent, 10)
+	require.ErrorIs(t, err, ErrInvalidRequest)
+
+	_, err = store.BeginUpload(other, 10)
+	require.NoError(t, err, "another agent's ids are its own")
+
+	_, err = store.uploads.take(ids[0], "node-1", "")
+	require.NoError(t, err)
+
+	_, err = store.BeginUpload(agent, 10)
+	require.NoError(t, err, "a taken id frees its place")
 }
