@@ -4,10 +4,12 @@ package hooks
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -27,7 +29,8 @@ type Runner struct {
 	Logger *slog.Logger
 }
 
-// RunPre runs the pre hook and returns what it printed to stdout.
+// RunPre runs the pre hook and returns what it printed to stdout: its
+// first 64 KiB, and the last GOBACK_ROOT line after them.
 func (r *Runner) RunPre(ctx context.Context) (string, error) {
 	return r.run(ctx, "pre", r.Pre)
 }
@@ -52,7 +55,7 @@ func (r *Runner) run(ctx context.Context, name, command string) (string, error) 
 
 	r.logger().Info("running hook", "hook", name, "command", command)
 
-	var out bytes.Buffer
+	var out capture
 
 	cmd := shell(ctx, command)
 	cmd.Stdout = io.MultiWriter(&out, r.writer(r.Stdout, os.Stdout))
@@ -62,6 +65,13 @@ func (r *Runner) run(ctx context.Context, name, command string) (string, error) 
 	err := cmd.Run()
 	if ctx.Err() != nil {
 		return out.String(), fmt.Errorf("%s hook: %w", name, ctx.Err())
+	}
+
+	// the shell succeeded, and a child it left running still holds its
+	// output, as one holding a lock for the walk does
+	if errors.Is(err, exec.ErrWaitDelay) {
+		r.logger().Info("the hook left a process holding its output, which is no longer read", "hook", name)
+		err = nil
 	}
 
 	if err != nil {
@@ -77,12 +87,80 @@ func (r *Runner) run(ctx context.Context, name, command string) (string, error) 
 func Redirect(output string) string {
 	dir := ""
 	for _, line := range strings.Split(output, "\n") {
-		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "GOBACK_ROOT="); ok {
-			dir = strings.TrimSpace(value)
+		if value, ok := rootLine(line); ok {
+			dir = value
 		}
 	}
 
 	return dir
+}
+
+func rootLine(line string) (string, bool) {
+	value, ok := strings.CutPrefix(strings.TrimSpace(line), "GOBACK_ROOT=")
+
+	return strings.TrimSpace(value), ok
+}
+
+// captureLimit bounds what a capture keeps besides its last GOBACK_ROOT
+// line.
+const captureLimit = 64 << 10
+
+// capture keeps the lines written to it while they fit in captureLimit, and
+// the last GOBACK_ROOT line once they no longer do.
+type capture struct {
+	kept []byte
+	full bool
+	line []byte
+	root []byte
+}
+
+func (c *capture) Write(p []byte) (int, error) {
+	n := len(p)
+
+	for len(p) > 0 {
+		chunk := p
+		end := bytes.IndexByte(p, '\n')
+		if end >= 0 {
+			chunk = p[:end+1]
+		}
+
+		if room := captureLimit - len(c.line); room > 0 {
+			c.line = append(c.line, chunk[:min(room, len(chunk))]...)
+		}
+
+		p = p[len(chunk):]
+
+		if end >= 0 {
+			c.endLine()
+		}
+	}
+
+	return n, nil
+}
+
+func (c *capture) endLine() {
+	switch {
+	case !c.full && len(c.kept)+len(c.line) <= captureLimit:
+		c.kept = append(c.kept, c.line...)
+	default:
+		c.full = true
+
+		if _, ok := rootLine(string(c.line)); ok {
+			c.root = append(c.root[:0], c.line...)
+		}
+	}
+
+	c.line = c.line[:0]
+}
+
+// String is what the capture kept, the last line included whether or not
+// it ended.
+func (c *capture) String() string {
+	if len(c.line) > 0 {
+		c.endLine()
+	}
+
+	return string(c.kept) + string(c.root)
 }
 
 func (r *Runner) writer(w io.Writer, fallback io.Writer) io.Writer {

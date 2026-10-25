@@ -3,9 +3,11 @@ package hooks
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"os/exec"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +75,40 @@ func TestRedirect(t *testing.T) {
 	require.Equal(t, "", Redirect("saving off\nsaved\n"))
 	require.Equal(t, "/snap/world", Redirect("saving off\n  GOBACK_ROOT=/snap/world  \n"))
 	require.Equal(t, "/snap/b", Redirect("GOBACK_ROOT=/snap/a\r\nGOBACK_ROOT=/snap/b\r\n"))
+}
+
+func TestAPreHookThatLeavesAProcessHoldingItsOutputSucceeds(t *testing.T) {
+	command := "sleep 20 & echo started"
+	if runtime.GOOS == "windows" {
+		command = "start /b ping -n 20 127.0.0.1 & echo started"
+	}
+
+	out, err := (&Runner{Pre: command, Stdout: io.Discard, Stderr: io.Discard}).RunPre(context.Background())
+	require.NoError(t, err)
+	require.Contains(t, out, "started")
+}
+
+func TestACaptureKeepsItsHeadAndTheLastRootLineAfterIt(t *testing.T) {
+	var c capture
+
+	line := strings.Repeat("x", 999) + "\n"
+	for range 100 {
+		_, _ = c.Write([]byte(line))
+	}
+
+	_, _ = c.Write([]byte("GOBACK_ROOT=/snap/a\n" + line + "GOBACK_ROOT=/sn"))
+	_, _ = c.Write([]byte("ap/b\r\n" + line + "no newline"))
+
+	out := c.String()
+	require.LessOrEqual(t, len(out), captureLimit+len("GOBACK_ROOT=/snap/b\r\n"))
+	require.Equal(t, "/snap/b", Redirect(out))
+
+	var early capture
+	_, _ = early.Write([]byte("GOBACK_ROOT=/snap/c\n"))
+	for range 100 {
+		_, _ = early.Write([]byte(line))
+	}
+	require.Equal(t, "/snap/c", Redirect(early.String()))
 }
 
 func TestEmptyHooksAreNoOps(t *testing.T) {
