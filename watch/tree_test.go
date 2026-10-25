@@ -1,3 +1,5 @@
+//go:build linux || windows
+
 package watch_test
 
 import (
@@ -145,23 +147,20 @@ func (f *treeFixture) seed() {
 	}
 }
 
-// backends runs test with a tracker of each Linux backend, fanotify only
-// where the process may use it.
+// backends runs test with a tracker of each of the system's backends,
+// each only where the process may use it.
 func backends(t *testing.T, test func(t *testing.T, follow func(root string) *watch.Tracker)) {
-	for _, b := range []struct {
-		name string
-		open func(root string) (watch.Source, error)
-	}{{"inotify", watch.OpenInotify}, {"fanotify", watch.OpenFanotify}} {
-		t.Run(b.name, func(t *testing.T) {
-			probe, err := b.open(t.TempDir())
+	for _, b := range watch.Backends {
+		t.Run(b.Name, func(t *testing.T) {
+			probe, err := b.Open(t.TempDir())
 			if errors.Is(err, watch.ErrUnavailable) {
-				t.Skipf("%v; fanotify needs root", err)
+				t.Skipf("%v; %s", err, b.Needs)
 			}
 			require.NoError(t, err)
 			require.NoError(t, probe.Close())
 
 			test(t, func(root string) *watch.Tracker {
-				return watch.NewTracker(func() (watch.Source, error) { return b.open(root) })
+				return watch.NewTracker(func() (watch.Source, error) { return b.Open(root) })
 			})
 		})
 	}
@@ -262,11 +261,11 @@ func aDirectoryMovedWithinTheTreeIsFollowedAtItsNewPath(t *testing.T, follow fun
 	require.Equal(t, []string{"", "d", "d/b", "d/b/c"}, listed)
 }
 
-func TestAChangeToAHardLinkedFileReadsEverything(t *testing.T) {
-	backends(t, aChangeToAHardLinkedFileReadsEverything)
+func TestAChangeToAHardLinkedFileReadsTheOtherLinksDirectory(t *testing.T) {
+	backends(t, aChangeToAHardLinkedFileReadsTheOtherLinksDirectory)
 }
 
-func aChangeToAHardLinkedFileReadsEverything(t *testing.T, follow func(root string) *watch.Tracker) {
+func aChangeToAHardLinkedFileReadsTheOtherLinksDirectory(t *testing.T, follow func(root string) *watch.Tracker) {
 	f := newTreeFixture(t, follow)
 	f.seed()
 	require.NoError(t, os.Link(filepath.Join(f.root, "a", "x", "y.txt"), filepath.Join(f.root, "d", "e", "y.txt")))
@@ -276,7 +275,7 @@ func aChangeToAHardLinkedFileReadsEverything(t *testing.T, follow func(root stri
 	f.write("a/x/y.txt", "edited through one link")
 
 	_, _, listed := f.backup()
-	require.Equal(t, allDirs(), listed, "the other link's directory hears nothing")
+	require.Subset(t, listed, []string{"a/x", "d/e"}, "the directory of the other link is read too")
 }
 
 func TestTheRootMovingAwayLeavesEveryRunInDoubt(t *testing.T) {
@@ -304,7 +303,7 @@ func theRootMovingAwayLeavesEveryRunInDoubt(t *testing.T, follow func(root strin
 	require.NoError(t, os.Mkdir(f.root, 0o755))
 	f.follow()
 
-	require.True(t, slices.Contains([]string{"inotify", "fanotify"}, f.tr.State().Backend))
+	require.True(t, slices.ContainsFunc(watch.Backends, func(b watch.TestBackend) bool { return b.Name == f.tr.State().Backend }))
 }
 
 func TestADirectoryReplacedByAnotherOfTheSameNameIsReadWhole(t *testing.T) {

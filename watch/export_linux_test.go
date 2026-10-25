@@ -1,5 +1,14 @@
 package watch
 
-// OpenInotify and OpenFanotify open one backend for the tests.
-func OpenInotify(root string) (Source, error)  { return asSource(openInotify(root)) }
-func OpenFanotify(root string) (Source, error) { return asSource(openFanotify(root)) }
+// TestBackend is a backend the tests run against.
+type TestBackend struct {
+	Name  string
+	Open  func(root string) (Source, error)
+	Needs string
+}
+
+// Backends are the system's backends.
+var Backends = []TestBackend{
+	{"inotify", func(root string) (Source, error) { return asSource(openInotify(root)) }, ""},
+	{"fanotify", func(root string) (Source, error) { return asSource(openFanotify(root)) }, "fanotify needs root"},
+}
