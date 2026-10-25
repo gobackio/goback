@@ -67,6 +67,10 @@ func NewPackStorage(options ...PackOption) (*PackStorage, error) {
 		opts.logger = slog.Default()
 	}
 
+	if opts.maxSize > MaxArchiveSize {
+		return nil, fmt.Errorf("archives of %d bytes, at most %d", opts.maxSize, MaxArchiveSize)
+	}
+
 	if opts.storage == nil {
 		return nil, errors.New("No archive storage provided")
 	}

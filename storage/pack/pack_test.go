@@ -345,3 +345,12 @@ func benchmarkStorage(b *testing.B, store backup.ObjectStore) {
 		}
 	}
 }
+
+func TestArchivesPastWhatTheirOffsetsReachAreRefused(t *testing.T) {
+	_, err := NewPackStorage(WithArchiveStorage(newLocal(t.TempDir())), WithArchiveIndex(NewInMemoryIndex()), WithMaxSize(8<<30))
+	require.Error(t, err)
+
+	store, err := NewPackStorage(WithArchiveStorage(newLocal(t.TempDir())), WithArchiveIndex(NewInMemoryIndex()), WithMaxSize(MaxArchiveSize))
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+}

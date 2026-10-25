@@ -640,6 +640,10 @@ func (a *archive) putVersioned(ctx context.Context, hdr *proto.ObjectHeader, byt
 	hdrBytes = append(proto.EncodeVarint(nil, hdrBytesSize), hdrBytes...)
 	data := append(hdrBytes, bytes...)
 
+	if a.size+uint64(len(data)) > math.MaxUint32 {
+		return errors.Errorf("a record of %d bytes would end past what %s's offsets reach", len(data), a.name)
+	}
+
 	start := time.Now()
 	_, err := a.writeFile.Write(data)
 	if err != nil {

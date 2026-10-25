@@ -139,7 +139,12 @@ func WithMaxParallel(max uint) PackOption {
 	}
 }
 
-// WithMaxSize is the size at which an open archive is finalized.
+// MaxArchiveSize is the largest size WithMaxSize takes: records are found
+// by 32-bit offsets, and the record that fills an archive runs past it.
+const MaxArchiveSize = 2 << 30
+
+// WithMaxSize is the size at which an open archive is finalized, at most
+// MaxArchiveSize.
 func WithMaxSize(max uint64) PackOption {
 	return func(p *packOptions) {
 		p.maxSize = max
