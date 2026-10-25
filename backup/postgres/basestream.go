@@ -9,6 +9,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -27,11 +28,18 @@ type BaseStream struct {
 	Tar io.Reader
 	// Wait reports how the backup ended, once Tar is read to its end.
 	Wait func() error
-	conn *pgconn.PgConn
+
+	tar     *io.PipeReader
+	cancel  context.CancelFunc
+	running *sync.WaitGroup
+	conn    interface{ Close(context.Context) error }
 }
 
 // Close ends the connection, and with it a backup not read to its end.
 func (b *BaseStream) Close() {
+	b.tar.CloseWithError(errors.New("the base backup stream was closed"))
+	b.cancel()
+	b.running.Wait()
 	_ = b.conn.Close(context.Background())
 }
 
@@ -56,13 +64,28 @@ func StartBase(ctx context.Context, connString string) (*BaseStream, error) {
 		return nil, fmt.Errorf("sending BASE_BACKUP: %w", err)
 	}
 
+	return streamBase(ctx, conn), nil
+}
+
+// streamBase reads the response to BASE_BACKUP from conn into a stream.
+func streamBase(ctx context.Context, conn interface {
+	messages
+	Close(context.Context) error
+}) *BaseStream {
+	ctx, cancel := context.WithCancel(ctx)
+
 	archiveR, archiveW := io.Pipe()
 	tarR, tarW := io.Pipe()
 
 	manifests := make(chan []byte, 1)
 	ended := make(chan error, 1)
 
+	running := new(sync.WaitGroup)
+	running.Add(2)
+
 	go func() {
+		defer running.Done()
+
 		manifest, err := readBase(ctx, conn, archiveW)
 		archiveW.CloseWithError(err)
 		manifests <- manifest
@@ -70,6 +93,8 @@ func StartBase(ctx context.Context, connString string) (*BaseStream, error) {
 	}()
 
 	go func() {
+		defer running.Done()
+
 		err := retar(archiveR, tarW, manifests)
 		archiveR.CloseWithError(err)
 		tarW.CloseWithError(err)
@@ -88,8 +113,11 @@ func StartBase(ctx context.Context, connString string) (*BaseStream, error) {
 
 			return result
 		},
-		conn: conn,
-	}, nil
+		tar:     tarR,
+		cancel:  cancel,
+		running: running,
+		conn:    conn,
+	}
 }
 
 // serverMajor reads the major version out of server_version: 17 of

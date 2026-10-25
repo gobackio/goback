@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/stretchr/testify/require"
@@ -150,6 +152,60 @@ func TestABaseBackupErrorEndsTheStream(t *testing.T) {
 
 	_, err := readBase(context.Background(), &s, io.Discard)
 	require.ErrorContains(t, err, "WAL level not sufficient")
+}
+
+// endlessBase streams one tar entry that never ends, and tells whether it
+// was closed while a message was being received.
+type endlessBase struct {
+	header    script
+	receiving atomic.Bool
+	overlap   atomic.Bool
+}
+
+func (e *endlessBase) ReceiveMessage(ctx context.Context) (pgproto3.BackendMessage, error) {
+	e.receiving.Store(true)
+	defer e.receiving.Store(false)
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(e.header) > 0 {
+		return e.header.ReceiveMessage(ctx)
+	}
+
+	return typed('d', string(make([]byte, 4096))), nil
+}
+
+func (e *endlessBase) Close(context.Context) error {
+	e.overlap.Store(e.receiving.Load())
+	return nil
+}
+
+func TestClosingABaseStreamReadPartlyEndsItsReaders(t *testing.T) {
+	var hdr bytes.Buffer
+	require.NoError(t, archive.NewWriter(&hdr).WriteHeader(&archive.Header{Name: "base/1/1", Mode: 0o600, Size: 1 << 40}))
+
+	src := &endlessBase{header: baseResponse(nil, 1)[:8]}
+	src.header = append(src.header, typed('d', hdr.String()))
+
+	stream := streamBase(context.Background(), src)
+
+	_, err := io.ReadFull(stream.Tar, make([]byte, 100_000))
+	require.NoError(t, err)
+
+	stream.Close()
+	require.False(t, src.overlap.Load())
+
+	ended := make(chan error, 1)
+	go func() { ended <- stream.Wait() }()
+
+	select {
+	case err := <-ended:
+		require.Error(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the base backup's reader still runs")
+	}
 }
 
 func TestServerVersionsReadAsTheirMajor(t *testing.T) {
