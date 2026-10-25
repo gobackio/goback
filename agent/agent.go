@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/postgres"
 	"github.com/gobackio/goback/proto"
+	"github.com/gobackio/goback/watch"
 )
 
 // Agent runs tasks on their plans against one store it opens once. It
@@ -51,6 +53,12 @@ type Agent struct {
 	Logger   *slog.Logger
 	// Now is the wall clock; nil is time.Now.
 	Now func() time.Time
+	// Follow returns the tracker of a watched task's directory; nil is
+	// watch.Follow.
+	Follow func(dir string) *watch.Tracker
+	// WatchPoll is how often watched directories are read for changes;
+	// zero is every 10 seconds.
+	WatchPoll time.Duration
 
 	once      sync.Once
 	repo      *goback.Repo
@@ -62,7 +70,10 @@ type Agent struct {
 	controlMu sync.Mutex
 	paused    bool
 	runNow    map[string]bool
-	wake      chan struct{}
+	// changed are the sets of watched tasks that changed since their last
+	// run started
+	changed map[string]bool
+	wake    chan struct{}
 }
 
 func (a *Agent) init() {
@@ -70,6 +81,7 @@ func (a *Agent) init() {
 		a.reloads = make(chan []*Task, 1)
 		a.abort = make(chan struct{})
 		a.runNow = map[string]bool{}
+		a.changed = map[string]bool{}
 		a.wake = make(chan struct{}, 1)
 
 		if a.Open == nil {
@@ -190,9 +202,9 @@ func (a *Agent) control(change func()) {
 	}
 }
 
-// controls returns whether the agent is paused and the tasks asked to run
-// now.
-func (a *Agent) controls() (bool, map[string]bool) {
+// controls returns whether the agent is paused, the tasks asked to run
+// now and the watched sets that changed.
+func (a *Agent) controls() (bool, map[string]bool, map[string]bool) {
 	a.controlMu.Lock()
 	defer a.controlMu.Unlock()
 
@@ -201,13 +213,33 @@ func (a *Agent) controls() (bool, map[string]bool) {
 		asked[name] = true
 	}
 
-	return a.paused, asked
+	changed := make(map[string]bool, len(a.changed))
+	for set := range a.changed {
+		changed[set] = true
+	}
+
+	return a.paused, asked, changed
 }
 
 func (a *Agent) ranNow(name string) {
 	a.controlMu.Lock()
 	delete(a.runNow, name)
 	a.controlMu.Unlock()
+}
+
+func (a *Agent) ranOnChange(set string) {
+	a.controlMu.Lock()
+	delete(a.changed, set)
+	a.controlMu.Unlock()
+}
+
+// onChange is the agent as the watch schedule's Trigger: a watched set
+// that changed runs as soon as it may, unless the agent is paused or the
+// set's last run failed and waits out its backoff.
+type onChange struct{ a *Agent }
+
+func (o onChange) RunNow(set string) {
+	o.a.control(func() { o.a.changed[set] = true })
 }
 
 // Run schedules the tasks until ctx ends, then starts nothing new, gives
@@ -233,15 +265,104 @@ func (a *Agent) Run(ctx context.Context, tasks []*Task) error {
 	defer l.cancelLook()
 	defer close(l.quit)
 
+	l.sched = &watch.Schedule{Store: l.watchStore(), Trigger: onChange{a}, Now: a.now, Logger: a.logger()}
+
 	for _, t := range tasks {
-		l.entries = append(l.entries, newEntry(t))
+		e := newEntry(t)
+		l.watch(e)
+		l.entries = append(l.entries, e)
 	}
 
 	if err := l.writeStatus(); err != nil {
+		l.unwatchAll()
 		return fmt.Errorf("writing the status file: %w", err)
 	}
 
+	poll := a.WatchPoll
+	if poll <= 0 {
+		poll = defaultWatchPoll
+	}
+
+	l.schedDone = make(chan struct{})
+
+	go func() {
+		defer close(l.schedDone)
+		l.sched.Run(l.lookCtx, poll)
+	}()
+
 	return l.run(ctx)
+}
+
+// defaultWatchPoll is how often watched directories are read for changes
+// unless the agent says otherwise.
+const defaultWatchPoll = 10 * time.Second
+
+// WatchFile is the name of the file in the state dir that records each
+// watched set's last run.
+const WatchFile = "watch.json"
+
+func (l *loop) watchStore() watch.Store {
+	if l.a.StateDir == "" {
+		return &watch.MemoryStore{}
+	}
+
+	s, err := watch.OpenFileStore(filepath.Join(l.a.StateDir, WatchFile))
+	if err != nil {
+		l.a.logger().Warn("reading the watched runs failed; every watched backup is read in full once", "error", err)
+		return &watch.MemoryStore{}
+	}
+
+	return s
+}
+
+// watch starts following the directory of e's task when it is watched.
+func (l *loop) watch(e *entry) {
+	w := e.task.Watch
+	if w == nil {
+		return
+	}
+
+	follow := l.a.Follow
+	if follow == nil {
+		follow = watch.Follow
+	}
+
+	e.tracker = follow(w.Dir)
+
+	var from watch.Position
+	if rec, ok, err := l.sched.Store.Load(e.task.Set); err == nil && ok {
+		from = rec.Position
+	}
+
+	if err := e.tracker.Poll(from); err != nil && !errors.Is(err, watch.ErrStarting) {
+		l.a.logger().Info("the directory isn't followed for changes; it is read in full on its plan", "job", e.task.Name, "dir", w.Dir, "reason", err)
+	}
+}
+
+// schedule hands the schedule e's watched task, once its last start is
+// known.
+func (l *loop) schedule(e *entry, last time.Time) {
+	w := e.task.Watch
+
+	l.sched.Watch(e.task.Set, e.tracker, watch.Options{MinGap: w.MinGap, FullReadEvery: w.FullReadEvery, Settings: w.Settings})
+	l.sched.Started(e.task.Set, last)
+}
+
+// unwatch stops following the directory of e's task.
+func (l *loop) unwatch(e *entry) {
+	if e.tracker == nil {
+		return
+	}
+
+	l.sched.Unwatch(e.task.Set)
+	_ = e.tracker.Close()
+	e.tracker = nil
+}
+
+func (l *loop) unwatchAll() {
+	for _, e := range append(l.entries, l.retired...) {
+		l.unwatch(e)
+	}
 }
 
 // entry is a task and what the loop knows about it.
@@ -268,6 +389,9 @@ type entry struct {
 
 	failures       int
 	restartBackoff time.Duration
+
+	// tracker follows a watched task's directory
+	tracker *watch.Tracker
 
 	status JobStatus
 }
@@ -337,6 +461,10 @@ type loop struct {
 	plans  chan []planResult
 	// quit is closed once the loop returned, for the reads still under way.
 	quit chan struct{}
+
+	sched *watch.Schedule
+	// schedDone is closed once the schedule stopped checking
+	schedDone chan struct{}
 
 	dirty     bool
 	lastWrite time.Time
@@ -441,6 +569,9 @@ func (l *loop) run(ctx context.Context) error {
 	// the work after a Serve task's last commit may still run
 	l.afterMu.Lock()
 	l.afterMu.Unlock()
+
+	<-l.schedDone
+	l.unwatchAll()
 
 	if l.env != nil && l.a.Close != nil {
 		l.a.Close(l.env)
@@ -599,6 +730,10 @@ func (l *loop) planned(results []planResult) {
 		e.due = e.task.NextDue(l.a.ID, last, now)
 		l.dirty = true
 
+		if e.tracker != nil {
+			l.schedule(e, last)
+		}
+
 		if commit != nil && commit.GetAgentId() != l.a.ID {
 			l.a.logger().Warn("another agent wrote the set's newest commit; one agent per set", "job", e.task.Name, "set", e.task.Set, "agent", commit.GetAgentId())
 		}
@@ -640,11 +775,12 @@ func (l *loop) start(now time.Time) {
 
 	var due []*entry
 
-	paused, asked := l.a.controls()
+	paused, asked, changed := l.a.controls()
 
 	for _, e := range l.entries {
 		e.waiting, e.blocked = false, false
-		wanted := asked[e.task.Name] && e.task.Serve == nil
+		wanted := asked[e.task.Name] && e.task.Serve == nil ||
+			changed[e.task.Set] && e.tracker != nil && !paused && e.failures == 0
 		delete(asked, e.task.Name)
 
 		if !e.known || e.running || l.overlaps(e) {
@@ -682,6 +818,7 @@ func (l *loop) start(now time.Time) {
 
 		l.launch(e, now)
 		l.a.ranNow(e.task.Name)
+		l.a.ranOnChange(e.task.Set)
 	}
 }
 
@@ -715,12 +852,12 @@ func (l *loop) launch(e *entry, now time.Time) {
 		ctx, cancel = context.WithTimeout(ctx, e.task.Timeout)
 	}
 
-	lastEnd := e.lastEnd
+	lastEnd, tracker := e.lastEnd, e.tracker
 
 	go func() {
 		defer cancel()
 
-		result, err := l.runOnce(ctx, &env, e.task, lastEnd)
+		result, err := l.runOnce(ctx, &env, e.task, lastEnd, tracker)
 		ended := l.a.now()
 
 		l.afterRun(&env)
@@ -732,7 +869,7 @@ func (l *loop) launch(e *entry, now time.Time) {
 // runOnce runs t, turning a panic into an error. It first warns when a
 // commit started after this process's last run ended, which only another
 // writer makes.
-func (l *loop) runOnce(ctx context.Context, env *job.Env, t *Task, lastEnd time.Time) (result *backup.WalkResult, err error) {
+func (l *loop) runOnce(ctx context.Context, env *job.Env, t *Task, lastEnd time.Time, tracker *watch.Tracker) (result *backup.WalkResult, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			env.Logger.Error("the run panicked", "panic", r, "stack", string(debug.Stack()))
@@ -749,7 +886,47 @@ func (l *loop) runOnce(ctx context.Context, env *job.Env, t *Task, lastEnd time.
 		env.Logger.Warn("another writer committed to the set since this agent's last run; one agent per set", "agent", commit.GetAgentId())
 	}
 
-	return t.Run(ctx, env)
+	if t.Watch == nil || tracker == nil {
+		return t.Run(ctx, env)
+	}
+
+	return l.runWatched(ctx, env, t)
+}
+
+// runWatched runs t reading only what changed since its last run, where
+// the schedule can tell.
+func (l *loop) runWatched(ctx context.Context, env *job.Env, t *Task) (result *backup.WalkResult, err error) {
+	latest, err := env.Index.LatestCommit(ctx, t.Set)
+	if errors.Is(err, backup.ErrNotFound) {
+		latest, err = nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("reading the latest commit: %w", err)
+	}
+
+	run := l.sched.Begin(t.Set, latest.GetHash(), nil)
+	l.a.ranOnChange(t.Set)
+
+	if run.Full != "" {
+		env.Logger.Info("reading the whole tree", "reason", run.Full, "detail", run.Detail)
+	}
+
+	defer func() {
+		var commit []byte
+		if result != nil {
+			commit = result.Ref.GetHash()
+			if commit == nil {
+				commit = result.Base.GetHash()
+			}
+		}
+
+		if endErr := l.sched.End(run, commit, err); endErr != nil {
+			env.Logger.Warn("recording the watched run failed; the next run reads the whole tree", "error", endErr)
+		}
+	}()
+
+	return t.Watch.Run(ctx, env, run.Unchanged)
 }
 
 // afterCommit runs AfterRun after a Serve task's commit, unless one still
@@ -1011,7 +1188,7 @@ func (l *loop) reload(tasks []*Task) {
 		old[e.task.Name] = e
 	}
 
-	var next []*entry
+	var next, fresh []*entry
 
 	var added, changed, removed []string
 
@@ -1031,12 +1208,18 @@ func (l *loop) reload(tasks []*Task) {
 			added = append(added, t.Name)
 		}
 
-		next = append(next, newEntry(t))
+		e = newEntry(t)
+		next = append(next, e)
+		fresh = append(fresh, e)
 	}
 
 	for _, e := range old {
 		removed = append(removed, e.task.Name)
 		l.retire(e)
+	}
+
+	for _, e := range fresh {
+		l.watch(e)
 	}
 
 	sort.Strings(removed)
@@ -1049,6 +1232,7 @@ func (l *loop) reload(tasks []*Task) {
 
 func (l *loop) retire(e *entry) {
 	e.retired = true
+	l.unwatch(e)
 
 	if e.running {
 		e.closeStop()
@@ -1097,7 +1281,7 @@ func (l *loop) state() string {
 		return AgentStarting
 	}
 
-	if paused, _ := l.a.controls(); paused {
+	if paused, _, _ := l.a.controls(); paused {
 		return AgentPaused
 	}
 

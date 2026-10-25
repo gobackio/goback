@@ -131,7 +131,25 @@ type PathBackup struct {
 	HookOptional         bool              `yaml:"hook-optional"`
 	VSS                  bool              `yaml:"vss"`
 	DownloadPlaceholders bool              `yaml:"download-placeholders"`
+	// Watch is WatchAuto, which follows Dir for changes where the system
+	// can, so a run reads only what changed and a change starts one, or
+	// WatchOff.
+	Watch string `yaml:"watch"`
+	// MinGap is the least time from a run's start to a run on change.
+	MinGap time.Duration `yaml:"min-gap"`
+	// FullReadEvery is how often a watched backup reads everything anyway.
+	FullReadEvery time.Duration `yaml:"full-read-every"`
 }
+
+// The watch settings of a path backup.
+const (
+	WatchAuto = "auto"
+	WatchOff  = "off"
+)
+
+// watchedEvery is how often a watched path backup without a plan of its
+// own runs while nothing changes.
+const watchedEvery = 24 * time.Hour
 
 // UnmarshalYAML fills in commit new's defaults before decoding. It takes
 // the decoder's own unmarshal, which keeps unknown keys an error.
@@ -144,6 +162,9 @@ func (p *PathBackup) UnmarshalYAML(unmarshal func(any) error) error {
 		LostRetries:        1,
 		ProgressInterval:   backup.DefaultProgressInterval,
 		HookTimeout:        5 * time.Minute,
+		Watch:              WatchAuto,
+		MinGap:             5 * time.Minute,
+		FullReadEvery:      7 * 24 * time.Hour,
 	}
 
 	type plain PathBackup
@@ -158,8 +179,18 @@ func (p *PathBackup) validate(b *Backup) []error {
 		errs = append(errs, errors.New("path.dir is required"))
 	}
 
-	if b.Every == 0 && b.Cron == "" {
-		errs = append(errs, errors.New("a path backup needs every or cron"))
+	switch p.Watch {
+	case WatchAuto:
+	case WatchOff:
+		if b.Every == 0 && b.Cron == "" {
+			errs = append(errs, errors.New("a path backup with watch off needs every or cron"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("path.watch is %q; set auto or off", p.Watch))
+	}
+
+	if p.MinGap <= 0 || p.FullReadEvery <= 0 {
+		errs = append(errs, errors.New("path.min-gap and path.full-read-every must be positive"))
 	}
 
 	return errs
@@ -187,9 +218,32 @@ func (p *PathBackup) tasks(b *Backup) []*Task {
 		InitialRetention:     b.initialRetention(nil),
 	}
 
-	return []*Task{b.fullTask("path", b.Name, "", settings.InitialRetention, func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
+	t := b.fullTask("path", b.Name, "", settings.InitialRetention, func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
 		return job.Path(ctx, env, settings)
-	})}
+	})
+
+	if p.Watch == WatchOff {
+		return []*Task{t}
+	}
+
+	if t.Plan == nil {
+		t.Plan = Every(watchedEvery)
+	}
+
+	t.Watch = &Watch{
+		Dir:           p.Dir,
+		MinGap:        p.MinGap,
+		FullReadEvery: p.FullReadEvery,
+		Settings:      fmt.Sprintf("include=%q exclude=%q download-placeholders=%t", p.Include, p.Exclude, p.DownloadPlaceholders),
+		Run: func(ctx context.Context, env *job.Env, unchanged func(rel string) bool) (*backup.WalkResult, error) {
+			s := settings
+			s.Unchanged = unchanged
+
+			return job.Path(ctx, env, s)
+		},
+	}
+
+	return []*Task{t}
 }
 
 // PostgresBackup backs up a Postgres cluster: base backups and, with

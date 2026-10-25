@@ -63,6 +63,33 @@ backups:
 	}, got)
 }
 
+func TestAPathBackupIsWatchedUnlessItSaysOff(t *testing.T) {
+	cfg, err := decode(t, `
+backups:
+  - {name: world, path: {dir: /srv/world, exclude: ["/logs/**"]}}
+  - {name: mods, cron: "0 4 * * *", path: {dir: /srv/mods, min-gap: 1m, full-read-every: 48h}}
+  - {name: etc, every: 1h, path: {dir: /etc, watch: off}}
+`)
+	require.NoError(t, err)
+
+	tasks := cfg.Tasks()
+
+	world := tasks[0]
+	require.Equal(t, "every 24h0m0s", world.Plan.String(), "a watched backup without a plan runs daily while nothing changes")
+	require.Equal(t, "/srv/world", world.Watch.Dir)
+	require.Equal(t, 5*time.Minute, world.Watch.MinGap)
+	require.Equal(t, 7*24*time.Hour, world.Watch.FullReadEvery)
+
+	mods := tasks[1]
+	require.Equal(t, "cron 0 4 * * *", mods.Plan.String())
+	require.Equal(t, time.Minute, mods.Watch.MinGap)
+	require.Equal(t, 48*time.Hour, mods.Watch.FullReadEvery)
+	require.NotEqual(t, world.Watch.Settings, mods.Watch.Settings, "the filters are part of the settings")
+
+	require.Nil(t, tasks[2].Watch)
+	require.Equal(t, "every 1h0m0s", tasks[2].Plan.String())
+}
+
 func TestDecodeNestsNamesInGroups(t *testing.T) {
 	cfg, err := decode(t, `
 backups:
@@ -126,8 +153,12 @@ backups: [{name: w, every: 1h, path: {dir: /w}}]`,
 backups: [{name: db, postgres: {pitr: false, dbname: "host=db password=hunter2"}}]`,
 		"a password in a dbname url": `
 backups: [{name: db, postgres: {pitr: false, dbname: "postgres://u:hunter2@db/x"}}]`,
-		"a path backup without a schedule": `
-backups: [{name: w, path: {dir: /w}}]`,
+		"an unwatched path backup without a schedule": `
+backups: [{name: w, path: {dir: /w, watch: off}}]`,
+		"an unknown watch setting": `
+backups: [{name: w, path: {dir: /w, watch: sometimes}}]`,
+		"no gap after a change": `
+backups: [{name: w, path: {dir: /w, min-gap: 0s}}]`,
 		"every and cron": `
 backups: [{name: w, every: 1h, cron: "0 3 * * *", path: {dir: /w}}]`,
 		"a cron time zone": `
@@ -227,7 +258,7 @@ backups:
 func TestDecodeReportsEveryProblem(t *testing.T) {
 	_, err := decode(t, `
 backups:
-  - {name: a, path: {dir: /a}}
+  - {name: a, path: {dir: /a, watch: off}}
   - {name: b, postgres: {commit-every: 1s}}
 `)
 	require.Error(t, err)

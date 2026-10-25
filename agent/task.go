@@ -48,6 +48,27 @@ type Task struct {
 	Spec  string
 	Run   RunFunc
 	Serve ServeFunc
+	// Watch, set on a task with a Run, follows a directory for changes:
+	// the agent runs the task through Watch.Run, reading only what changed
+	// where it can, and also once something changed and Watch.MinGap has
+	// passed since its last run started.
+	Watch *Watch
+}
+
+// Watch is how a task follows its directory for changes.
+type Watch struct {
+	Dir string
+	// MinGap is the least time from a run's start to a run on change.
+	MinGap time.Duration
+	// FullReadEvery is how often a run reads everything anyway; zero never.
+	FullReadEvery time.Duration
+	// Settings fingerprints what besides the tree decides what a run reads,
+	// such as its filters.
+	Settings string
+	// Run runs the task once, taking the directories unchanged reports
+	// from the set's latest commit, as job.PathSettings.Unchanged; a nil
+	// unchanged reads everything.
+	Run func(ctx context.Context, env *job.Env, unchanged func(rel string) bool) (*backup.WalkResult, error)
 }
 
 // NextDue is when the task runs next on agent, given when its last run
