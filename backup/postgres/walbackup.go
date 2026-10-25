@@ -42,6 +42,10 @@ type OpenSegment struct {
 	Path string
 	// Size is how much of it holds whole records.
 	Size int64
+	// ModTime, when set, is recorded as its modification time: the time of
+	// the last transaction commit or abort it holds, as a whole segment's
+	// is.
+	ModTime time.Time
 }
 
 // maxBases bounds the base backups read to find the cutoff.
@@ -190,7 +194,7 @@ func (b *WALBackup) growing(spooled, held []string) []backup.Growing {
 	var growing []backup.Growing
 
 	if b.Open != nil {
-		growing = append(growing, backup.Growing{Name: b.Open.Name + partialSuffix, Path: b.Open.Path, Size: b.Open.Size})
+		growing = append(growing, backup.Growing{Name: b.Open.Name + partialSuffix, Path: b.Open.Path, Size: b.Open.Size, ModTime: b.Open.ModTime})
 	}
 
 	for _, name := range spooled {

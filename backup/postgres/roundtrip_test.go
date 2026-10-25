@@ -178,7 +178,7 @@ func stopInWAL(t *testing.T, content []byte, start string) uint64 {
 	lsn, err := ParseLSN(start)
 	require.NoError(t, err)
 
-	ends := &backupEnd{}
+	ends := &walScan{}
 	entries := tar.NewReader(&endOfArchive{r: bytes.NewReader(content)})
 	for {
 		hdr, err := entries.Next()

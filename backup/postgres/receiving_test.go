@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -50,7 +51,7 @@ func TestTheOpenSegmentIsWrittenInPlaceAndCutAtTheLastMessage(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, c.files, "the open segment is not in the spool")
 	require.Equal(t, uint64(segSize+150), c.end)
-	require.Equal(t, &OpenSegment{Name: walName(1, 1), Path: filepath.Join(spool.Dir, receivingDir, walName(1, 1)), Size: 150}, c.open)
+	require.Equal(t, &OpenSegment{Name: walName(1, 1), Path: filepath.Join(spool.Dir, receivingDir, walName(1, 1)), Size: 150, ModTime: time.Unix(0, 0)}, c.open)
 
 	content, err := os.ReadFile(c.open.Path)
 	require.NoError(t, err)
@@ -164,4 +165,37 @@ func TestATimelineSwitchClosesTheOpenSegmentAsPartial(t *testing.T) {
 	c, err := w.cut()
 	require.NoError(t, err)
 	require.Equal(t, walName(2, 0), c.open.Name)
+}
+
+func TestASegmentIsStampedWithTheTimeOfItsLastTransaction(t *testing.T) {
+	var w walWriter
+
+	at := time.Date(2026, 10, 24, 11, 0, 0, 0, time.UTC)
+
+	w.xact(xactCommit, at.Add(-time.Minute))
+	w.record(0x10, make([]byte, 300))
+	w.xact(xactCommit, at)
+	w.record(0x10, make([]byte, 400))
+	open := w.lsn()
+	w.record(0x10, make([]byte, 600))
+
+	spool := Spool{Dir: t.TempDir()}
+	sw, err := newSegmentWriter(spool, testSegSize, 1, testSegStart)
+	require.NoError(t, err)
+	t.Cleanup(sw.stop)
+
+	require.NoError(t, sw.write(testSegStart, w.wal))
+
+	files, err := spool.Files()
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+
+	info, err := os.Stat(filepath.Join(spool.Dir, files[0]))
+	require.NoError(t, err)
+	require.True(t, at.Equal(info.ModTime()), info.ModTime())
+
+	c, err := sw.cut()
+	require.NoError(t, err)
+	require.Greater(t, c.end, open)
+	require.True(t, at.Equal(c.open.ModTime), "the open segment holds no transaction of its own")
 }

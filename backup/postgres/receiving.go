@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // receivingDir is the spool's directory for the segment being received;
@@ -12,8 +13,9 @@ const receivingDir = ".receiving"
 
 // segmentWriter writes streamed WAL into its segment under the spool's
 // receiving directory, and moves each segment into the spool once it is
-// whole. Streaming starts at a segment's start, so a segment is always
-// written from its first byte.
+// whole, its mtime the time of the last transaction commit or abort in it
+// or before it, or the Unix epoch before any. Streaming starts at a
+// segment's start, so a segment is always written from its first byte.
 type segmentWriter struct {
 	spool    Spool
 	segSize  uint64
@@ -22,6 +24,10 @@ type segmentWriter struct {
 	file  *os.File
 	name  string
 	start uint64
+	// scan reads the records of the WAL written, seg those of the open
+	// segment
+	scan *walScan
+	seg  *walSegment
 	// written is the end of the WAL written so far: the write position
 	written uint64
 
@@ -45,7 +51,7 @@ func newSegmentWriter(spool Spool, segSize uint64, timeline uint32, from uint64)
 		return nil, err
 	}
 
-	return &segmentWriter{spool: spool, segSize: segSize, timeline: timeline, written: from}, nil
+	return &segmentWriter{spool: spool, segSize: segSize, timeline: timeline, written: from, scan: &walScan{}}, nil
 }
 
 func (s Spool) receiving() string {
@@ -72,6 +78,8 @@ func (w *segmentWriter) write(lsn uint64, data []byte) error {
 			return err
 		}
 
+		_, _ = w.seg.Write(data[:n])
+
 		data = data[n:]
 		w.written += n
 
@@ -95,8 +103,25 @@ func (w *segmentWriter) open() error {
 	}
 
 	w.file = file
+	w.seg = w.scan.segment(w.name)
 
 	return nil
+}
+
+// walTime is the time of the last transaction commit or abort written, or
+// the Unix epoch before any.
+func (w *segmentWriter) walTime() time.Time {
+	if w.scan.xactTime.IsZero() {
+		return time.Unix(0, 0)
+	}
+
+	return w.scan.xactTime
+}
+
+// stamp sets the mtime of the segment at path to walTime.
+func (w *segmentWriter) stamp(path string) error {
+	at := w.walTime()
+	return os.Chtimes(path, at, at)
 }
 
 func (w *segmentWriter) path(name string) string {
@@ -116,6 +141,10 @@ func (w *segmentWriter) close(name string) error {
 	}
 
 	w.file = nil
+
+	if err == nil {
+		err = w.stamp(w.path(w.name))
+	}
 
 	if err != nil {
 		return err
@@ -146,6 +175,8 @@ func (w *segmentWriter) switchTimeline(timeline uint32, from uint64) error {
 
 	w.timeline = timeline
 	w.written = from - from%w.segSize
+	// the new timeline's WAL starts again at a segment's start
+	w.scan = &walScan{xactTime: w.scan.xactTime}
 
 	return nil
 }
@@ -172,7 +203,7 @@ func (w *segmentWriter) cut() (*cut, error) {
 		}
 
 		if size := w.written - w.start; size >= longPageHeaderLen {
-			c.open = &OpenSegment{Name: w.name, Path: w.path(w.name), Size: int64(size)}
+			c.open = &OpenSegment{Name: w.name, Path: w.path(w.name), Size: int64(size), ModTime: w.walTime()}
 			w.held = w.name
 		} else {
 			c.end = w.start

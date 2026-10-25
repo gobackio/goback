@@ -43,7 +43,7 @@ func (b *BaseBackup) Run(ctx context.Context, tar io.Reader, wait func() error) 
 		"global/pg_control": nil,
 	}
 
-	ends := &backupEnd{}
+	ends := &walScan{}
 
 	w.Stream = &backup.Stream{
 		Tar: &endOfArchive{r: tar},
@@ -120,7 +120,7 @@ func (b *BaseBackup) previous(ctx context.Context) (uint64, error) {
 // describe reads what a base backup records about itself out of the files
 // that hold it. Before Postgres 13 there is no backup_manifest, and where
 // the backup stopped is read from the WAL it holds.
-func describe(files map[string]*bytes.Buffer, ends *backupEnd) (BaseInfo, error) {
+func describe(files map[string]*bytes.Buffer, ends *walScan) (BaseInfo, error) {
 	var info BaseInfo
 
 	for _, name := range []string{"backup_label", "global/pg_control"} {

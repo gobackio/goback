@@ -103,7 +103,8 @@ func (r *Restore) copyWAL(ctx context.Context, dir string, base *proto.Commit, w
 // order recovery reads them: every timeline history, then every segment
 // from the segment start on that lies on h, the history of the tree's
 // newest timeline, and the partial segment the tree serves. With until
-// set, the segments end one after the first that closed at or after it.
+// set, the segments end one after the first whose mtime, the time of the
+// last transaction commit or abort in it, is at or after it.
 func (t *commitFiles) copies(h history, start string, until time.Time) []int {
 	var histories, segments []int
 

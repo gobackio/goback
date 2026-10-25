@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -54,9 +55,14 @@ func (w *walWriter) pageHeader(rest int) {
 // record appends an XLOG record of info with data, and returns where it
 // ends.
 func (w *walWriter) record(info byte, data []byte) uint64 {
+	return w.recordOf(rmXLOG, info, data)
+}
+
+// recordOf appends a record of the resource manager rm.
+func (w *walWriter) recordOf(rm, info byte, data []byte) uint64 {
 	rec := make([]byte, recordHeaderLen, recordHeaderLen+len(data))
 	binary.LittleEndian.PutUint32(rec, uint32(recordHeaderLen+len(data)))
-	rec[16] = info
+	rec[16], rec[17] = info, rm
 	rec = append(rec, data...)
 
 	for rest := 0; len(rec) > 0; rest = len(rec) {
@@ -83,6 +89,16 @@ func (w *walWriter) backupEnd(start uint64) uint64 {
 	return w.record(xlogBackupEnd, data)
 }
 
+// xact appends a transaction record of op at the time at, its main data
+// headed by headers, and padded.
+func (w *walWriter) xact(op byte, at time.Time, headers ...byte) uint64 {
+	data := append(headers, blockIDDataShort, 16)
+	data = binary.LittleEndian.AppendUint64(data, uint64(at.Sub(postgresEpoch)/time.Microsecond))
+	data = append(data, make([]byte, 8)...)
+
+	return w.recordOf(rmXact, op, data)
+}
+
 func (w *walWriter) fill(upTo uint64) {
 	for w.lsn() < upTo {
 		if w.lsn()%testPageSize == 0 {
@@ -93,7 +109,7 @@ func (w *walWriter) fill(upTo uint64) {
 	}
 }
 
-func scan(t *testing.T, ends *backupEnd, name string, wal []byte) {
+func scan(t *testing.T, ends *walScan, name string, wal []byte) {
 	t.Helper()
 
 	segment := ends.segment(name)
@@ -120,7 +136,7 @@ func TestTheEndOfABackupIsFoundAcrossPagesAndSwitches(t *testing.T) {
 	stop := w.backupEnd(start)
 	w.fill(testSegStart + 2*testSegSize)
 
-	ends := &backupEnd{}
+	ends := &walScan{}
 	scan(t, ends, "000000010000000000000003", w.wal[:testSegSize])
 	scan(t, ends, "000000010000000000000004", w.wal[testSegSize:])
 
@@ -139,7 +155,7 @@ func TestWALThatSkipsASegmentEndsTheSearch(t *testing.T) {
 	w.backupEnd(start)
 	w.fill(testSegStart + 3*testSegSize)
 
-	ends := &backupEnd{}
+	ends := &walScan{}
 	scan(t, ends, "000000010000000000000003", w.wal[:testSegSize])
 	scan(t, ends, "000000010000000000000005", w.wal[2*testSegSize:])
 
@@ -153,7 +169,7 @@ func TestAPageSizeThatIsNoPowerOfTwoEndsTheSearch(t *testing.T) {
 	binary.LittleEndian.PutUint32(page[32:], 42000)
 	binary.LittleEndian.PutUint32(page[36:], 42)
 
-	ends := &backupEnd{}
+	ends := &walScan{}
 	scan(t, ends, "000000010000000000000001", page)
 
 	require.True(t, ends.done)
@@ -165,8 +181,26 @@ func TestTheEndOfABackupIsWhatPostgresReports(t *testing.T) {
 		wal, err := os.ReadFile(file)
 		require.NoError(t, err)
 
-		ends := &backupEnd{}
+		ends := &walScan{}
 		scan(t, ends, "000000010000000000000003", wal)
 		require.Equal(t, map[uint64]uint64{0x3000028: stop}, ends.stops, file)
 	}
+}
+
+func TestTheTimeOfTheLastTransactionIsRead(t *testing.T) {
+	var w walWriter
+
+	at := time.Date(2026, 10, 24, 11, 0, 0, 123000, time.UTC)
+
+	w.xact(xactCommit, at.Add(-time.Hour))
+	w.record(0x10, make([]byte, 300))
+	w.xact(xactAbort, at.Add(-time.Minute), blockIDOrigin, 1, 0, blockIDTopLevelXid, 7, 0, 0, 0)
+	w.xact(xactCommitPrepared, at)
+	w.xact(0x10, at.Add(time.Hour))
+	w.fill(testSegStart + testSegSize)
+
+	scanned := &walScan{}
+	scan(t, scanned, "000000010000000000000003", w.wal)
+
+	require.True(t, at.Equal(scanned.xactTime), scanned.xactTime)
 }
