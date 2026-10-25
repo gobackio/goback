@@ -298,3 +298,24 @@ func TestRepairFindsTheRepairerBeneathWrappingStores(t *testing.T) {
 	require.Equal(t, lost, report.Lost)
 	require.Nil(t, damage, "an index that records no damage records none")
 }
+
+type fakeResealer struct {
+	backup.ObjectStore
+	report *pack.ResealReport
+}
+
+func (f *fakeResealer) Reseal(context.Context, pack.KeyOpener) (*pack.ResealReport, error) {
+	return f.report, nil
+}
+
+func TestResealFindsTheResealerBeneathWrappingStores(t *testing.T) {
+	ctx := context.Background()
+
+	_, err := Reseal(ctx, &fakeArchives{}, nil)
+	require.ErrorIs(t, err, errors.ErrUnsupported)
+
+	want := &pack.ResealReport{Current: 1}
+	report, err := Reseal(ctx, wrapping{&fakeResealer{report: want}}, nil)
+	require.NoError(t, err)
+	require.Same(t, want, report)
+}

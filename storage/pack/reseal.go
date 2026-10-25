@@ -76,9 +76,9 @@ func (r *ResealReport) Summary() string {
 // takes over its pins, trash state and head, tombstoning the old one for a
 // collection to drop. A commit it cannot reseal is reported and left as it
 // was; a stopped run carries on when run again. Rebuild the index from the
-// store afterwards. It fails while a published plan waits for its rewrite,
-// and while another process maintains the store it does nothing and sets
-// Busy.
+// store afterwards, into an empty database. It fails while a published plan
+// waits for its rewrite, and while another process maintains the store it
+// does nothing and sets Busy.
 func (ps *PackStorage) Reseal(ctx context.Context, keys KeyOpener) (*ResealReport, error) {
 	if _, ok := backup.SessionFromContext(ctx); ok {
 		return nil, errors.New("a reseal runs outside a session")

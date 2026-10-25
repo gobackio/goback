@@ -20,6 +20,7 @@ import (
 	"github.com/gobackio/goback/cmd/goback/commands/pin"
 	"github.com/gobackio/goback/cmd/goback/commands/postgres"
 	"github.com/gobackio/goback/cmd/goback/commands/repair"
+	"github.com/gobackio/goback/cmd/goback/commands/reseal"
 	"github.com/gobackio/goback/cmd/goback/commands/scrub"
 	"github.com/gobackio/goback/cmd/goback/commands/server"
 	"github.com/gobackio/goback/cmd/goback/commands/set"
@@ -87,6 +88,7 @@ func main() {
 		pin.Command,
 		postgres.Command,
 		repair.Command,
+		reseal.Command,
 		scrub.Command,
 		server.Command,
 		set.Command,
