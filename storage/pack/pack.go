@@ -127,7 +127,6 @@ func NewPackStorage(options ...PackOption) (*PackStorage, error) {
 type PackStorage struct {
 	archiveSemaphore *semaphore.Weighted
 	escrowMtx        sync.Mutex
-	plains           plainCache
 	storage          ArchiveStorage
 	compaction       CompactionConfig
 	maxSize          uint64
@@ -265,11 +264,6 @@ func (ps *PackStorage) HasAll(ctx context.Context, refs []*proto.Ref) ([]bool, e
 // un-tombstones and its copies, short of the archives other processes have
 // open.
 func (ps *PackStorage) holds(scope Scope, ref *proto.Ref, tombs, untombs, copies []IndexLocation) (bool, error) {
-	return ps.holdsCopy(scope, ref, tombs, untombs, copies, false)
-}
-
-// holdsCopy is holds, counting only verified copies when verified says so.
-func (ps *PackStorage) holdsCopy(scope Scope, ref *proto.Ref, tombs, untombs, copies []IndexLocation, verified bool) (bool, error) {
 	bound, err := ps.tombstoneBound(tombs, untombs)
 	if err != nil {
 		return false, err
@@ -281,27 +275,19 @@ func (ps *PackStorage) holdsCopy(scope Scope, ref *proto.Ref, tombs, untombs, co
 			return false, err
 		}
 
-		if a == nil || bound != nil && !a.newerThan(loc.Record, *bound) {
+		if a == nil {
 			continue
 		}
 
-		if !verified {
+		if bound == nil || a.newerThan(loc.Record, *bound) {
 			return true, nil
-		}
-
-		if plain, err := ps.plain(a, &loc.Record); err != nil || plain {
-			return plain, err
 		}
 	}
 
 	if ws := ps.lookupWriteSession(scope.Session); ws != nil {
 		ws.pendingMtx.RLock()
-		p, pending := ws.pending[string(ref.Hash)]
+		_, pending := ws.pending[string(ref.Hash)]
 		ws.pendingMtx.RUnlock()
-
-		if pending && verified {
-			return ps.plain(p.archive, p.record)
-		}
 
 		if pending {
 			return true, nil
@@ -381,9 +367,8 @@ func (ps *PackStorage) committedCopy(scope Scope, ref *proto.Ref, liveOnly bool,
 	}
 }
 
-// committedCopies is committedCopy for each of refs from one lookup,
-// preferring a copy of a blob the store verified; a ref without such a
-// copy has a nil archive.
+// committedCopies is committedCopy for each of refs from one lookup; a ref
+// without such a copy has a nil archive.
 func (ps *PackStorage) committedCopies(scope Scope, refs []*proto.Ref, liveOnly bool) ([]*archive, []*IndexRecord, error) {
 	archives := make([]*archive, len(refs))
 	records := make([]*IndexRecord, len(refs))
@@ -398,12 +383,8 @@ func (ps *PackStorage) committedCopies(scope Scope, refs []*proto.Ref, liveOnly 
 	}
 
 	for i, ref := range refs {
-		var live []*archive
-		var at []*IndexRecord
-
-		copies := found[string(ref.Hash)]
-		for j := range copies {
-			a, err := ps.archiveByName(copies[j].Archive)
+		for _, loc := range found[string(ref.Hash)] {
+			a, err := ps.archiveByName(loc.Archive)
 			if err != nil && !errors.Is(err, errArchiveRetired) {
 				return nil, nil, err
 			}
@@ -412,16 +393,9 @@ func (ps *PackStorage) committedCopies(scope Scope, refs []*proto.Ref, liveOnly 
 				continue
 			}
 
-			live, at = append(live, a), append(at, &copies[j].Record)
+			archives[i], records[i] = a, &loc.Record
 
-			// only a blob may have a sealed copy to pass over
-			if proto.ObjectType(copies[j].Record.Type) != proto.ObjectType_BLOB {
-				break
-			}
-		}
-
-		if len(live) > 0 {
-			archives[i], records[i] = ps.preferPlain(live, at)
+			break
 		}
 	}
 
@@ -640,10 +614,6 @@ func (ps *PackStorage) write(ctx context.Context, object *proto.Object) (*writeS
 	ws, err := ps.writeSessionFor(ctx)
 	if err != nil {
 		return nil, err
-	}
-
-	if err := ps.refuseShadow(ctx, object); err != nil {
-		return ws, err
 	}
 
 	var (
@@ -1012,26 +982,10 @@ func (ps *PackStorage) get(ctx context.Context, ref *proto.Ref) (*proto.Object, 
 
 	// the cache answers only for what the index serves this caller, so
 	// it never outlives a deletion or reaches past a scope
-	obj := ps.getCache(ctx, ref)
-	if obj == nil {
-		if obj, err = ps.readCopy(ctx, archive, rec, ref); err != nil {
-			return nil, err
-		}
+	if cached := ps.getCache(ctx, ref); cached != nil {
+		return cached, nil
 	}
 
-	if obj.GetSealed() == nil {
-		return obj, nil
-	}
-
-	verified, at, err := ps.verifiedCopy(ScopeOf(ctx), ref, archive, rec)
-	if err != nil || verified == nil {
-		return obj, err
-	}
-
-	return ps.readCopy(ctx, verified, at, ref)
-}
-
-func (ps *PackStorage) readCopy(ctx context.Context, archive *archive, rec *IndexRecord, ref *proto.Ref) (*proto.Object, error) {
 	archive.mtx.RLock()
 	needClose := !archive.readOnly && ps.closeBeforeRead
 	archive.mtx.RUnlock()

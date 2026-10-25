@@ -131,14 +131,7 @@ func (s *Store) Put(ctx context.Context, up Upload) (*Receipt, error) {
 			return nil, fmt.Errorf("%w: assumed refs are only accepted for file objects", ErrInvalidRequest)
 		}
 
-		// a file written in the clear relies only on parts the store
-		// verified, never on a sealed copy forged under a part's ref
-		lookUp := backup.MissingVerified
-		if len(object.KeyId) > 0 {
-			lookUp = backup.Missing
-		}
-
-		missing, err := lookUp(ctx, s.Index, up.Assumed)
+		missing, err := backup.Missing(ctx, s.Index, up.Assumed)
 		if err != nil {
 			return nil, err
 		}
@@ -287,18 +280,6 @@ func (s *Store) Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, e
 	}
 
 	return backup.Missing(ctx, s.Index, refs)
-}
-
-var _ backup.VerifiedBatcher = (*Store)(nil)
-
-// MissingVerified is Missing counting only the copies the store verified,
-// as backup.MissingVerified does.
-func (s *Store) MissingVerified(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error) {
-	if len(refs) > MaxMissingRefs {
-		return nil, fmt.Errorf("%w: %d refs in one call, at most %d", ErrInvalidRequest, len(refs), MaxMissingRefs)
-	}
-
-	return backup.MissingVerified(ctx, s.Index, refs)
 }
 
 // putObjectsWorkers bounds the objects one PutObjects call stores at once.
