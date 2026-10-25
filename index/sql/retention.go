@@ -138,7 +138,10 @@ func (x *Index) evaluateSet(ctx context.Context, tx *ent.Tx, setID int64, now ti
 	}
 
 	keep := make(map[string][][]byte)
-	var retire [][]byte
+	var (
+		retire  [][]byte
+		changed []int
+	)
 
 	for i, d := range retention.Evaluate(commits, cfg.policy, now) {
 		row := rows[i]
@@ -153,6 +156,24 @@ func (x *Index) evaluateSet(ctx context.Context, tx *ent.Tx, setID int64, now ti
 			keep[by] = append(keep[by], row.Ref)
 		case row.RetireAt == nil:
 			retire = append(retire, row.Ref)
+		default:
+			continue
+		}
+
+		changed = append(changed, row.ID)
+	}
+
+	// the rows change under locks taken in id order, the order
+	// writeTombstones takes them in, so the two never wait on each other
+	if x.locking {
+		slices.Sort(changed)
+
+		err := inBatches(changed, func(ids []int) error {
+			_, err := c.CommitRow.Query().Where(commitrow.IDIn(ids...)).Order(ent.Asc(commitrow.FieldID)).ForUpdate().IDs(ctx)
+			return err
+		})
+		if err != nil {
+			return err
 		}
 	}
 
@@ -245,10 +266,8 @@ func (x *Index) SetPolicy(ctx context.Context, name string, p *retention.Policy)
 		return err
 	}
 
-	var setID int64
-
-	err = x.policyTx(ctx, func(tx *ent.Tx) (*proto.Policy, error) {
-		setID, err = findSet(ctx, tx.Client(), name)
+	return x.policyTx(ctx, func(tx *ent.Tx) (*proto.Policy, error) {
+		setID, _, err := x.lockOwnSet(ctx, tx, name)
 		if err != nil {
 			return nil, err
 		}
@@ -265,13 +284,10 @@ func (x *Index) SetPolicy(ctx context.Context, name string, p *retention.Policy)
 			return nil, err
 		}
 
-		return setScope(s, time.Time{}), nil
+		// in the change's transaction, so no retirement acts on the old
+		// policy's verdicts once the new one is stored
+		return setScope(s, time.Time{}), x.evaluateSet(ctx, tx, setID, x.now())
 	})
-	if err != nil {
-		return err
-	}
-
-	return x.reevaluateSet(ctx, setID)
 }
 
 func (x *Index) encodePolicy(p *retention.Policy) (*string, error) {
