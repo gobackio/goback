@@ -204,6 +204,9 @@ type Walker struct {
 	descriptors *descriptors
 	// emptyFile stores the empty file once a run, for placeholders
 	emptyFile func() (*proto.Ref, error)
+	// local is the root a walk of the local disk lists and opens what it
+	// reads in, where the platform has one
+	local *os.Root
 	// outside is the run's context outside any session, and session the
 	// context of the session it writes in now, which a checkpoint renews
 	outside, session context.Context
@@ -489,6 +492,15 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 		workers = DefaultScanWorkers
 	}
 
+	// a root that cannot be opened is listed by path, which reports why
+	w.local = nil
+	if isLocal(w.fs()) && w.Stream == nil {
+		if root, err := openLocalRoot(w.Root); err == nil && root != nil {
+			w.local = root
+			defer root.Close()
+		}
+	}
+
 	w.scan = newScanner(ctx, w, max(workers, 0), w.ScanWindow)
 	defer w.scan.close()
 
@@ -525,7 +537,7 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 			return nil, err
 		}
 	} else {
-		nodes, changed, err = w.walkDir(ctx, w.Root, "", nil, baseNodes, true)
+		nodes, changed, err = w.walkDir(ctx, w.Root, "", nil, nil, baseNodes, true)
 		if err != nil {
 			return nil, err
 		}
@@ -784,9 +796,10 @@ func (w *Walker) included(rel string) bool {
 }
 
 // walkDir compares one directory with its base nodes and returns the new
-// node list and whether it differs from the base. parent is the token of
-// the directory, nil for the root and in a plaintext store.
-func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, base []*proto.TreeNode, root bool) ([]*proto.TreeNode, bool, error) {
+// node list and whether it differs from the base. listed is the stat its
+// parent's listing took of it, nil for the root; parent is the token of the
+// directory, nil for the root and in a plaintext store.
+func (w *Walker) walkDir(ctx context.Context, dir, rel string, listed os.FileInfo, parent []byte, base []*proto.TreeNode, root bool) ([]*proto.TreeNode, bool, error) {
 	found := w.scan.take(scanJob{dir: dir, rel: rel})
 	if err := found.err; err != nil {
 		if !root && vanished(err) {
@@ -806,6 +819,10 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 		}
 
 		return nil, false, fmt.Errorf("listing %s: %w", dir, err)
+	}
+
+	if listed != nil && found.self != nil && !os.SameFile(listed, found.self) {
+		return nil, false, fmt.Errorf("%w: %s is no longer the directory listed", errVanished, dir)
 	}
 
 	entries := found.entries
@@ -956,7 +973,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 			atomic.AddInt64(&w.result.Bytes, info.Size())
 			index := i
 
-			if w.reusable(ctx, childPath, childRel, info, stat, baseNode) {
+			if w.reusable(ctx, childPath, childRel, found.self, info, stat, baseNode) {
 				atomic.AddInt64(&w.result.Reused, 1)
 				if err := w.metadata(ctx, childPath, childRel, stat, baseNode); err != nil {
 					return nil, false, err
@@ -975,7 +992,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 			group.Go(func() error {
 				defer w.gate.Done()
 
-				node, err := w.backupFile(fileCtx, childPath, childRel, info, baseNode)
+				node, err := w.backupFile(fileCtx, childPath, childRel, found.self, info, baseNode)
 				if err != nil {
 					return err
 				}
@@ -1100,7 +1117,7 @@ func (w *Walker) walkSubdir(ctx context.Context, base []*proto.TreeNode) ([]*pro
 		inner = tree.Nodes
 	}
 
-	children, innerChanged, err := w.walkDir(ctx, w.Root, "", token, inner, true)
+	children, innerChanged, err := w.walkDir(ctx, w.Root, "", nil, token, inner, true)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1145,7 +1162,7 @@ func (w *Walker) walkChildDir(ctx context.Context, dir, rel string, token []byte
 		}
 	}
 
-	children, childChanged, err := w.walkDir(ctx, dir, rel, token, baseChildren, false)
+	children, childChanged, err := w.walkDir(ctx, dir, rel, info, token, baseChildren, false)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1182,8 +1199,9 @@ func (w *Walker) sample() bool {
 
 // reusable applies the change test: same metadata as the base node, older
 // than the base run, not contradicted by the stat cache, and not picked for
-// a sampled re-hash.
-func (w *Walker) reusable(ctx context.Context, path, rel string, info os.FileInfo, stat *proto.FileInfo, baseNode *proto.TreeNode) bool {
+// a sampled re-hash. parent is the stat of the directory listed, nil when
+// the FS tells none.
+func (w *Walker) reusable(ctx context.Context, path, rel string, parent, info os.FileInfo, stat *proto.FileInfo, baseNode *proto.TreeNode) bool {
 	if w.Verify || baseNode == nil || baseNode.Stat.GetType() != proto.NodeType_NODE_FILE || baseNode.Ref == nil {
 		return false
 	}
@@ -1210,7 +1228,7 @@ func (w *Walker) reusable(ctx context.Context, path, rel string, info os.FileInf
 	}
 
 	if w.ForceHashPercent > 0 && w.traits.Reread && w.sample() {
-		ref, err := HashFileFS(ctx, w.fs(), path, w.Key)
+		ref, err := w.hashListed(ctx, path, rel, parent)
 		if err != nil || !ref.Equal(baseNode.Ref) {
 			w.logger().Info("sampled re-hash differs from the recorded version, reading the file", "path", path)
 			return false
@@ -1221,8 +1239,9 @@ func (w *Walker) reusable(ctx context.Context, path, rel string, info os.FileInf
 }
 
 // backupFile reads a file into blobs, retrying when the file changes under
-// the read, and falls back to the base node when it cannot be read.
-func (w *Walker) backupFile(ctx context.Context, path, rel string, info os.FileInfo, baseNode *proto.TreeNode) (*proto.TreeNode, error) {
+// the read, and falls back to the base node when it cannot be read. parent
+// is the stat of the directory listed, nil when the FS tells none.
+func (w *Walker) backupFile(ctx context.Context, path, rel string, parent, info os.FileInfo, baseNode *proto.TreeNode) (*proto.TreeNode, error) {
 	known := w.knownParts(ctx, rel, baseNode)
 	forced := map[string]struct{}{}
 
@@ -1235,7 +1254,8 @@ func (w *Walker) backupFile(ctx context.Context, path, rel string, info os.FileI
 	var err error
 
 	for attempt := 0; ; attempt++ {
-		ref, err = w.readFile(ctx, path, known, forced)
+		var read os.FileInfo
+		ref, read, err = w.readFile(ctx, path, rel, parent, info, known, forced)
 
 		var changed *fileChangedError
 		if errors.As(err, &changed) {
@@ -1258,8 +1278,11 @@ func (w *Walker) backupFile(ctx context.Context, path, rel string, info os.FileI
 			break
 		}
 
+		info = read
+
+		// a file replaced by anything else after the read keeps the read
 		after, statErr := w.fs().Lstat(ctx, path)
-		if statErr != nil || (after.Size() == info.Size() && after.ModTime().Equal(info.ModTime())) {
+		if statErr != nil || !after.Mode().IsRegular() || (after.Size() == info.Size() && after.ModTime().Equal(info.ModTime())) {
 			break
 		}
 
@@ -1308,19 +1331,21 @@ func (w *Walker) backupFile(ctx context.Context, path, rel string, info os.FileI
 	return &proto.TreeNode{Stat: stat, Ref: ref}, nil
 }
 
-// readFile chunks and stores one file. forced refs are uploaded even when
-// known or the filters say the store has them; a nil forced map disables
-// the filters and known altogether.
-func (w *Walker) readFile(ctx context.Context, path string, known map[string]struct{}, forced map[string]struct{}) (*proto.Ref, error) {
-	file, err := w.fs().Open(ctx, path)
+// readFile chunks and stores the file listed as listed, returning its ref
+// and the stat of what it read: listed, or the file that has taken its
+// place in the directory since. forced refs are uploaded even when known or
+// the filters say the store has them; a nil forced map disables the filters
+// and known altogether.
+func (w *Walker) readFile(ctx context.Context, path, rel string, parent, listed os.FileInfo, known map[string]struct{}, forced map[string]struct{}) (*proto.Ref, os.FileInfo, error) {
+	file, info, err := w.open(ctx, path, rel, parent)
 	if err != nil {
-		return nil, entryFailed(fmt.Errorf("opening %s: %w", path, err))
+		return nil, nil, err
 	}
 	defer file.Close()
 
-	info, err := file.Stat()
-	if err != nil {
-		return nil, entryFailed(fmt.Errorf("stat %s: %w", path, err))
+	current := listed
+	if parent != nil && !os.SameFile(listed, info) {
+		current = info
 	}
 
 	writer := newFileWriter(ctx, w.Objects, w.Key, info.Size())
@@ -1341,26 +1366,73 @@ func (w *Walker) readFile(ctx context.Context, path string, known map[string]str
 	_, err = io.Copy(writer, read)
 	if err != nil {
 		if read.err != nil {
-			return nil, entryFailed(fmt.Errorf("reading %s: %w", path, err))
+			return nil, nil, entryFailed(fmt.Errorf("reading %s: %w", path, err))
 		}
 
-		return nil, fmt.Errorf("storing %s: %w", path, err)
+		return nil, nil, fmt.Errorf("storing %s: %w", path, err)
 	}
 
 	err = writer.Close()
 	if err != nil {
 		var changed *fileChangedError
 		if errors.As(err, &changed) {
-			return nil, err
+			return nil, nil, err
 		}
 
-		return nil, fmt.Errorf("storing %s: %w", path, err)
+		return nil, nil, fmt.Errorf("storing %s: %w", path, err)
 	}
 
 	atomic.AddInt64(&w.result.Assumed, int64(len(writer.assumed)))
 	atomic.AddInt64(&w.result.Repaired, int64(writer.repaired))
 
-	return writer.Ref(), nil
+	return writer.Ref(), current, nil
+}
+
+// open opens the file at path, rel in the walk, to read and returns it
+// with its stat. In the walk's local root, given the stat of the directory
+// listed as parent, it opens the file in that directory without following
+// a symlink or waiting on a FIFO there. Whatever it opens must still be a
+// file.
+func (w *Walker) open(ctx context.Context, path, rel string, parent os.FileInfo) (File, os.FileInfo, error) {
+	var (
+		file File
+		err  error
+	)
+
+	if w.local != nil && parent != nil {
+		file, err = openIn(w.local, rel, path, parent)
+	} else {
+		file, err = w.fs().Open(ctx, path)
+	}
+
+	if err != nil {
+		return nil, nil, entryFailed(fmt.Errorf("opening %s: %w", path, err))
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, entryFailed(fmt.Errorf("stat %s: %w", path, err))
+	}
+
+	if info.Mode()&(os.ModeDir|os.ModeSymlink|os.ModeNamedPipe|os.ModeSocket|os.ModeDevice) != 0 {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("%w: %s is no longer a file", errVanished, path)
+	}
+
+	return file, info, nil
+}
+
+// hashListed is HashFileFS for the file listed at path, opened as open
+// does.
+func (w *Walker) hashListed(ctx context.Context, path, rel string, parent os.FileInfo) (*proto.Ref, error) {
+	file, info, err := w.open(ctx, path, rel, parent)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return hashOpened(ctx, file, info, w.Key)
 }
 
 // entryFailed classes a failure to open or read one file: errVanished when
@@ -1368,6 +1440,8 @@ func (w *Walker) readFile(ctx context.Context, path string, known map[string]str
 // and err itself otherwise.
 func entryFailed(err error) error {
 	switch {
+	case errors.Is(err, errVanished):
+		return err
 	case vanished(err):
 		return fmt.Errorf("%w: %v", errVanished, err)
 	case entryError(err):
@@ -1596,15 +1670,18 @@ func HashFileFS(ctx context.Context, fsys FS, path string, key *storekey.Key) (*
 		return nil, err
 	}
 
+	return hashOpened(ctx, file, info, key)
+}
+
+// hashOpened is HashFileFS for a file already open, whose stat is info.
+func hashOpened(ctx context.Context, file File, info os.FileInfo, key *storekey.Key) (*proto.Ref, error) {
 	writer := newFileWriter(ctx, discardStore{}, key, info.Size())
 
-	_, err = io.Copy(writer, contentReader(file, info))
-	if err != nil {
+	if _, err := io.Copy(writer, contentReader(file, info)); err != nil {
 		return nil, err
 	}
 
-	err = writer.Close()
-	if err != nil {
+	if err := writer.Close(); err != nil {
 		return nil, err
 	}
 

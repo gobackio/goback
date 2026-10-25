@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/proto"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,6 +23,7 @@ import (
 type hookFS struct {
 	LocalFS
 	beforeOpen    func(path string)
+	beforeLstat   func(path string)
 	beforeReadDir func(dir string)
 	afterReadDir  func(dir string)
 	// failRead and failReadDir hold the error every read of a file, or
@@ -53,6 +56,14 @@ type failingFile struct {
 }
 
 func (f failingFile) Read([]byte) (int, error) { return 0, f.err }
+
+func (h *hookFS) Lstat(ctx context.Context, path string) (os.FileInfo, error) {
+	if h.beforeLstat != nil {
+		h.beforeLstat(path)
+	}
+
+	return h.LocalFS.Lstat(ctx, path)
+}
 
 func (h *hookFS) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
 	h.calls.Add(1)
@@ -215,4 +226,26 @@ func TestAFailedWalkStopsItsReadAheadBeforeItReturns(t *testing.T) {
 	_, err := f.walker.Run(context.Background())
 	require.ErrorContains(t, err, "the medium is gone")
 	require.Zero(t, fsys.listing.Load(), "no listing is under way once the run returned")
+}
+
+func TestAFileReplacedByASymlinkWhileItIsReadKeepsTheRead(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.write("conf.txt", []byte("setting=1"))
+
+	other := filepath.Join(t.TempDir(), "other.txt")
+	require.NoError(t, os.WriteFile(other, []byte("elsewhere"), 0o644))
+
+	if err := os.Symlink(other, filepath.Join(t.TempDir(), "probe")); err != nil {
+		t.Skip("symlinks cannot be made here:", err)
+	}
+
+	conf := filepath.Join(f.root, "conf.txt")
+	f.walker.FS = &hookFS{beforeLstat: firstAt(conf, func() {
+		assert.NoError(t, os.Remove(conf))
+		assert.NoError(t, os.Symlink(other, conf))
+	})}
+
+	result := f.run()
+	require.Equal(t, proto.NodeType_NODE_FILE, f.tree(result.Commit.Tree)["conf.txt"].Stat.Type)
+	require.Equal(t, "setting=1", f.content(result.Commit.Tree, "conf.txt"))
 }

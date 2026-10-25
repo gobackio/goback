@@ -4,15 +4,21 @@ package backup
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"os/user"
+	"path"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
 	"github.com/gobackio/goback/proto"
+
+	"golang.org/x/sys/unix"
 )
 
 // IsPermissionError reports whether an open or list failed for lack of access.
@@ -105,6 +111,115 @@ var localTraits = Traits{Identity: true, Reread: true}
 
 func localReadDir(dir string) ([]os.DirEntry, error) {
 	return os.ReadDir(dir)
+}
+
+// openLocalRoot opens dir, the root of a walk on the local disk, as the
+// os.Root the walk lists and opens everything in.
+func openLocalRoot(dir string) (*os.Root, error) {
+	return os.OpenRoot(dir)
+}
+
+// listIn lists the directory at rel in root sorted by name, each entry
+// stat'ed relative to the directory listed rather than by path, and
+// returns that directory's stat.
+func listIn(root *os.Root, rel string) ([]os.DirEntry, os.FileInfo, error) {
+	dir, err := openDirIn(root, rel)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer dir.Close()
+
+	self, err := dir.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+
+	return entries, self, nil
+}
+
+// openDirIn opens the directory at rel in root without waiting on a FIFO
+// there. It fails with errVanished when rel, or a directory on the way to
+// it, is no longer a directory.
+func openDirIn(root *os.Root, rel string) (*os.File, error) {
+	if rel == "" {
+		rel = "."
+	}
+
+	dir, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_DIRECTORY, 0)
+	if err != nil && !vanished(err) && !entryError(err) && moved(root, rel) {
+		return nil, fmt.Errorf("%w: %v", errVanished, err)
+	}
+
+	return dir, err
+}
+
+// moved reports whether rel, or a directory on the way to it, is no longer
+// a directory in root, as when one is now a symlink leading out of it.
+func moved(root *os.Root, rel string) bool {
+	prefix := ""
+
+	for _, part := range strings.Split(rel, "/") {
+		prefix = path.Join(prefix, part)
+
+		info, err := root.Lstat(prefix)
+		if err == nil && !info.IsDir() {
+			return true
+		}
+	}
+
+	return false
+}
+
+// openIn opens the file at rel in root to read, found at full on the disk,
+// without following a symlink there or waiting on a FIFO, in the directory
+// listed as parent. It fails with errVanished when rel's directory is no
+// longer that one or the file is now a symlink.
+func openIn(root *os.Root, rel, full string, parent os.FileInfo) (File, error) {
+	dir, err := openDirIn(root, path.Dir(rel))
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+
+	self, err := dir.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if !os.SameFile(self, parent) {
+		return nil, fmt.Errorf("%w: the directory of %s is no longer the one listed", errVanished, full)
+	}
+
+	var fd int
+	for {
+		fd, err = unix.Openat(int(dir.Fd()), path.Base(rel), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
+		if !errors.Is(err, unix.EINTR) {
+			break
+		}
+	}
+
+	// FreeBSD refuses a symlink with EMLINK
+	if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EMLINK) {
+		return nil, fmt.Errorf("%w: %s is now a symlink", errVanished, full)
+	}
+
+	if err != nil {
+		return nil, &os.PathError{Op: "openat", Path: full, Err: err}
+	}
+
+	if err := unix.SetNonblock(fd, false); err != nil {
+		_ = unix.Close(fd)
+		return nil, &os.PathError{Op: "fcntl", Path: full, Err: err}
+	}
+
+	return os.NewFile(uintptr(fd), full), nil
 }
 
 // recordPlatform adds what a stat holds beyond the portable fields, which

@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path"
 	"sync"
@@ -34,8 +35,10 @@ type scanEntry struct {
 }
 
 // scanned is one directory's entries, or the error listing it produced.
+// self is the stat of the directory listed, where the FS tells it.
 type scanned struct {
 	entries []scanEntry
+	self    os.FileInfo
 	err     error
 }
 
@@ -332,12 +335,23 @@ func (s *scanner) take(job scanJob) *scanned {
 // never stops short, because a truncated listing reads as a directory that
 // lost the rest of its entries.
 func (s *scanner) list(job scanJob) *scanned {
-	entries, err := s.fs.ReadDir(s.ctx, job.dir)
+	var (
+		entries []fs.DirEntry
+		self    os.FileInfo
+		err     error
+	)
+
+	if root := s.walker.local; root != nil {
+		entries, self, err = listIn(root, job.rel)
+	} else {
+		entries, err = s.fs.ReadDir(s.ctx, job.dir)
+	}
+
 	if err != nil {
 		return &scanned{err: err}
 	}
 
-	found := &scanned{entries: make([]scanEntry, len(entries))}
+	found := &scanned{entries: make([]scanEntry, len(entries)), self: self}
 
 	for i, entry := range entries {
 		name := entry.Name()
