@@ -18,6 +18,7 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/postgres"
+	"github.com/gobackio/goback/proto"
 )
 
 // Agent runs tasks on their plans against one store it opens once. It
@@ -220,10 +221,17 @@ func (a *Agent) Run(ctx context.Context, tasks []*Task) error {
 		started: a.now(),
 		done:    make(chan finished),
 		events:  make(chan commitEvent),
+		opens:   make(chan openResult),
+		plans:   make(chan []planResult),
+		quit:    make(chan struct{}),
 	}
 
 	l.runCtx, l.cancelRuns = context.WithCancel(auth.WithPrincipal(context.WithoutCancel(ctx), &auth.Principal{AgentID: a.ID}))
 	defer l.cancelRuns()
+
+	l.lookCtx, l.cancelLook = context.WithCancel(l.runCtx)
+	defer l.cancelLook()
+	defer close(l.quit)
 
 	for _, t := range tasks {
 		l.entries = append(l.entries, newEntry(t))
@@ -300,6 +308,8 @@ type loop struct {
 	started time.Time
 
 	env         *job.Env
+	opening     bool
+	planning    bool
 	openAt      time.Time
 	openBackoff time.Duration
 
@@ -314,10 +324,18 @@ type loop struct {
 
 	runCtx     context.Context
 	cancelRuns context.CancelFunc
+	// lookCtx is what the loop's own reads of the store run under; it ends
+	// once the agent stops.
+	lookCtx    context.Context
+	cancelLook context.CancelFunc
 	afterMu    sync.Mutex
 
 	done   chan finished
 	events chan commitEvent
+	opens  chan openResult
+	plans  chan []planResult
+	// quit is closed once the loop returned, for the reads still under way.
+	quit chan struct{}
 
 	dirty     bool
 	lastWrite time.Time
@@ -386,6 +404,10 @@ func (l *loop) run(ctx context.Context) error {
 			l.finish(f)
 		case c := <-l.events:
 			l.committed(c)
+		case o := <-l.opens:
+			l.opened(o)
+		case p := <-l.plans:
+			l.planned(p)
 		case <-l.a.wake:
 			l.dirty = true
 		case tasks := <-l.a.reloads:
@@ -436,6 +458,7 @@ func (l *loop) run(ctx context.Context) error {
 func (l *loop) stop() <-chan time.Time {
 	l.stopping = true
 	l.dirty = true
+	l.cancelLook()
 
 	for _, e := range append(l.entries, l.retired...) {
 		e.closeStop()
@@ -446,45 +469,117 @@ func (l *loop) stop() <-chan time.Time {
 	return time.After(l.a.Grace)
 }
 
-// connect opens the store when it isn't open and its retry is due.
+// connect starts opening the store when it isn't open and its retry is
+// due; opened takes in the result.
 func (l *loop) connect(now time.Time) {
-	if l.env != nil || now.Before(l.openAt) {
+	if l.env != nil || l.opening || now.Before(l.openAt) {
 		return
 	}
 
-	env, err := l.a.Open(l.runCtx)
-	if err != nil {
+	l.opening = true
+
+	go func() {
+		env, err := l.a.Open(l.lookCtx)
+
+		select {
+		case l.opens <- openResult{env: env, err: err}:
+		case <-l.quit:
+			if env != nil && l.a.Close != nil {
+				l.a.Close(env)
+			}
+		}
+	}()
+}
+
+type openResult struct {
+	env *job.Env
+	err error
+}
+
+func (l *loop) opened(o openResult) {
+	l.opening = false
+	now := l.a.now()
+
+	if o.err != nil {
 		l.openBackoff = double(l.openBackoff, storeRetryFirst, storeRetryMax)
 		l.openAt = now.Add(l.openBackoff)
-		l.a.logger().Warn("opening the store failed", "error", err, "retry", l.openBackoff)
+		l.a.logger().Warn("opening the store failed", "error", o.err, "retry", l.openBackoff)
 
 		return
 	}
 
-	l.env = env
+	if l.stopping {
+		if l.a.Close != nil {
+			l.a.Close(o.env)
+		}
+
+		return
+	}
+
+	l.env = o.env
 	l.dirty = true
 }
 
-// plan reads each new task's last run from the store, retrying with
-// backoff, and works out when it is due.
+// plan starts reading the last run of each new task whose retry is due from
+// the store, one after another; planned takes in the results together.
 func (l *loop) plan(now time.Time) {
-	if l.env == nil {
+	if l.env == nil || l.planning {
 		return
 	}
 
+	var pending []*entry
+
 	for _, e := range l.entries {
-		if e.known || now.Before(e.planAt) {
-			continue
+		if !e.known && !now.Before(e.planAt) {
+			pending = append(pending, e)
+		}
+	}
+
+	if len(pending) == 0 {
+		return
+	}
+
+	l.planning = true
+	index := l.env.Index
+
+	go func() {
+		results := make([]planResult, len(pending))
+
+		for i, e := range pending {
+			ctx, cancel := context.WithTimeout(l.lookCtx, time.Minute)
+			last, commit, err := LastRun(ctx, index, e.task.Set, now)
+			cancel()
+
+			results[i] = planResult{e: e, last: last, commit: commit, err: err}
 		}
 
-		ctx, cancel := context.WithTimeout(l.runCtx, time.Minute)
-		last, commit, err := LastRun(ctx, l.env.Index, e.task.Set, now)
-		cancel()
+		select {
+		case l.plans <- results:
+		case <-l.quit:
+		}
+	}()
+}
 
-		if err != nil {
+type planResult struct {
+	e      *entry
+	last   time.Time
+	commit *proto.Commit
+	err    error
+}
+
+// planned takes in the last runs plan read and works out when each task is
+// due, retrying with backoff where reading failed.
+func (l *loop) planned(results []planResult) {
+	l.planning = false
+	now := l.a.now()
+
+	for _, p := range results {
+		e, last, commit := p.e, p.last, p.commit
+
+		if p.err != nil {
 			e.planBackoff = double(e.planBackoff, storeRetryFirst, storeRetryMax)
 			e.planAt = now.Add(e.planBackoff)
-			l.a.logger().Warn("reading the last run failed", "job", e.task.Name, "set", e.task.Set, "error", err, "retry", e.planBackoff)
+			l.a.logger().Warn("reading the last run failed", "job", e.task.Name, "set", e.task.Set, "error", p.err, "retry", e.planBackoff)
 
 			continue
 		}

@@ -487,6 +487,28 @@ func TestAnAgentThatNeverOpensItsStoreBecomesUnhealthy(t *testing.T) {
 	})
 }
 
+func TestAStoreThatHangsOnOpenHoldsNeitherTheStatusNorTheStop(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.a.StateDir = t.TempDir()
+		h.a.Open = func(ctx context.Context) (*job.Env, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+
+		h.run(h.fake("w", Every(time.Hour), 0, nil))
+
+		time.Sleep(3*time.Minute + time.Second)
+
+		status, err := ReadStatus(h.a.StateDir)
+		require.NoError(t, err)
+		require.LessOrEqual(t, h.a.now().Sub(status.UpdatedAt), maxSleep, "the heartbeat goes on")
+
+		h.stop()
+		require.Equal(t, 3*time.Minute+time.Second, h.since(), "the stop waits for no open")
+	})
+}
+
 func TestADatabaseShutdownRestartsTheReceiverWithoutAFailure(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t)
