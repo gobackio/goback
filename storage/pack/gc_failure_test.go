@@ -247,3 +247,34 @@ func TestACollectionWithoutItsStateContinuesTheGenerations(t *testing.T) {
 	require.EqualValues(t, 3, report.Generation)
 	requireStored(t, store, reachable, true)
 }
+
+func TestACheckBeforeASweepThatFailsLeavesNoRuns(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	reachable, unreachable := makeGCTestData(t)
+	putAll(t, store, append(append([]*proto.Object{}, reachable...), unreachable...))
+
+	_, err := store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+
+	defer func() { gcAfterBatch = nil }()
+
+	// the second mark of the generation is the check's
+	marks := 0
+	interrupted := errors.New("interrupted")
+	gcAfterBatch = func(int) error {
+		if marks++; marks == 2 {
+			return interrupted
+		}
+		return nil
+	}
+
+	opts := gcOptions(t, 48*time.Hour)
+	_, err = store.Collect(ctx, opts)
+	require.ErrorIs(t, err, interrupted)
+
+	_, err = os.Stat(filepath.Join(opts.TempDir, "goback-gc-check", "goback-gc", "gen-2"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}

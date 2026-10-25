@@ -75,12 +75,18 @@ func (r *gcRun) confirmDrops(ctx context.Context) error {
 		return err
 	}
 
+	// the generation is stored by now, so no later check resumes this one
+	defer func() {
+		if check.runDir != "" {
+			_ = os.RemoveAll(check.runDir)
+		}
+	}()
+
 	live, err := check.mark(ctx)
 	if err != nil {
 		return err
 	}
 	defer live.close()
-	defer os.RemoveAll(check.runDir)
 
 	dropped := make(map[refKey][]string)
 	kept := make(map[refKey]bool)
