@@ -277,7 +277,36 @@ func (f *fixture) references(ctx context.Context, ref *proto.Ref) bool {
 func (f *fixture) reachable(ref *proto.Ref, sets ...string) bool {
 	ok, err := f.x.Reachable(f.ctx, sets, ref)
 	require.NoError(f.t, err)
+
+	all, err := f.x.ReachableAll(f.ctx, sets, []*proto.Ref{{Hash: []byte("unknown")}, ref, ref})
+	require.NoError(f.t, err)
+	require.Equal(f.t, []bool{false, ok, ok}, all, "a batch answers as one ref at a time")
+
 	return ok
+}
+
+func TestReachableAllAnswersMoreRefsAndSetsThanOneStatementBinds(t *testing.T) {
+	f := newFixture(t)
+	root := f.tree(f.file("a.txt", "one"))
+	f.commit("world", root, false)
+
+	refs := make([]*proto.Ref, pastBindLimit)
+	for i := range refs {
+		refs[i] = &proto.Ref{Hash: []byte(fmt.Sprint(i))}
+	}
+	refs[len(refs)-1] = root.Ref()
+
+	sets := make([]string, pastBindLimit)
+	for i := range sets {
+		sets[i] = fmt.Sprint("set-", i)
+	}
+	sets[len(sets)-1] = "world"
+
+	reachable, err := f.x.ReachableAll(f.ctx, sets, refs)
+	require.NoError(t, err)
+	require.Len(t, reachable, len(refs))
+	require.False(t, reachable[0])
+	require.True(t, reachable[len(refs)-1])
 }
 
 func TestSetRefsFollowCommits(t *testing.T) {

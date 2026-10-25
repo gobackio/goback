@@ -1525,6 +1525,38 @@ func (x *Index) Reachable(ctx context.Context, sets []string, ref *proto.Ref) (b
 	return x.client.SetRef.Query().Where(setref.Ref(ref.GetHash()), setref.HasSetWith(set.NameIn(sets...))).Exist(ctx)
 }
 
+// ReachableAll answers Reachable for each of refs, in the order given, in
+// a query per batch.
+func (x *Index) ReachableAll(ctx context.Context, sets []string, refs []*proto.Ref) ([]bool, error) {
+	found := make(map[string]bool)
+
+	for names := range slices.Chunk(sets, objectBatch) {
+		err := inBatches(refHashes(refs), func(batch [][]byte) error {
+			var rows []struct {
+				Ref []byte `json:"ref"`
+			}
+
+			err := x.client.SetRef.Query().Where(setref.RefIn(batch...), setref.HasSetWith(set.NameIn(names...))).
+				Unique(true).Select(setref.FieldRef).Scan(ctx, &rows)
+			for _, row := range rows {
+				found[string(row.Ref)] = true
+			}
+
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	reachable := make([]bool, len(refs))
+	for i, ref := range refs {
+		reachable[i] = found[string(ref.GetHash())]
+	}
+
+	return reachable, nil
+}
+
 // liveCommit is the condition under which a commits row is offered.
 func liveCommit() predicate.CommitRow {
 	return commitrow.And(commitrow.TombstonedAtIsNil(), commitrow.RetireAtIsNil(), commitrow.DeletedAtIsNil())
