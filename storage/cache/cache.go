@@ -104,6 +104,18 @@ func (s *Store) Keep(ctx context.Context, obj *proto.Object) {
 	}
 }
 
+// Kept implements backup.Keeper: a copy of ref is kept here, or by the
+// wrapped store where it is a Keeper.
+func (s *Store) Kept(ref *proto.Ref) bool {
+	if _, ok := s.cache.Get(ref); ok {
+		return true
+	}
+
+	keeper, ok := s.wrapped.(backup.Keeper)
+
+	return ok && keeper.Kept(ref)
+}
+
 // GetTree serves the tree at ref and its splits from the copies when it
 // holds them all, and otherwise forwards to the wrapped store's prefetch,
 // if it has one, keeping what it fetched. Trees below are left to later

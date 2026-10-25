@@ -56,12 +56,13 @@ type PresenceSource interface {
 	Presence(ctx context.Context, set string) (presence.Set, error)
 }
 
-// Confirmer stores a file object once the store holds every part the
-// caller assumed; otherwise it stores nothing and names the missing refs.
+// Confirmer stores a file or tree object once the store holds every part
+// or split the caller assumed it holds and did not send; otherwise it
+// stores nothing and names the missing refs.
 type Confirmer interface {
-	// PutFile stores obj when every assumed ref is held; otherwise it
+	// PutAssuming stores obj when every assumed ref is held; otherwise it
 	// returns the refs that are not.
-	PutFile(ctx context.Context, obj *proto.Object, assumed []*proto.Ref) (missing []*proto.Ref, err error)
+	PutAssuming(ctx context.Context, obj *proto.Object, assumed []*proto.Ref) (missing []*proto.Ref, err error)
 }
 
 // Batcher is a store that answers about many refs, and takes many objects,

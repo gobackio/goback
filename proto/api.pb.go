@@ -139,8 +139,9 @@ type PutRequest struct {
 	Object *Stored                `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
 	// the ref the client computed for object; the server rejects a mismatch
 	Ref *Ref `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
-	// for a file object: part refs the client did not upload because it
-	// assumes the store holds them; the server confirms them before storing
+	// for a file or tree object: the parts or splits the client did not
+	// upload because it assumes the store holds them; the server confirms
+	// them before storing
 	AssumedRefs   []*Ref `protobuf:"bytes,3,rep,name=assumed_refs,json=assumedRefs,proto3" json:"assumed_refs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1050,7 +1051,7 @@ type PutResponse struct {
 	// the object as stored, returned for commits and pins, whose set id and
 	// receipt time the server assigns
 	Object *Stored `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
-	// what the store does not hold of a file's assumed refs, or of what a
+	// what the store does not hold of the assumed refs, or of what a
 	// commit's session references; when set the object was not stored and
 	// the client must upload them and put the object again
 	Missing       []*Ref `protobuf:"bytes,3,rep,name=missing,proto3" json:"missing,omitempty"`

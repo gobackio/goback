@@ -22,20 +22,20 @@ type presenceStore struct {
 	filters presence.Set
 
 	mtx       sync.Mutex
-	putFiles  int
+	confirms  int
 	missing   int
-	onPutFile func()
+	onConfirm func()
 }
 
 func (p *presenceStore) Presence(context.Context, string) (presence.Set, error) {
 	return p.filters, nil
 }
 
-func (p *presenceStore) PutFile(ctx context.Context, obj *proto.Object, assumed []*proto.Ref) ([]*proto.Ref, error) {
+func (p *presenceStore) PutAssuming(ctx context.Context, obj *proto.Object, assumed []*proto.Ref) ([]*proto.Ref, error) {
 	p.mtx.Lock()
-	p.putFiles++
-	hook := p.onPutFile
-	p.onPutFile = nil
+	p.confirms++
+	hook := p.onConfirm
+	p.onConfirm = nil
 	p.mtx.Unlock()
 
 	if hook != nil {
@@ -172,7 +172,7 @@ func TestWalkerPresenceSkipsConfirmedChunks(t *testing.T) {
 	require.EqualValues(t, 2, atomic.LoadInt64(&f.objects.puts), "one file object and one tree: the chunks were confirmed, not uploaded")
 	require.EqualValues(t, len(parts), second.Assumed)
 	require.Zero(t, second.Repaired)
-	require.Equal(t, 1, ps.putFiles)
+	require.Equal(t, 1, ps.confirms)
 	require.Zero(t, ps.missing)
 }
 
@@ -197,7 +197,7 @@ func TestWalkerPresenceRepairsFalsePositives(t *testing.T) {
 		require.EqualValues(t, len(parts), result.Assumed, "window %d", window)
 		require.EqualValues(t, len(parts), result.Repaired, "window %d", window)
 		require.EqualValues(t, int64(len(parts))+2+descriptorPuts, atomic.LoadInt64(&f.objects.puts), "every chunk once, then file and tree")
-		require.Equal(t, 2, ps.putFiles, "the file is put again once the parts are there")
+		require.Equal(t, 2, ps.confirms, "the file is put again once the parts are there")
 		require.Equal(t, len(parts), ps.missing)
 	}
 }
@@ -219,7 +219,7 @@ func TestWalkerPresenceRereadsFileChangedUnderConfirmation(t *testing.T) {
 	f.write("a.bin", content)
 
 	path := filepath.Join(f.root, "a.bin")
-	ps.onPutFile = func() {
+	ps.onConfirm = func() {
 		require.NoError(t, os.WriteFile(path, changed, 0o644))
 	}
 
@@ -238,7 +238,7 @@ func TestWalkerPresenceRereadsFileChangedUnderConfirmation(t *testing.T) {
 		size += part.Length
 	}
 	require.EqualValues(t, len(changed), size)
-	require.Equal(t, 1, ps.putFiles, "the rewritten content matches no filter, so the second read assumes nothing")
+	require.Equal(t, 1, ps.confirms, "the rewritten content matches no filter, so the second read assumes nothing")
 	require.Equal(t, len(donor.fileParts(donorResult.Ref, "a.bin")), ps.missing, "every original part was reported missing once")
 }
 

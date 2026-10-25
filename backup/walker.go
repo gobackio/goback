@@ -52,6 +52,9 @@ type TreeFetcher interface {
 // walker writes through the index.
 type Keeper interface {
 	Keep(ctx context.Context, obj *proto.Object)
+	// Kept reports whether a copy of ref is kept, which the store behind
+	// may have lost since.
+	Kept(ref *proto.Ref) bool
 }
 
 // Walker builds a commit by diffing a directory against the set's latest

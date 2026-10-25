@@ -77,7 +77,7 @@ func (s *Store) BeginCommit(ctx context.Context, set string) (*backup.CommitGran
 
 // Upload is one Put: the object, the ref the client computed for it (nil
 // for a commit or pin, which the store stamps itself) and the refs a file
-// assumes are stored already.
+// or tree assumes are stored already.
 type Upload struct {
 	Object  *proto.Object
 	Ref     *proto.Ref
@@ -128,8 +128,8 @@ func (s *Store) Put(ctx context.Context, up Upload) (*Receipt, error) {
 	}
 
 	if len(up.Assumed) > 0 {
-		if object.GetFile() == nil {
-			return nil, fmt.Errorf("%w: assumed refs are only accepted for file objects", ErrInvalidRequest)
+		if object.GetFile() == nil && object.GetTree() == nil {
+			return nil, fmt.Errorf("%w: assumed refs are only accepted for file and tree objects", ErrInvalidRequest)
 		}
 
 		missing, err := backup.Missing(ctx, s.Index, up.Assumed)

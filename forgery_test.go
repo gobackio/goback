@@ -58,13 +58,13 @@ func TestAPlaintextAgentNeverDedupsAgainstASealedForgeryOfItsContent(t *testing.
 
 	file := proto.NewObject(&proto.File{Parts: []*proto.FilePart{{Ref: honest.Ref(), Length: uint64(len(honest.GetBlob().GetData()))}}})
 
-	missing, err := client.PutFile(sctx, file, []*proto.Ref{honest.Ref()})
+	missing, err := client.PutAssuming(sctx, file, []*proto.Ref{honest.Ref()})
 	require.NoError(t, err)
 	require.Len(t, missing, 1, "the forgery does not count as the part")
 
 	require.NoError(t, client.Put(sctx, honest))
 
-	missing, err = client.PutFile(sctx, file, []*proto.Ref{honest.Ref()})
+	missing, err = client.PutAssuming(sctx, file, []*proto.Ref{honest.Ref()})
 	require.NoError(t, err)
 	require.Empty(t, missing)
 

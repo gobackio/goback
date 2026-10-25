@@ -350,7 +350,7 @@ func (bfw *fileWriter) storeFile(obj *proto.Object, parts []*proto.FilePart) err
 	defer bfw.window.drop(keys)
 
 	for attempt := 0; ; attempt++ {
-		missing, err := bfw.confirmer.PutFile(bfw.ctx, obj, assumed)
+		missing, err := bfw.confirmer.PutAssuming(bfw.ctx, obj, assumed)
 		if err != nil {
 			return err
 		}

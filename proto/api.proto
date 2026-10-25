@@ -17,8 +17,9 @@ message PutRequest {
     Stored object = 1;
     // the ref the client computed for object; the server rejects a mismatch
     Ref ref = 2;
-    // for a file object: part refs the client did not upload because it
-    // assumes the store holds them; the server confirms them before storing
+    // for a file or tree object: the parts or splits the client did not
+    // upload because it assumes the store holds them; the server confirms
+    // them before storing
     repeated Ref assumed_refs = 3;
 }
 
@@ -150,7 +151,7 @@ message PutResponse {
     // the object as stored, returned for commits and pins, whose set id and
     // receipt time the server assigns
     Stored object = 2;
-    // what the store does not hold of a file's assumed refs, or of what a
+    // what the store does not hold of the assumed refs, or of what a
     // commit's session references; when set the object was not stored and
     // the client must upload them and put the object again
     repeated Ref missing = 3;

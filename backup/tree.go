@@ -137,7 +137,9 @@ func newTree(store ObjectStore) *backupTree {
 // under a parent when the directory is large, and returns the ref of the
 // object a parent node should reference. With a key the nodes' names are
 // sealed for the directory whose token is parent; the given nodes are not
-// modified.
+// modified. A store that is a Keeper over a Confirmer is not sent the
+// splits it keeps copies of: it confirms them as it takes the parent and
+// is sent the ones it lacks.
 func PutTree(ctx context.Context, store ObjectStore, nodes []*proto.TreeNode, key *storekey.Key, parent []byte) (*proto.Ref, error) {
 	nodes = sealNodes(key, parent, nodes)
 
@@ -146,25 +148,101 @@ func PutTree(ctx context.Context, store ObjectStore, nodes []*proto.TreeNode, ke
 	}
 
 	var (
-		objects []*proto.Object
-		splits  []*proto.Ref
+		splits []*proto.Object
+		refs   []*proto.Ref
 	)
 
 	for _, chunk := range splitNodes(nodes) {
 		obj := treeObject(&proto.Tree{Nodes: chunk}, key)
-		objects = append(objects, obj)
-		splits = append(splits, obj.Ref())
+		splits = append(splits, obj)
+		refs = append(refs, obj.Ref())
 	}
 
-	objects = append(objects, treeObject(&proto.Tree{Splits: splits}, key))
+	root := treeObject(&proto.Tree{Splits: refs}, key)
+
+	if err := putSplitTree(ctx, store, root, splits); err != nil {
+		return nil, err
+	}
+
+	return root.Ref(), nil
+}
+
+// putSplitTree stores root after the splits store does not keep copies of,
+// having the store confirm the rest as it takes root, and sends those the
+// store says it lacks.
+func putSplitTree(ctx context.Context, store ObjectStore, root *proto.Object, splits []*proto.Object) error {
+	keeper, _ := store.(Keeper)
+	confirmer, _ := unwrapStore(store).(Confirmer)
+
+	var send, kept []*proto.Object
+
+	for _, split := range splits {
+		if keeper != nil && confirmer != nil && keeper.Kept(split.Ref()) {
+			kept = append(kept, split)
+		} else {
+			send = append(send, split)
+		}
+	}
+
+	if len(kept) == 0 {
+		return putTrees(ctx, store, append(send, root))
+	}
+
+	if err := putTrees(ctx, store, send); err != nil {
+		return err
+	}
+
+	assumed := make([]*proto.Ref, len(kept))
+	byRef := make(map[string]*proto.Object, len(kept))
+
+	for i, split := range kept {
+		assumed[i] = split.Ref()
+		byRef[string(split.Ref().Hash)] = split
+	}
+
+	for attempt := 0; ; attempt++ {
+		missing, err := confirmer.PutAssuming(ctx, root, assumed)
+		if err != nil {
+			return err
+		}
+
+		if len(missing) == 0 {
+			keeper.Keep(ctx, root)
+			return nil
+		}
+
+		if attempt > 0 {
+			return fmt.Errorf("store still lacks %d splits after they were sent", len(missing))
+		}
+
+		lacking := make([]*proto.Object, len(missing))
+		for i, ref := range missing {
+			if lacking[i] = byRef[string(ref.GetHash())]; lacking[i] == nil {
+				return fmt.Errorf("store lacks %x, which the tree did not assume", ref.GetHash())
+			}
+		}
+
+		if err := putTrees(ctx, store, lacking); err != nil {
+			return err
+		}
+	}
+}
+
+// putTrees puts trees in order, in one call where the store takes many.
+func putTrees(ctx context.Context, store ObjectStore, trees []*proto.Object) error {
+	if len(trees) == 0 {
+		return nil
+	}
 
 	// a refused batch is put again one by one, which names what a split
 	// lacks as Put does
-	if batching(store) && PutObjects(ctx, store, objects) == nil {
-		return objects[len(objects)-1].Ref(), nil
+	if batching(store) && PutObjects(ctx, store, trees) == nil {
+		return nil
 	}
 
-	return putTreeObjects(ctx, store, objects...)
+	_, err := putTreeObjects(ctx, store, trees...)
+
+	return err
 }
 
 func treeObject(tree *proto.Tree, key *storekey.Key) *proto.Object {

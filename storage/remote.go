@@ -459,8 +459,8 @@ func (r *Client) PutCommits(ctx context.Context, commits []*proto.Object) error 
 	return nil
 }
 
-// PutFile implements backup.Confirmer.
-func (r *Client) PutFile(ctx context.Context, object *proto.Object, assumed []*proto.Ref) ([]*proto.Ref, error) {
+// PutAssuming implements backup.Confirmer.
+func (r *Client) PutAssuming(ctx context.Context, object *proto.Object, assumed []*proto.Ref) ([]*proto.Ref, error) {
 	return r.put(ctx, object, assumed)
 }
 

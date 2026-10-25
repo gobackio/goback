@@ -720,7 +720,41 @@ func (m *memIndex) Presence(ctx context.Context, scope backup.PresenceScope, set
 	return m.filters, nil
 }
 
-func TestRemotePutFileConfirmsAssumedRefs(t *testing.T) {
+func TestRemotePutAssumingConfirmsTheSplitsATreeAssumes(t *testing.T) {
+	index, dial := startServer(t)
+	ctx := context.Background()
+	client := dial("node-1")
+
+	split := func(name string) *proto.Object {
+		return proto.NewObject(&proto.Tree{Nodes: []*proto.TreeNode{{Stat: &proto.FileInfo{Name: []byte(name), Type: proto.NodeType_NODE_SYMLINK, LinkTarget: []byte("x")}}}})
+	}
+
+	held, lost := split("a"), split("b")
+	require.NoError(t, client.Put(ctx, held))
+
+	tree := proto.NewObject(&proto.Tree{Splits: []*proto.Ref{held.Ref(), lost.Ref()}})
+
+	missing, err := client.PutAssuming(ctx, tree, []*proto.Ref{held.Ref(), lost.Ref()})
+	require.NoError(t, err)
+	require.Len(t, missing, 1)
+	require.True(t, missing[0].Equal(lost.Ref()))
+
+	has, err := index.Has(ctx, tree.Ref())
+	require.NoError(t, err)
+	require.False(t, has, "a tree with a missing split is not stored")
+
+	require.NoError(t, client.Put(ctx, lost))
+
+	missing, err = client.PutAssuming(ctx, tree, []*proto.Ref{held.Ref(), lost.Ref()})
+	require.NoError(t, err)
+	require.Empty(t, missing)
+
+	has, err = index.Has(ctx, tree.Ref())
+	require.NoError(t, err)
+	require.True(t, has)
+}
+
+func TestRemotePutAssumingConfirmsAssumedRefs(t *testing.T) {
 	index, dial := startServer(t)
 	ctx := context.Background()
 	client := dial("node-1")
@@ -734,7 +768,7 @@ func TestRemotePutFileConfirmsAssumedRefs(t *testing.T) {
 		{Ref: b.Ref(), Offset: 1, Length: 1},
 	}})
 
-	missing, err := client.PutFile(ctx, file, []*proto.Ref{a.Ref(), b.Ref()})
+	missing, err := client.PutAssuming(ctx, file, []*proto.Ref{a.Ref(), b.Ref()})
 	require.NoError(t, err)
 	require.Len(t, missing, 1)
 	require.True(t, missing[0].Equal(b.Ref()))
@@ -745,7 +779,7 @@ func TestRemotePutFileConfirmsAssumedRefs(t *testing.T) {
 
 	require.NoError(t, client.Put(ctx, b))
 
-	missing, err = client.PutFile(ctx, file, []*proto.Ref{a.Ref(), b.Ref()})
+	missing, err = client.PutAssuming(ctx, file, []*proto.Ref{a.Ref(), b.Ref()})
 	require.NoError(t, err)
 	require.Empty(t, missing)
 
@@ -753,8 +787,8 @@ func TestRemotePutFileConfirmsAssumedRefs(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, has)
 
-	_, err = client.PutFile(ctx, a, []*proto.Ref{b.Ref()})
-	require.Equal(t, codes.InvalidArgument, status.Code(err), "assumed refs belong to file objects")
+	_, err = client.PutAssuming(ctx, a, []*proto.Ref{b.Ref()})
+	require.Equal(t, codes.InvalidArgument, status.Code(err), "assumed refs belong to files and trees")
 }
 
 func TestRemoteGetPresenceStreamsFiltersInPieces(t *testing.T) {
