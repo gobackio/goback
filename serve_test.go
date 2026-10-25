@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/admin"
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/retention"
@@ -295,19 +296,12 @@ func TestTheBackupKeyBacksUpReadsAndPinsAndDeletesNothing(t *testing.T) {
 	_, err = agentAdmin.ListSets(ctx, &adminpb.ListSetsRequest{})
 	require.NoError(t, err)
 
-	key, err := storekey.Generate("s1")
-	require.NoError(t, err)
-	escrow, err := key.Escrow("correct horse")
-	require.NoError(t, err)
-	escrowed := backup.EscrowedKey{KeyID: key.IDString(), Escrowed: escrow}
-
 	trash := int32(0)
 	denied := map[string]error{
 		"DeleteCommit":   agent.DeleteCommit(ctx, head),
 		"UndeleteCommit": agent.UndeleteCommit(ctx, head),
 		"DeleteSet":      agent.DeleteSet(ctx, "world", true),
 		"Unpin":          agent.Unpin(ctx, pins[0].GetRef()),
-		"PutEscrowedKey": agent.PutEscrowedKey(ctx, escrowed),
 	}
 	_, denied["SetRetention"] = agent.SetPolicy(ctx, "world", &retention.Policy{KeepLast: 1})
 	_, denied["Admin.SetRetention"] = agentAdmin.SetRetention(ctx, &adminpb.SetRetentionRequest{TrashDays: &trash})
@@ -321,9 +315,87 @@ func TestTheBackupKeyBacksUpReadsAndPinsAndDeletesNothing(t *testing.T) {
 	}
 
 	operator, _ := clientWith(t, addr, "admin")
-	require.NoError(t, operator.PutEscrowedKey(ctx, escrowed))
+	_, err = operator.SetPolicy(ctx, "world", &retention.Policy{KeepLast: 1})
+	require.NoError(t, err)
 	require.NoError(t, operator.Unpin(ctx, pins[0].GetRef()))
 	require.NoError(t, operator.DeleteSet(ctx, "world", false))
+}
+
+// escrowedCopy is key escrowed under passphrase.
+func escrowedCopy(t *testing.T, key *storekey.Key, passphrase string) backup.EscrowedKey {
+	t.Helper()
+
+	escrow, err := key.Escrow(passphrase)
+	require.NoError(t, err)
+
+	return backup.EscrowedKey{KeyID: key.IDString(), Escrowed: escrow}
+}
+
+func TestTheBackupKeyEscrowsTheStoreKeyOnlyWhereTheStoreKeepsNoCopyOfIt(t *testing.T) {
+	ctx := context.Background()
+	addr := servedWithKeys(t, "admin")
+	agent, _ := clientWith(t, addr, "backup")
+	operator, _ := clientWith(t, addr, "admin")
+
+	key, err := storekey.Generate("s1")
+	require.NoError(t, err)
+	first, second := escrowedCopy(t, key, "correct horse"), escrowedCopy(t, key, "battery staple")
+
+	require.NoError(t, agent.PutEscrowedKey(ctx, first), "into a store that keeps none")
+	require.NoError(t, agent.PutEscrowedKey(ctx, first), "the copy kept")
+	require.Equal(t, codes.PermissionDenied, status.Code(agent.PutEscrowedKey(ctx, second)), "beside the copy kept")
+
+	require.NoError(t, operator.PutEscrowedKey(ctx, second))
+
+	kept, err := agent.EscrowedKeys(ctx)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []backup.EscrowedKey{first, second}, kept)
+}
+
+func TestTheBackupKeyLengthensASetsRetentionAndNeverShortensIt(t *testing.T) {
+	ctx := context.Background()
+	repo, agent, operator := serving(t, ctx)
+	backUp(t, ctx, agent, "files", &retention.DatabaseBase)
+
+	type policies interface {
+		SetPolicy(ctx context.Context, set string, p *retention.Policy) (bool, error)
+	}
+
+	set := func(r *Repo, p *retention.Policy) error {
+		_, err := r.Index.(policies).SetPolicy(ctx, "files", p)
+		return err
+	}
+
+	longer := &retention.Policy{KeepLast: 2, Brackets: []retention.Bracket{
+		{Period: retention.Daily, Count: 90},
+		{Period: retention.Weekly, Count: 4},
+		{Period: retention.Monthly},
+	}}
+	require.NoError(t, set(agent, longer))
+	require.Equal(t, longer, ownPolicy(t, ctx, repo, "files"))
+
+	for name, shorter := range map[string]*retention.Policy{
+		"fewer days": {KeepLast: 2, Brackets: []retention.Bracket{
+			{Period: retention.Daily, Count: 30}, {Period: retention.Weekly, Count: 4}, {Period: retention.Monthly},
+		}},
+		"weeks for days": {KeepLast: 2, Brackets: []retention.Bracket{
+			{Period: retention.Weekly, Count: 90}, {Period: retention.Weekly, Count: 4}, {Period: retention.Monthly},
+		}},
+	} {
+		require.Equal(t, codes.PermissionDenied, status.Code(set(agent, shorter)), name)
+		require.Equal(t, longer, ownPolicy(t, ctx, repo, "files"), name)
+	}
+
+	require.NoError(t, set(operator, &retention.DatabaseBase), "the admin key shortens")
+	require.Equal(t, &retention.DatabaseBase, ownPolicy(t, ctx, repo, "files"))
+
+	require.NoError(t, set(agent, nil), "the store's default keeps everything")
+	require.Nil(t, ownPolicy(t, ctx, repo, "files"))
+
+	require.NoError(t, repo.Index.(admin.Index).SetDefaultPolicy(ctx, &retention.DatabaseBase))
+	require.NoError(t, set(agent, longer))
+	require.Equal(t, codes.PermissionDenied, status.Code(set(agent, nil)), "the store's default keeps less")
+	require.Equal(t, longer, ownPolicy(t, ctx, repo, "files"))
 }
 
 func TestWithoutAnAdminKeyNoCallOverTheNetworkDeletes(t *testing.T) {

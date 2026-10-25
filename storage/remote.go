@@ -1608,13 +1608,30 @@ func (r *Server) GetRetention(ctx context.Context, request *proto.GetRetentionRe
 }
 
 // SetRetention implements proto.StoreServer; the change applies at once.
+// A Bounded caller only lengthens a set's retention.
 func (r *Server) SetRetention(ctx context.Context, request *proto.SetRetentionRequest) (*proto.SetRetentionResponse, error) {
 	policies, err := r.store.Policies()
 	if err != nil {
 		return nil, ToStatus(err)
 	}
 
-	if err := policies.SetPolicy(ctx, request.GetBackupSet(), m.FromRetentionPolicy(request.GetPolicy())); err != nil {
+	set := policies.SetPolicy
+
+	if p, ok := auth.FromContext(ctx); ok && p.Bounded {
+		lengthener, ok := policies.(PolicyLengthener)
+		if !ok {
+			return nil, status.Error(codes.PermissionDenied, "changing retention takes the server's admin key")
+		}
+
+		set = lengthener.LengthenPolicy
+	}
+
+	err = set(ctx, request.GetBackupSet(), m.FromRetentionPolicy(request.GetPolicy()))
+	if errors.Is(err, retention.ErrShortens) {
+		return nil, status.Error(codes.PermissionDenied, "shortening retention takes the server's admin key")
+	}
+
+	if err != nil {
 		return nil, ToStatus(err)
 	}
 

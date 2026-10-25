@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/gobackio/goback/admin"
@@ -70,6 +71,46 @@ func TestTheEscrowedKeyLivesInTheBucket(t *testing.T) {
 	kept, err := bucketPack(t, dir).EscrowedKeys(ctx)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []backup.EscrowedKey{first, second}, kept)
+}
+
+func TestAFirstEscrowedCopyIsKeptOnlyWhileTheStoreKeepsNoneOfItsKey(t *testing.T) {
+	ctx := context.Background()
+	store := bucketPack(t, t.TempDir())
+
+	key, err := storekey.Generate("s1")
+	require.NoError(t, err)
+
+	copies := make([]backup.EscrowedKey, 4)
+	for i := range copies {
+		copies[i] = escrowed(t, key, fmt.Sprintf("passphrase number %d", i))
+	}
+
+	errs := make(chan error, len(copies))
+	for _, c := range copies {
+		go func() { errs <- store.PutFirstEscrowedKey(ctx, c) }()
+	}
+
+	firsts := 0
+	for range copies {
+		err := <-errs
+		if err == nil {
+			firsts++
+			continue
+		}
+
+		require.ErrorIs(t, err, backup.ErrKeyEscrowed)
+	}
+
+	require.Equal(t, 1, firsts, "of copies put at once, one is first")
+
+	kept, err := store.EscrowedKeys(ctx)
+	require.NoError(t, err)
+	require.Len(t, kept, 1)
+	require.NoError(t, store.PutFirstEscrowedKey(ctx, kept[0]), "the copy kept is kept already")
+
+	other, err := storekey.Generate("s1")
+	require.NoError(t, err)
+	require.ErrorIs(t, store.PutFirstEscrowedKey(ctx, escrowed(t, other, "correct horse")), backup.ErrOtherKeyEscrowed)
 }
 
 type escrowIndex struct {

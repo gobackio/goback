@@ -123,7 +123,7 @@ func TestAnOperatorSetsASetsRetentionThroughTheServer(t *testing.T) {
 
 	own := &retention.Policy{KeepLast: 2, KeepWithin: 36 * time.Hour, Brackets: []retention.Bracket{{Period: retention.Yearly}}}
 	_, err := agent.Index.(policies).SetPolicy(ctx, "files", own)
-	require.Equal(t, codes.PermissionDenied, status.Code(err), "the backup key changes no retention")
+	require.Equal(t, codes.PermissionDenied, status.Code(err), "the backup key keeps by no policy that keeps less")
 
 	pending, err := operator.Index.(policies).SetPolicy(ctx, "files", own)
 	require.NoError(t, err)

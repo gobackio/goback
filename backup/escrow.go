@@ -19,6 +19,9 @@ var (
 	// ErrOtherKeyEscrowed is returned when a store is given the escrowed
 	// copy of a store key other than the one it already keeps.
 	ErrOtherKeyEscrowed = errors.New("the store already keeps the escrowed copy of another store key")
+	// ErrKeyEscrowed is returned when a first escrowed copy is put where
+	// the store already keeps another copy of that key.
+	ErrKeyEscrowed = errors.New("the store already keeps an escrowed copy of the store key")
 	// ErrInvalidEscrow is returned for an escrowed key that is not an
 	// armored age file of a sensible size, or has no valid key id.
 	ErrInvalidEscrow = errors.New("not an escrowed store key")
@@ -52,6 +55,14 @@ type KeyEscrow interface {
 	// replaced. A store keeps copies of one store key only.
 	PutEscrowedKey(ctx context.Context, key EscrowedKey) error
 	EscrowLister
+}
+
+// FirstEscrow keeps the first escrowed copy of a store key and no other.
+type FirstEscrow interface {
+	// PutFirstEscrowedKey keeps key only while the store keeps no copy of
+	// that key, and is ErrKeyEscrowed otherwise; putting the copy kept
+	// again changes nothing. Of copies put at once, one is first.
+	PutFirstEscrowedKey(ctx context.Context, key EscrowedKey) error
 }
 
 // EscrowLister reads the escrowed copies of a store's key.

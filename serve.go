@@ -61,11 +61,14 @@ const serveUploads = 16
 // ServeOptions say how Serve serves a store.
 type ServeOptions struct {
 	// Secret is the backup key every agent presents, which backs up, reads
-	// and pins and nothing else; Serve refuses an empty one.
+	// and pins, escrows the store key where no copy of it is kept and
+	// lengthens a set's retention, and nothing else; Serve refuses an
+	// empty one.
 	Secret string
 	// AdminKey is what an operator presents for every other call: deleting
-	// commits and sets, changing retention or the store policy, retiring,
-	// collecting and escrowing the store key. Empty refuses those calls.
+	// commits and sets, shortening retention or changing the store policy,
+	// retiring, collecting and escrowing another copy of the store key.
+	// Empty refuses those calls.
 	AdminKey string
 	// TLS is what the server presents to agents. Without it Serve listens
 	// in plaintext only when PlaintextBehindProxy says a proxy in front
@@ -80,7 +83,7 @@ type ServeOptions struct {
 
 // Serve serves the repo to agents over gRPC on listener, as goback server
 // does: the store API, the Admin service when the index keeps sets and
-// policy, with the calls that delete or change anything open to the admin
+// policy, with the calls that delete or could keep less open to the admin
 // key alone, health checks, whose readiness fails while the index does not
 // answer or the server drains, and the maintenance jobs of opts.Schedule.
 // An address that presents wrong keys too often is refused for a while.
@@ -236,22 +239,38 @@ var backupCalls = map[string]bool{
 	adminpb.Admin_GetRetention_FullMethodName:   true,
 }
 
-// admit refuses a call the caller's key does not make.
-func admit(ctx context.Context, method string) error {
+// boundedCalls are the calls the backup key makes as an auth.Principal
+// that is Bounded: escrowing the store key where no copy of it is kept, and
+// changing a set's retention to one that keeps at least as much.
+var boundedCalls = map[string]bool{
+	adminpb.Admin_PutEscrowedKey_FullMethodName: true,
+	proto.Store_SetRetention_FullMethodName:     true,
+}
+
+// admit refuses a call the caller's key does not make, and returns the
+// context to handle the others with.
+func admit(ctx context.Context, method string) (context.Context, error) {
 	p, err := auth.Require(ctx)
 	if err != nil {
-		return status.Error(codes.Unauthenticated, err.Error())
+		return nil, status.Error(codes.Unauthenticated, err.Error())
 	}
 
-	if p.Admin || backupCalls[method] {
-		return nil
+	switch {
+	case p.Admin || backupCalls[method]:
+		return ctx, nil
+	case boundedCalls[method]:
+		bounded := *p
+		bounded.Bounded = true
+
+		return auth.WithPrincipal(ctx, &bounded), nil
 	}
 
-	return status.Errorf(codes.PermissionDenied, "%s takes the server's admin key; the backup key only backs up, reads and pins", path.Base(method))
+	return nil, status.Errorf(codes.PermissionDenied, "%s takes the server's admin key; the backup key only backs up, reads and pins", path.Base(method))
 }
 
 func gateUnary(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	if err := admit(ctx, info.FullMethod); err != nil {
+	ctx, err := admit(ctx, info.FullMethod)
+	if err != nil {
 		return nil, err
 	}
 
@@ -259,12 +278,21 @@ func gateUnary(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler
 }
 
 func gateStream(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	if err := admit(ss.Context(), info.FullMethod); err != nil {
+	ctx, err := admit(ss.Context(), info.FullMethod)
+	if err != nil {
 		return err
 	}
 
-	return handler(srv, ss)
+	return handler(srv, admitted{ServerStream: ss, ctx: ctx})
 }
+
+// admitted is a stream handled with the context admit returned.
+type admitted struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s admitted) Context() context.Context { return s.ctx }
 
 // uploadSlots has at most n SendUpload streams run at once; the others wait
 // for one of them to end, or for their own call to.
@@ -317,6 +345,11 @@ func panicked(logger *slog.Logger, method string, p any) error {
 
 	return status.Error(codes.Internal, "the server failed handling the call")
 }
+
+var (
+	_ storage.PolicyLengthener = (*sql.Index)(nil)
+	_ backup.FirstEscrow       = (*sql.Index)(nil)
+)
 
 // adminServer is the Admin service over the index and the runner's jobs.
 func adminServer(x *sql.Index, runner *maintenance.Runner) *admin.Server {

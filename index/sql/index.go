@@ -366,6 +366,16 @@ func (x *Index) PutEscrowedKey(ctx context.Context, key backup.EscrowedKey) erro
 	return escrow.PutEscrowedKey(ctx, key)
 }
 
+// PutFirstEscrowedKey implements backup.FirstEscrow when the store does.
+func (x *Index) PutFirstEscrowedKey(ctx context.Context, key backup.EscrowedKey) error {
+	escrow, ok := storeAs[backup.FirstEscrow](x.ObjectStore)
+	if !ok {
+		return backup.ErrNotImplemented
+	}
+
+	return escrow.PutFirstEscrowedKey(ctx, key)
+}
+
 // EscrowedKeys implements backup.KeyEscrow when the store does.
 func (x *Index) EscrowedKeys(ctx context.Context) ([]backup.EscrowedKey, error) {
 	escrow, ok := storeAs[backup.KeyEscrow](x.ObjectStore)

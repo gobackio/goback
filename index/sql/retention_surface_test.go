@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/index"
 
@@ -71,4 +72,39 @@ func TestOperatorRetentionSurface(t *testing.T) {
 	require.Equal(t, index.Windows{TrashDays: 3}, w)
 
 	require.ErrorIs(t, x.SetWindows(ctx, index.Windows{TrashDays: -1}), retention.ErrInvalidPolicy)
+}
+
+func TestAPolicyIsLengthenedOnlyToOneThatCoversWhatTheSetKeepsBy(t *testing.T) {
+	ctx := context.Background()
+	x := openIndex(t, newMemStore())
+
+	_, err := x.setNamed(ctx, x.client, "world", 0)
+	require.NoError(t, err)
+	_, err = x.setNamed(ctx, x.client, "rebuilt", 42)
+	require.NoError(t, err)
+
+	longer := retention.Default
+	longer.KeepLast = 3
+	require.NoError(t, x.LengthenPolicy(ctx, "world", &longer))
+
+	ret, err := x.GetPolicy(ctx, "world")
+	require.NoError(t, err)
+	require.Equal(t, &longer, ret.Policy)
+
+	require.ErrorIs(t, x.LengthenPolicy(ctx, "world", &retention.Default), retention.ErrShortens)
+	require.ErrorIs(t, x.LengthenPolicy(ctx, "world", nil), retention.ErrShortens, "the store's default keeps less")
+	require.NoError(t, x.LengthenPolicy(ctx, "world", &longer), "the policy it keeps by")
+
+	ret, err = x.GetPolicy(ctx, "world")
+	require.NoError(t, err)
+	require.Equal(t, &longer, ret.Policy)
+
+	require.ErrorIs(t, x.LengthenPolicy(ctx, "rebuilt", &longer), retention.ErrShortens, "a paused set keeps everything")
+	require.NoError(t, x.LengthenPolicy(ctx, "rebuilt", &retention.KeepAll))
+
+	ret, err = x.GetPolicy(ctx, "rebuilt")
+	require.NoError(t, err)
+	require.False(t, ret.Paused)
+
+	require.ErrorIs(t, x.LengthenPolicy(ctx, "nowhere", &longer), backup.ErrNotFound)
 }

@@ -108,11 +108,13 @@ goback --storage gcs://my-bucket --index /var/lib/goback/index \
 
 The server listens on 127.0.0.1:6060 unless `--address` says otherwise.
 Every agent presents the shared secret and its own `--agent-id`. The secret
-backs up, reads and pins, and nothing else, so one machine's copy of it
-cannot destroy another's backups. Deleting commits or sets, changing
-retention or the store policy, retiring, collecting and escrowing the store
-key take the admin key: `goback://<admin-key>@host:port` in place of the
-secret. Without `--admin-key`, the server refuses those calls; run them on
+backs up, reads and pins, escrows the store key while the store keeps no
+copy of it, and changes a set's retention to one that keeps at least as
+much, and nothing else, so one machine's copy of it cannot destroy
+another's backups. Deleting commits or sets, shortening retention, changing
+the store policy, retiring, collecting and escrowing another copy of the
+store key take the admin key: `goback://<admin-key>@host:port` in place of
+the secret. Without `--admin-key`, the server refuses those calls; run them on
 the server machine against the store itself instead. The server runs
 maintenance itself: it sweeps, compacts, retires and collects on its own
 intervals.

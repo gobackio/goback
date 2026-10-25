@@ -132,13 +132,29 @@ func (s *Server) SetStorePolicy(ctx context.Context, request *pb.SetStorePolicyR
 	return m.Policy(p), nil
 }
 
-// PutEscrowedKey implements pb.AdminServer.
+// PutEscrowedKey implements pb.AdminServer. A Bounded caller only puts the
+// first copy of the store key.
 func (s *Server) PutEscrowedKey(ctx context.Context, request *pb.PutEscrowedKeyRequest) (*pb.PutEscrowedKeyResponse, error) {
 	if s.Escrow == nil {
 		return nil, status.Error(codes.Unimplemented, "this store keeps no escrowed key")
 	}
 
-	err := s.Escrow.PutEscrowedKey(ctx, backup.EscrowedKey{KeyID: request.KeyId, Escrowed: []byte(request.Escrowed)})
+	put := s.Escrow.PutEscrowedKey
+
+	if p, ok := auth.FromContext(ctx); ok && p.Bounded {
+		first, ok := s.Escrow.(backup.FirstEscrow)
+		if !ok {
+			return nil, status.Error(codes.PermissionDenied, "escrowing the store key takes the server's admin key")
+		}
+
+		put = first.PutFirstEscrowedKey
+	}
+
+	err := put(ctx, backup.EscrowedKey{KeyID: request.KeyId, Escrowed: []byte(request.Escrowed)})
+	if errors.Is(err, backup.ErrKeyEscrowed) {
+		return nil, status.Error(codes.PermissionDenied, "escrowing another copy of the store key takes the server's admin key")
+	}
+
 	if err != nil {
 		return nil, Status(err)
 	}

@@ -905,6 +905,15 @@ type Policies interface {
 	SetPolicy(ctx context.Context, set string, p *retention.Policy) error
 }
 
+// PolicyLengthener sets a set's policy only where that keeps at least what
+// the set keeps by now.
+type PolicyLengthener interface {
+	// LengthenPolicy is SetPolicy for a policy the set then keeps by that
+	// covers, by retention.Policy.Covers, the one it keeps by now, and
+	// retention.ErrShortens for any other.
+	LengthenPolicy(ctx context.Context, set string, p *retention.Policy) error
+}
+
 // Policies is the index's set retention policies, backup.ErrNotImplemented
 // for an index that keeps none.
 func (s *Store) Policies() (Policies, error) {

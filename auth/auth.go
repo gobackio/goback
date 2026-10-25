@@ -24,6 +24,11 @@ import (
 type Principal struct {
 	AgentID string
 	Admin   bool
+	// Bounded marks a caller that may only add to what the store keeps:
+	// it escrows the store key only where no copy of it is kept, and
+	// changes a set's retention only to a policy that keeps at least as
+	// much.
+	Bounded bool
 }
 
 // ErrUnauthenticated is returned when a request carries no principal.

@@ -261,15 +261,32 @@ func (x *Index) GetPolicy(ctx context.Context, name string) (index.SetRetention,
 // clamped by the limits, and re-evaluates the set. Setting a policy also
 // resumes retention paused by a rebuild.
 func (x *Index) SetPolicy(ctx context.Context, name string, p *retention.Policy) error {
+	return x.setPolicy(ctx, name, p, false)
+}
+
+// LengthenPolicy is SetPolicy for a policy the set then keeps by that
+// covers the one it keeps by now, and retention.ErrShortens for any other.
+// A set whose retention is paused keeps everything until then.
+func (x *Index) LengthenPolicy(ctx context.Context, name string, p *retention.Policy) error {
+	return x.setPolicy(ctx, name, p, true)
+}
+
+func (x *Index) setPolicy(ctx context.Context, name string, p *retention.Policy, lengthen bool) error {
 	raw, err := x.encodePolicy(p)
 	if err != nil {
 		return err
 	}
 
 	return x.policyTx(ctx, func(tx *ent.Tx) (*proto.Policy, error) {
-		setID, _, err := x.lockOwnSet(ctx, tx, name)
+		setID, cfg, err := x.lockOwnSet(ctx, tx, name)
 		if err != nil {
 			return nil, err
+		}
+
+		if lengthen {
+			if err := x.lengthens(ctx, tx, setID, cfg, raw); err != nil {
+				return nil, err
+			}
 		}
 
 		update := tx.Set.UpdateOneID(setID).SetRetentionPaused(false)
@@ -288,6 +305,31 @@ func (x *Index) SetPolicy(ctx context.Context, name string, p *retention.Policy)
 		// policy's verdicts once the new one is stored
 		return setScope(s, time.Time{}), x.evaluateSet(ctx, tx, setID, x.now())
 	})
+}
+
+// lengthens is retention.ErrShortens unless the set would keep by a policy,
+// its own raw or else the store's, that covers what it keeps by now.
+func (x *Index) lengthens(ctx context.Context, tx *ent.Tx, setID int64, now *setConfig, raw *string) error {
+	defaults, err := loadSettings(ctx, tx.Client())
+	if err != nil {
+		return err
+	}
+
+	then, err := x.policyOf(defaults, &ent.Set{ID: setID, RetentionPolicy: raw})
+	if err != nil {
+		return err
+	}
+
+	kept := now.policy
+	if now.paused {
+		kept = retention.KeepAll
+	}
+
+	if !then.Covers(kept) {
+		return fmt.Errorf("%w: set %q keeps by %s, not %s", retention.ErrShortens, now.name, kept, then)
+	}
+
+	return nil
 }
 
 func (x *Index) encodePolicy(p *retention.Policy) (*string, error) {

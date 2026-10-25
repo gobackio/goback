@@ -39,7 +39,7 @@ var Command = cli.Command{
 		},
 		cli.StringFlag{
 			Name:   "admin-key",
-			Usage:  "key that admin commands present, which alone deletes, changes retention or the store policy, retires, collects and escrows",
+			Usage:  "key that admin commands present, which alone deletes, shortens retention, changes the store policy, retires, collects and escrows another copy of the store key",
 			EnvVar: "GOBACK_ADMIN_KEY",
 		},
 		cli.StringFlag{

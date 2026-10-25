@@ -18,11 +18,23 @@ const (
 	escrowExt = ".age"
 )
 
-var _ backup.KeyEscrow = (*PackStorage)(nil)
+var (
+	_ backup.KeyEscrow   = (*PackStorage)(nil)
+	_ backup.FirstEscrow = (*PackStorage)(nil)
+)
 
 // PutEscrowedKey implements backup.KeyEscrow. Each copy is a file of its
 // own under keys/<key id>/, named by its content.
 func (ps *PackStorage) PutEscrowedKey(ctx context.Context, key backup.EscrowedKey) error {
+	return ps.putEscrowedKey(ctx, key, false)
+}
+
+// PutFirstEscrowedKey implements backup.FirstEscrow.
+func (ps *PackStorage) PutFirstEscrowedKey(ctx context.Context, key backup.EscrowedKey) error {
+	return ps.putEscrowedKey(ctx, key, true)
+}
+
+func (ps *PackStorage) putEscrowedKey(ctx context.Context, key backup.EscrowedKey, first bool) error {
 	err := key.Validate()
 	if err != nil {
 		return err
@@ -44,6 +56,10 @@ func (ps *PackStorage) PutEscrowedKey(ctx context.Context, key backup.EscrowedKe
 		if bytes.Equal(k.Escrowed, key.Escrowed) {
 			return nil
 		}
+	}
+
+	if first && len(kept) > 0 {
+		return fmt.Errorf("%w: %d copies of key %s", backup.ErrKeyEscrowed, len(kept), key.KeyID)
 	}
 
 	sum := sha256.Sum256(key.Escrowed)
