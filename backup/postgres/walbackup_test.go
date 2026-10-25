@@ -27,6 +27,7 @@ type walFixture struct {
 	t     *testing.T
 	ctx   context.Context
 	index *sql.Index
+	store *pack.PackStorage
 	spool Spool
 	now   time.Time
 }
@@ -44,7 +45,7 @@ func newWALFixture(t *testing.T) *walFixture {
 	require.NoError(t, index.Open())
 	t.Cleanup(func() { _ = index.Close() })
 
-	return &walFixture{t: t, ctx: context.Background(), index: index, spool: Spool{Dir: t.TempDir()}, now: time.Now().Add(time.Minute)}
+	return &walFixture{t: t, ctx: context.Background(), index: index, store: store, spool: Spool{Dir: t.TempDir()}, now: time.Now().Add(time.Minute)}
 }
 
 // spoolSegment spools segment n of timeline 1 of the cluster systemID.
@@ -289,6 +290,22 @@ func TestAWALCommitOverAnotherAgentsCommitReadsItFromTheStore(t *testing.T) {
 	require.Equal(t, []string{one, two, three}, f.held(result))
 	require.Equal(t, int64(1), objects.commits.Load(), "the newest commit is the store's to say")
 	require.Equal(t, int64(1), objects.getTrees.Load())
+}
+
+func TestReceivingCommitsOverAStoreServerReadNoFileTheLastOneStored(t *testing.T) {
+	f := newWALFixture(t)
+	client, m := f.served()
+	objects := f.cached(t.TempDir(), client)
+	segment := f.growing()
+
+	for i := 0; i < 3; i++ {
+		m.reset()
+		segment.commit(f.receiver(client, objects))
+
+		if i > 0 {
+			require.Zero(t, m.reads(), "commit %d read what the last one stored", i)
+		}
+	}
 }
 
 func TestASealedWALSetsTreeCacheHoldsNoNames(t *testing.T) {

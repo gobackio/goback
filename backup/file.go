@@ -347,6 +347,10 @@ func (bfw *fileWriter) storeFile(obj *proto.Object, parts []*proto.FilePart) err
 		}
 
 		if len(missing) == 0 {
+			if keeper, ok := bfw.store.(Keeper); ok {
+				keeper.Keep(bfw.ctx, obj)
+			}
+
 			return nil
 		}
 
