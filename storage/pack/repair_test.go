@@ -1,6 +1,7 @@
 package pack
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -69,6 +70,43 @@ func TestRepairDropsWhatItCannotRead(t *testing.T) {
 	after, err := store.Scrub(ctx)
 	require.NoError(t, err)
 	require.Empty(t, after.Corrupt)
+}
+
+func TestRepairReportsTheIndexedRefOfARecordWhoseHeaderRefIsDamaged(t *testing.T) {
+	base := t.TempDir()
+	ctx := context.Background()
+
+	store := newTestStore(t, base)
+	objects := makeTestData(t, 5)
+	for _, obj := range objects {
+		require.NoError(t, store.Put(ctx, obj))
+	}
+	require.NoError(t, store.Close())
+
+	damaged := objects[2]
+
+	store = newTestStore(t, base)
+	loc, err := store.index.LocateObject(damaged.Ref(), Scope{})
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	name := filepath.Join(base, loc.Archive+ArchiveSuffix)
+	data, err := os.ReadFile(name)
+	require.NoError(t, err)
+
+	record := data[loc.Record.Offset : loc.Record.Offset+loc.Record.Length]
+	at := bytes.Index(record, damaged.Ref().Hash)
+	require.GreaterOrEqual(t, at, 0)
+	record[at] ^= 0xff
+	require.NoError(t, os.WriteFile(name, data, 0644))
+
+	store = newTestStore(t, base)
+	t.Cleanup(func() { _ = store.Close() })
+
+	report, err := store.Repair(ctx)
+	require.NoError(t, err)
+	require.Len(t, report.Lost, 1)
+	require.True(t, report.Lost[0].Equal(damaged.Ref()))
 }
 
 func TestRepairDropsARecordSealedAtRestThatNoLongerOpens(t *testing.T) {

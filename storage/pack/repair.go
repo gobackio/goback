@@ -1,6 +1,7 @@
 package pack
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/gobackio/goback/proto"
@@ -39,7 +40,45 @@ func (ps *PackStorage) Repair(ctx context.Context) (*RepairReport, error) {
 func (ps *PackStorage) repair(ctx context.Context, scrub *ScrubReport) (*RepairReport, error) {
 	report := &RepairReport{Scrub: scrub}
 
+	failed := make(map[string]bool)
+	for _, failure := range scrub.Corrupt {
+		failed[failure.Archive] = true
+	}
+
+	if len(failed) == 0 {
+		return report, nil
+	}
+
+	group := &compactionGroup{}
+
+	ps.mtx.RLock()
+	for _, candidate := range ps.archives {
+		if failed[candidate.name] {
+			group.candidates = append(group.candidates, candidate)
+			group.total += candidate.size
+		}
+	}
+	ps.mtx.RUnlock()
+
+	// the damage may be in the header's ref, so what is lost is the ref
+	// the index has at the record's offset
+	indexed := make(map[string]map[uint32]*proto.Ref, len(group.candidates))
+	for _, candidate := range group.candidates {
+		idx, err := candidate.getIndex()
+		if err != nil {
+			return nil, errors.Wrapf(err, "reading the index of %s", candidate.name)
+		}
+
+		at := make(map[uint32]*proto.Ref, len(idx))
+		for i := range idx {
+			at[idx[i].Offset] = &proto.Ref{Hash: bytes.Clone(idx[i].Sum[:])}
+		}
+
+		indexed[candidate.name] = at
+	}
+
 	damaged := make(map[string]map[string]bool)
+	lost := make(map[string]bool)
 	var dropped []*proto.Ref
 
 	for _, failure := range scrub.Corrupt {
@@ -53,31 +92,22 @@ func (ps *PackStorage) repair(ctx context.Context, scrub *ScrubReport) (*RepairR
 			continue
 		}
 
-		if !damaged[failure.Archive][string(failure.Ref.GetHash())] {
-			dropped = append(dropped, failure.Ref)
-		}
-
 		damaged[failure.Archive][string(failure.Ref.GetHash())] = true
-	}
 
-	if len(damaged) == 0 {
-		return report, nil
-	}
+		ref := failure.Ref
+		if at := indexed[failure.Archive][failure.Offset]; at != nil {
+			ref = at
+		}
 
-	group := &compactionGroup{
-		keep: func(candidate *archive, hdr *proto.ObjectHeader) bool {
-			return !damaged[candidate.name][string(hdr.Ref.GetHash())]
-		},
-	}
-
-	ps.mtx.RLock()
-	for _, candidate := range ps.archives {
-		if _, ok := damaged[candidate.name]; ok {
-			group.candidates = append(group.candidates, candidate)
-			group.total += candidate.size
+		if !lost[string(ref.GetHash())] {
+			lost[string(ref.GetHash())] = true
+			dropped = append(dropped, ref)
 		}
 	}
-	ps.mtx.RUnlock()
+
+	group.keep = func(candidate *archive, hdr *proto.ObjectHeader) bool {
+		return !damaged[candidate.name][string(hdr.Ref.GetHash())]
+	}
 
 	ps.compactorMtx.Lock()
 	err := ps.compactGroup(ctx, group)

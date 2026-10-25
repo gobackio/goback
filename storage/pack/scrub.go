@@ -28,8 +28,11 @@ type ScrubReport struct {
 // ScrubFailure names one object that failed verification.
 type ScrubFailure struct {
 	Archive string
-	Ref     *proto.Ref
-	Err     error
+	// Ref is the ref the damaged record's header names, which the damage
+	// may have changed; Offset is where the record starts in the archive.
+	Ref    *proto.Ref
+	Offset uint32
+	Err    error
 }
 
 // ErrBrokenChain is the failure of an object whose header does not name the
@@ -87,13 +90,13 @@ func (ps *PackStorage) Scrub(ctx context.Context) (*ScrubReport, error) {
 
 			if err != nil {
 				ps.logger.Warn("corrupt object", "ref", fmt.Sprintf("%x", hdr.Ref.GetHash()), "archive", a.name, "offset", offset, "err", err)
-				report.Corrupt = append(report.Corrupt, ScrubFailure{Archive: a.name, Ref: hdr.Ref, Err: err})
+				report.Corrupt = append(report.Corrupt, ScrubFailure{Archive: a.name, Ref: hdr.Ref, Offset: offset, Err: err})
 			}
 
 			if !hdr.Predecessor.Equal(prev) {
 				err := errors.Wrapf(ErrBrokenChain, "predecessor %x, previous object %x", hdr.Predecessor.GetHash(), prev.GetHash())
 				ps.logger.Warn("broken chain", "ref", fmt.Sprintf("%x", hdr.Ref.GetHash()), "archive", a.name, "offset", offset, "err", err)
-				report.Corrupt = append(report.Corrupt, ScrubFailure{Archive: a.name, Ref: hdr.Ref, Err: err})
+				report.Corrupt = append(report.Corrupt, ScrubFailure{Archive: a.name, Ref: hdr.Ref, Offset: offset, Err: err})
 			}
 
 			prev = hdr.Ref
