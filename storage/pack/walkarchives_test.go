@@ -135,6 +135,27 @@ func TestAWalkReachesWhatARewriteMovesWhileItRuns(t *testing.T) {
 	}
 }
 
+func TestARefreshUnloadsAnArchiveThisProcessWroteOnceAnotherDeletedIt(t *testing.T) {
+	store, err := NewPackStorage(WithArchiveStorage(newMemBucket().view()), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	putAll(t, store, makeTestData(t, 3))
+	require.Len(t, store.archives, 1)
+
+	gone := store.archives[0].name
+	require.NoError(t, store.index.DeleteArchives([]string{gone}))
+	for _, ext := range []string{ArchiveSuffix, IndexExt} {
+		require.NoError(t, store.storage.Delete(gone+ext))
+	}
+
+	require.NoError(t, store.refreshArchives())
+	require.Empty(t, store.archives)
+	require.NoError(t, store.Walk(ctx, false, proto.ObjectType_INVALID, func(*proto.Object) error { return nil }))
+}
+
 func TestAWalkReturnsWhatItsCallbackReturns(t *testing.T) {
 	store := newTestStore(t, t.TempDir())
 	t.Cleanup(func() { _ = store.Close() })

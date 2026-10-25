@@ -873,6 +873,10 @@ func (ps *PackStorage) releasePending(ws *writeSession, a *archive, index IndexF
 	ws.pendingMtx.Unlock()
 
 	a.releaseWriteIndex()
+
+	a.mtx.Lock()
+	a.owner = nil
+	a.mtx.Unlock()
 }
 
 // errArchiveRetired names an archive a rewrite replaced.
@@ -1245,7 +1249,10 @@ func (ps *PackStorage) unloadArchive(a *archive) {
 // finalizeArchive closes the writer of a session's open archive and
 // registers the archive with the index.
 func (ps *PackStorage) finalizeArchive(a *archive) error {
+	a.mtx.RLock()
 	ws := a.owner
+	a.mtx.RUnlock()
+
 	if ws == nil {
 		return nil
 	}
@@ -1733,6 +1740,24 @@ func (ps *PackStorage) Open() error {
 func (ps *PackStorage) refreshArchives() error {
 	ps.forgetArchives(nil)
 
+	ps.mtx.RLock()
+	loaded := make(map[string]*archive, len(ps.archives))
+	for _, a := range ps.archives {
+		loaded[a.name] = a
+	}
+	ps.mtx.RUnlock()
+
+	// settled before the listing, an archive this process wrote was stored
+	// before it, so one the listing lacks is gone
+	settled := make(map[string]ArchiveState)
+	for name, a := range loaded {
+		a.mtx.RLock()
+		if a.readOnly && a.owner == nil {
+			settled[name] = a.state
+		}
+		a.mtx.RUnlock()
+	}
+
 	names, files, err := ps.archiveNames()
 	if err != nil {
 		return errors.Wrap(err, "failed listing archive names")
@@ -1742,13 +1767,6 @@ func (ps *PackStorage) refreshArchives() error {
 	for _, name := range names {
 		listed[name] = true
 	}
-
-	ps.mtx.RLock()
-	loaded := make(map[string]*archive, len(ps.archives))
-	for _, a := range ps.archives {
-		loaded[a.name] = a
-	}
-	ps.mtx.RUnlock()
 
 	sem := semaphore.NewWeighted(indexOpenerThreads)
 	group, ctx := errgroup.WithContext(context.Background())
@@ -1789,15 +1807,8 @@ func (ps *PackStorage) refreshArchives() error {
 		return err
 	}
 
-	for name, a := range loaded {
-		a.mtx.RLock()
-		settled := a.readOnly && a.owner == nil
-		state := a.state
-		a.mtx.RUnlock()
-
-		if !settled {
-			continue
-		}
+	for name, state := range settled {
+		a := loaded[name]
 
 		if state == ArchiveCommitted {
 			if !listed[name] {
