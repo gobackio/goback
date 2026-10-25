@@ -167,6 +167,65 @@ func TestRestoreTreeGivesDirectoriesAndLinksTheirOwner(t *testing.T) {
 	require.Greater(t, world, region, "a directory is given its owner after what it holds")
 }
 
+// modeFS is chownFS that records the last mode each path is given too.
+type modeFS struct {
+	chownFS
+
+	modes map[string]os.FileMode
+}
+
+func (m *modeFS) Chmod(ctx context.Context, path string, mode os.FileMode) error {
+	m.mtx.Lock()
+	m.modes[path] = mode
+	m.mtx.Unlock()
+
+	return m.LocalFS.Chmod(ctx, path, mode.Perm())
+}
+
+func TestAFileKeepsSetuidAndSetgidOnlyWithItsOwner(t *testing.T) {
+	store := newMemStore()
+	data := randomData(100, 1)
+	ref := putFile(t, store, nil, data)
+	dir := t.TempDir()
+
+	setid := os.ModeSetuid | os.ModeSetgid | 0o755
+
+	for name, c := range map[string]struct {
+		owner Owner
+		user  string
+		want  os.FileMode
+	}{
+		"none":          {want: 0o755},
+		"recorded":      {owner: Owner{Recorded: true}, user: "alice", want: setid},
+		"unknown":       {owner: Owner{Recorded: true}, user: "ghost", want: 0o755},
+		"account owner": {owner: Owner{User: "bob"}, user: "ghost", want: setid},
+	} {
+		fsys := &modeFS{modes: map[string]os.FileMode{}}
+		r := &Restorer{Store: store, FS: fsys, Owner: c.owner, accounts: testAccounts}
+
+		stat := statFor(data)
+		stat.Mode = uint32(setid)
+		stat.User, stat.Group = []byte(c.user), []byte("staff")
+
+		path := filepath.Join(dir, name)
+		_, err := r.RestoreFile(context.Background(), path, stat, ref)
+		require.NoError(t, err)
+		require.Equal(t, c.want, fsys.modes[PartialPath(path)], name)
+	}
+}
+
+func TestADirectoryKeepsItsStickyAndSetgidBits(t *testing.T) {
+	b := newTreeBuilder(t)
+	dst := t.TempDir()
+
+	shared := os.ModeSticky | os.ModeSetgid | 0o777
+
+	fsys := &modeFS{modes: map[string]os.FileMode{}}
+	commit := b.commit(b.dir("shared", shared, b.file("f", "x", 0o644)))
+	require.NoError(t, (&Restorer{Store: b.store, FS: fsys}).RestoreTree(context.Background(), commit, dst, TreeOptions{}))
+	require.Equal(t, shared, fsys.modes[filepath.Join(dst, "shared")])
+}
+
 func TestAnOwnerOnTheLocalDiskNeedsUnixAndRoot(t *testing.T) {
 	store := newMemStore()
 	data := randomData(100, 1)

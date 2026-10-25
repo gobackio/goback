@@ -221,28 +221,46 @@ func (r *Restorer) resolveOwners() (*owners, error) {
 	return newOwners(r.Owner, r.accounts)
 }
 
-// putOwner gives path the owner Owner says. It comes before the mode is
-// set, since a chown clears the setuid and setgid bits.
-func (r *Restorer) putOwner(ctx context.Context, fsys WriteFS, path string, stat *proto.FileInfo) error {
+// putOwner gives path the owner Owner says and reports whether it did. It
+// comes before the mode is set, since a chown clears the setuid and setgid
+// bits.
+func (r *Restorer) putOwner(ctx context.Context, fsys WriteFS, path string, stat *proto.FileInfo) (bool, error) {
 	if r.owners == nil {
-		return nil
+		return false, nil
 	}
 
 	uid, gid, ok, err := r.owners.of(stat)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if !ok {
 		atomic.AddInt64(&r.stats.OwnersLeftOut, 1)
-		return nil
+		return false, nil
 	}
 
 	if err := fsys.(OwnerWriteFS).Lchown(ctx, path, uid, gid); err != nil {
-		return err
+		return false, err
 	}
 
 	atomic.AddInt64(&r.stats.Owned, 1)
 
-	return nil
+	return true, nil
+}
+
+// ownFile gives the file at path the owner Owner says and returns the mode
+// it is to have: the recorded one, without the setuid and setgid bits when
+// it was not given an owner, so it never runs as whoever restored it.
+func (r *Restorer) ownFile(ctx context.Context, fsys WriteFS, path string, stat *proto.FileInfo) (os.FileMode, error) {
+	owned, err := r.putOwner(ctx, fsys, path, stat)
+	if err != nil {
+		return 0, err
+	}
+
+	mode := fileMode(stat)
+	if !owned {
+		mode &^= os.ModeSetuid | os.ModeSetgid
+	}
+
+	return mode, nil
 }

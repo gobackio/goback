@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"io"
+	"os"
 	"sort"
 	"sync"
 
@@ -29,12 +30,13 @@ func (r *Restorer) streamFile(ctx context.Context, fsys WriteFS, path string, st
 		err = errors.Errorf("wrote %d of %d bytes", n, reader.size())
 	}
 
+	var mode os.FileMode
 	if err == nil {
-		err = r.putOwner(ctx, fsys, partial, stat)
+		mode, err = r.ownFile(ctx, fsys, partial, stat)
 	}
 
 	if err == nil {
-		err = setMeta(ctx, fsys, partial, fileMode(stat), mtimeOf(stat))
+		err = setMeta(ctx, fsys, partial, mode, mtimeOf(stat))
 	}
 
 	if err == nil {

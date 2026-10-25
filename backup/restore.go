@@ -540,12 +540,13 @@ func (r *Restorer) settle(ctx context.Context, fsys RandomWriteFS, tmp RandomFil
 		err = r.putStreams(ctx, fsys, partial, stat)
 	}
 
+	var mode os.FileMode
 	if err == nil {
-		err = r.putOwner(ctx, fsys, partial, stat)
+		mode, err = r.ownFile(ctx, fsys, partial, stat)
 	}
 
 	if err == nil {
-		err = setMeta(ctx, fsys, partial, fileMode(stat), mtimeOf(stat))
+		err = setMeta(ctx, fsys, partial, mode, mtimeOf(stat))
 	}
 
 	if closer, ok := source.(io.Closer); ok {

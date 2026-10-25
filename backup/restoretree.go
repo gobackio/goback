@@ -174,11 +174,17 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 			return err
 		}
 
-		if err := r.putOwner(ctx, r.fs(), e.path, e.stat); err != nil {
+		owned, err := r.putOwner(ctx, r.fs(), e.path, e.stat)
+		if err != nil {
 			return err
 		}
 
-		if err := setMeta(ctx, r.fs(), e.path, e.info.Mode().Perm(), e.info.ModTime()); err != nil {
+		mode := e.info.Mode()
+		if !owned {
+			mode &^= os.ModeSetuid
+		}
+
+		if err := setMeta(ctx, r.fs(), e.path, mode, e.info.ModTime()); err != nil {
 			return err
 		}
 
@@ -492,7 +498,7 @@ func (r *Restorer) restoreDir(ctx context.Context, path string, mode os.FileMode
 		return err
 	}
 
-	if err := fsys.Chmod(ctx, path, mode.Perm()|0o300); err != nil && !errors.Is(err, errors.ErrUnsupported) {
+	if err := fsys.Chmod(ctx, path, settable(mode)&^os.ModeSetuid|0o300); err != nil && !errors.Is(err, errors.ErrUnsupported) {
 		return err
 	}
 
@@ -509,7 +515,8 @@ func (r *Restorer) restoreSymlink(ctx context.Context, path string, stat *proto.
 	target := string(stat.GetLinkTarget())
 
 	if existing, err := fsys.Readlink(ctx, path); err == nil && existing == target {
-		return r.putOwner(ctx, fsys, path, stat)
+		_, err := r.putOwner(ctx, fsys, path, stat)
+		return err
 	}
 
 	if existing, err := fsys.Lstat(ctx, path); err == nil && existing.IsDir() {
@@ -529,7 +536,7 @@ func (r *Restorer) restoreSymlink(ctx context.Context, path string, stat *proto.
 		return err
 	}
 
-	if err := r.putOwner(ctx, fsys, partial, stat); err != nil {
+	if _, err := r.putOwner(ctx, fsys, partial, stat); err != nil {
 		return err
 	}
 

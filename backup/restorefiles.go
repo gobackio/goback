@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"os"
 	"sync"
 	"sync/atomic"
 
@@ -494,12 +495,13 @@ func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.File
 			err = r.putStreams(ctx, fsys, partial, stat)
 		}
 
+		var mode os.FileMode
 		if err == nil {
-			err = r.putOwner(ctx, fsys, partial, stat)
+			mode, err = r.ownFile(ctx, fsys, partial, stat)
 		}
 
 		if err == nil {
-			err = setMeta(ctx, fsys, partial, fileMode(stat), mtimeOf(stat))
+			err = setMeta(ctx, fsys, partial, mode, mtimeOf(stat))
 		}
 
 		if err == nil {
