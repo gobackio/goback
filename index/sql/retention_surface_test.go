@@ -14,9 +14,9 @@ func TestOperatorRetentionSurface(t *testing.T) {
 	ctx := context.Background()
 	x := openIndex(t, newMemStore())
 
-	_, err := ensureSet(ctx, x.client, "world", 0)
+	_, err := x.setNamed(ctx, x.client, "world", 0)
 	require.NoError(t, err)
-	_, err = ensureSet(ctx, x.client, "rebuilt", 42)
+	_, err = x.setNamed(ctx, x.client, "rebuilt", 42)
 	require.NoError(t, err)
 
 	policy, stored, err := x.GetDefaultPolicy(ctx)

@@ -191,6 +191,10 @@ func (x *Index) placeholderSet(ctx context.Context, wantID int64, dryRun bool) (
 		}
 
 		s, err := create.Save(ctx)
+		if err == nil && wantID != 0 {
+			err = x.advanceSetIDs(ctx, x.client)
+		}
+
 		if err == nil {
 			return s, true, nil
 		}
@@ -304,7 +308,7 @@ func (x *Index) IndexCommits(ctx context.Context, refs []*proto.Ref, dryRun bool
 		return sets, nil
 	}
 
-	return sets, x.resetSetSequence(ctx)
+	return sets, x.advanceSetIDs(ctx, x.client)
 }
 
 // unindexedCommit reads the commit ref names, which must have no row and

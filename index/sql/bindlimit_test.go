@@ -21,7 +21,7 @@ const pastBindLimit = 33000
 func (f *fixture) rows(name string, n int, tombstoned bool) []*proto.Ref {
 	f.t.Helper()
 
-	setID, err := ensureSet(f.ctx, f.x.client, name, 0)
+	setID, err := f.x.setNamed(f.ctx, f.x.client, name, 0)
 	require.NoError(f.t, err)
 
 	refs := make([]*proto.Ref, n)

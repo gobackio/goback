@@ -56,16 +56,19 @@ func findSet(ctx context.Context, c *ent.Client, name string) (int64, error) {
 	return id, err
 }
 
-// ensureSet returns the id of the named set, creating it if needed. A
+// setNamed returns the id of the named set, creating it if needed. A
 // non-zero wantID finds or recreates the set under the id its commits
 // carry, which a rebuild after index loss needs, so same-named sets stay
 // apart; a recreated set comes up with retention paused until an operator
 // sets its policy. The name decides only when that id cannot be used.
-func ensureSet(ctx context.Context, c *ent.Client, name string, wantID int64) (int64, error) {
+func (x *Index) setNamed(ctx context.Context, c *ent.Client, name string, wantID int64) (int64, error) {
 	if wantID != 0 {
 		s, err := c.Set.Get(ctx, wantID)
 		if ent.IsNotFound(err) {
 			s, err = c.Set.Create().SetID(wantID).SetName(name).SetRetentionPaused(true).Save(ctx)
+			if err == nil {
+				err = x.advanceSetIDs(ctx, c)
+			}
 		}
 
 		if err == nil {
@@ -101,7 +104,7 @@ func ensureSet(ctx context.Context, c *ent.Client, name string, wantID int64) (i
 func (x *Index) openSet(ctx context.Context, name string) (int64, error) {
 	s, ok := backup.SessionFromContext(ctx)
 	if !ok || s.InitialRetention == nil || s.Set != name {
-		return ensureSet(ctx, x.client, name, 0)
+		return x.setNamed(ctx, x.client, name, 0)
 	}
 
 	id, err := findSet(ctx, x.client, name)

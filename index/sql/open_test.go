@@ -58,7 +58,7 @@ func TestOpensADirectory(t *testing.T) {
 
 	x := New(dir, store)
 	require.NoError(t, x.Open())
-	_, err := ensureSet(context.Background(), x.client, "world", 0)
+	_, err := x.setNamed(context.Background(), x.client, "world", 0)
 	require.NoError(t, err)
 	require.NoError(t, x.Close())
 
@@ -155,7 +155,7 @@ func TestPostgres(t *testing.T) {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				ids[i], results[i] = ensureSet(ctx, x.client, "world", 0)
+				ids[i], results[i] = x.setNamed(ctx, x.client, "world", 0)
 			}(i)
 		}
 		wg.Wait()
@@ -183,7 +183,7 @@ func TestPostgres(t *testing.T) {
 				if i%2 == 0 {
 					ids[i], results[i] = x.createSet(ctx, "world", &retention.DatabaseBase)
 				} else {
-					ids[i], results[i] = ensureSet(ctx, x.client, "world", 0)
+					ids[i], results[i] = x.setNamed(ctx, x.client, "world", 0)
 				}
 			}(i)
 		}

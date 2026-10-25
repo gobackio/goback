@@ -235,7 +235,7 @@ func (x *Index) ensureSet(ctx context.Context, c *ent.Client, commit *proto.Comm
 	}
 
 	if !strict {
-		return ensureSet(ctx, c, commit.GetBackupSet(), int64(commit.GetSetId()))
+		return x.setNamed(ctx, c, commit.GetBackupSet(), int64(commit.GetSetId()))
 	}
 
 	if _, ok := backup.SetID(commit.GetBackupSet()); ok {
@@ -1388,7 +1388,7 @@ func (x *Index) reIndex(ctx context.Context, report *backup.ReIndexReport) error
 		return err
 	}
 
-	err = x.resetSetSequence(ctx)
+	err = x.advanceSetIDs(ctx, x.client)
 	if err != nil {
 		return err
 	}
@@ -1404,14 +1404,17 @@ func (x *Index) reIndex(ctx context.Context, report *backup.ReIndexReport) error
 	return nil
 }
 
-// resetSetSequence moves the set id sequence past the ids a rebuild
-// recreated, where the database generates ids from a sequence.
-func (x *Index) resetSetSequence(ctx context.Context) error {
-	if !x.locking {
+// advanceSetIDs moves the set id sequence past the ids sets were created
+// under explicitly, as c sees them, where the database generates ids from
+// a sequence that such an insert leaves behind.
+func (x *Index) advanceSetIDs(ctx context.Context, c *ent.Client) error {
+	if x.dialect != dialect.Postgres {
 		return nil
 	}
 
-	_, err := x.client.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence('sets', 'id'), GREATEST((SELECT COALESCE(MAX(id), 1) FROM sets), 1))`)
+	_, err := c.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence('sets', 'id'), GREATEST(
+	(SELECT COALESCE(MAX(id), 1) FROM sets),
+	COALESCE(pg_sequence_last_value(pg_get_serial_sequence('sets', 'id')::regclass), 1)))`)
 
 	return err
 }

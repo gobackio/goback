@@ -175,7 +175,7 @@ func applyStoreScope(ctx context.Context, tx *ent.Tx, s *proto.StoreScope) error
 // applySetScope brings a set to the recorded state, closing or reopening
 // it the way DeleteSet and UndeleteSet do when its state changes.
 func (x *Index) applySetScope(ctx context.Context, tx *ent.Tx, s *proto.SetScope) error {
-	setID, err := ensureSet(ctx, tx.Client(), s.Name, int64(s.SetId))
+	setID, err := x.setNamed(ctx, tx.Client(), s.Name, int64(s.SetId))
 	if err != nil {
 		return err
 	}

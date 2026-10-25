@@ -21,7 +21,7 @@ func TestWithDB(t *testing.T) {
 	require.NoError(t, x.Open())
 
 	ctx := context.Background()
-	_, err = ensureSet(ctx, x.client, "world", 0)
+	_, err = x.setNamed(ctx, x.client, "world", 0)
 	require.NoError(t, err)
 	sets, err := x.ListSets(ctx)
 	require.NoError(t, err)

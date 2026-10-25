@@ -24,14 +24,14 @@ func TestEnsureSetFindsASetByName(t *testing.T) {
 	x := openIndex(t, newMemStore())
 	ctx := context.Background()
 
-	id, err := ensureSet(ctx, x.client, "world", 0)
+	id, err := x.setNamed(ctx, x.client, "world", 0)
 	require.NoError(t, err)
 
-	again, err := ensureSet(ctx, x.client, "world", 0)
+	again, err := x.setNamed(ctx, x.client, "world", 0)
 	require.NoError(t, err)
 	require.Equal(t, id, again)
 
-	other, err := ensureSet(ctx, x.client, "logs", 0)
+	other, err := x.setNamed(ctx, x.client, "logs", 0)
 	require.NoError(t, err)
 	require.NotEqual(t, id, other)
 
@@ -47,19 +47,21 @@ func TestEnsureSetRecreatesUnderCarriedID(t *testing.T) {
 	x := openIndex(t, newMemStore())
 	ctx := context.Background()
 
-	id, err := ensureSet(ctx, x.client, "world", 4200)
+	id, err := x.setNamed(ctx, x.client, "world", 4200)
 	require.NoError(t, err)
 	require.EqualValues(t, 4200, id, "a rebuild recreates the set under the id its commits carry")
 
-	again, err := ensureSet(ctx, x.client, "world", 4200)
+	again, err := x.setNamed(ctx, x.client, "world", 4200)
 	require.NoError(t, err)
 	require.EqualValues(t, 4200, again)
 
-	require.NoError(t, x.resetSetSequence(ctx))
-
-	fresh, err := ensureSet(ctx, x.client, "other", 0)
+	first, err := x.setNamed(ctx, x.client, "first", 1)
 	require.NoError(t, err)
-	require.NotEqualValues(t, 4200, fresh)
+	require.EqualValues(t, 1, first)
+
+	fresh, err := x.setNamed(ctx, x.client, "other", 0)
+	require.NoError(t, err, "a set created without an id takes one no recreated set holds")
+	require.NotContains(t, []int64{1, 4200}, fresh)
 }
 
 var commitClock atomic.Int64
@@ -87,11 +89,11 @@ func TestPresenceFollowsTheHead(t *testing.T) {
 	x := openIndex(t, newMemStore())
 	ctx := context.Background()
 
-	world, err := ensureSet(ctx, x.client, "world", 0)
+	world, err := x.setNamed(ctx, x.client, "world", 0)
 	require.NoError(t, err)
-	logs, err := ensureSet(ctx, x.client, "logs", 0)
+	logs, err := x.setNamed(ctx, x.client, "logs", 0)
 	require.NoError(t, err)
-	other, err := ensureSet(ctx, x.client, "other", 0)
+	other, err := x.setNamed(ctx, x.client, "other", 0)
 	require.NoError(t, err)
 
 	first := commitRef(t, x, world, "world-1")
