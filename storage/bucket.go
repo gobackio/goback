@@ -55,17 +55,25 @@ func (s *bucketFile) Read(buf []byte) (int, error) {
 	}
 
 	if s.stream == nil {
-		stream, err := s.store.bucket.NewRangeReader(context.Background(), s.key, s.offset, s.attrs.Size-s.offset, nil)
+		stalls := s.store.stalls()
+
+		stream, err := s.store.bucket.NewRangeReader(stalls.ctx, s.key, s.offset, s.attrs.Size-s.offset, nil)
 		s.store.count(OpGet, 0)
 
 		if err != nil {
-			return 0, err
+			stalls.end()
+
+			return 0, stalls.explain(err)
 		}
 
-		s.stream = stream
+		stalls.disarm()
+		s.stream, s.streamStalls = stream, stalls
 	}
 
+	s.streamStalls.arm()
 	n, err := s.stream.Read(buf)
+	s.streamStalls.disarm()
+	err = s.streamStalls.explain(err)
 	s.offset += int64(n)
 	s.store.carried(OpGet, int64(n))
 
@@ -83,7 +91,8 @@ func (s *bucketFile) Read(buf []byte) (int, error) {
 func (s *bucketFile) closeStream() {
 	if s.stream != nil {
 		_ = s.stream.Close()
-		s.stream = nil
+		s.streamStalls.end()
+		s.stream, s.streamStalls = nil, nil
 	}
 }
 
@@ -102,16 +111,21 @@ func (s *bucketFile) ReadAt(buf []byte, offset int64) (int, error) {
 
 	length := min(int64(len(buf)), s.attrs.Size-offset)
 
-	reader, err := s.store.bucket.NewRangeReader(context.Background(), s.key, offset, length, nil)
+	stalls := s.store.stalls()
+	defer stalls.end()
+
+	reader, err := s.store.bucket.NewRangeReader(stalls.ctx, s.key, offset, length, nil)
 	if err != nil {
 		s.store.count(OpGet, 0)
 
-		return 0, err
+		return 0, stalls.explain(err)
 	}
 
 	defer reader.Close()
 
-	n, err := io.ReadFull(reader, buf[:length])
+	stalls.disarm()
+	n, err := io.ReadFull(stalls.reader(reader), buf[:length])
+	err = stalls.explain(err)
 	s.store.count(OpGet, int64(n))
 
 	if err == nil && n < len(buf) {
@@ -137,16 +151,21 @@ func (s *bucketFile) WriteTo(w io.Writer) (int64, error) {
 
 	s.closeStream()
 
-	reader, err := s.store.bucket.NewRangeReader(context.Background(), s.key, s.offset, s.attrs.Size-s.offset, nil)
+	stalls := s.store.stalls()
+	defer stalls.end()
+
+	reader, err := s.store.bucket.NewRangeReader(stalls.ctx, s.key, s.offset, s.attrs.Size-s.offset, nil)
 	if err != nil {
 		s.store.count(OpGet, 0)
 
-		return 0, err
+		return 0, stalls.explain(err)
 	}
 
 	defer reader.Close()
 
-	n, err := io.Copy(w, reader)
+	stalls.disarm()
+	n, err := io.Copy(w, stalls.reader(reader))
+	err = stalls.explain(err)
 	s.offset += n
 	s.store.count(OpGet, n)
 
@@ -198,6 +217,10 @@ type bucketFile struct {
 	upload *gcs.Writer
 	stored *blob.Attributes
 
+	// writeStalls bounds each step of writer, streamStalls each of stream
+	writeStalls  *stalls
+	streamStalls *stalls
+
 	readOnly bool
 	offset   int64
 	stream   *blob.Reader
@@ -215,7 +238,9 @@ func (s *bucketFile) Close() error {
 		return nil
 	}
 
-	err := s.writer.Close()
+	s.writeStalls.arm()
+	err := s.writeStalls.explain(s.writer.Close())
+	s.writeStalls.end()
 	s.store.count(OpPut, s.written)
 	s.writer = nil
 
@@ -262,7 +287,10 @@ func (s *bucketFile) Write(buf []byte) (int, error) {
 		return 0, errors.New("Cannot write to read only file")
 	}
 
+	s.writeStalls.arm()
 	n, err := s.writer.Write(buf)
+	s.writeStalls.disarm()
+	err = s.writeStalls.explain(err)
 	s.written += int64(n)
 
 	return n, err
@@ -285,6 +313,8 @@ type BucketStore struct {
 
 	sync      func(key string) error
 	createNew func(key string, data []byte) error
+
+	timeout time.Duration
 
 	onGCS bool
 }
@@ -330,6 +360,104 @@ func WithCreateNew(create func(key string, data []byte) error) BucketOption {
 	}
 }
 
+// DefaultOperationTimeout is how long a BucketStore waits on one request
+// to its bucket, or on one step of a streamed one, before it gives up.
+const DefaultOperationTimeout = 5 * time.Minute
+
+// WithOperationTimeout bounds what the store waits on its bucket: a
+// request such as a listing page, a delete or a small write by d in all,
+// and a streamed read or write by d for each step of it, so a long
+// transfer that keeps moving is never cut. Zero or less waits forever.
+func WithOperationTimeout(d time.Duration) BucketOption {
+	return func(c *BucketStore) {
+		c.timeout = d
+	}
+}
+
+// request is the context of one bucket request.
+func (c *BucketStore) request() (context.Context, context.CancelFunc) {
+	if c.timeout <= 0 {
+		return context.WithCancel(context.Background())
+	}
+
+	return context.WithTimeout(context.Background(), c.timeout)
+}
+
+// timedOut says that err came of a request running past the timeout, when
+// it did.
+func (c *BucketStore) timedOut(ctx context.Context, err error) error {
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("the bucket did not answer within %s: %w", c.timeout, err)
+	}
+
+	return err
+}
+
+// stalls is the context of a streamed bucket request, which ends once a
+// step of it runs longer than the store's timeout: the request until it is
+// disarmed, then each step between arm and disarm. end releases it.
+type stalls struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	timer   *time.Timer
+	timeout time.Duration
+}
+
+func (c *BucketStore) stalls() *stalls {
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &stalls{ctx: ctx, cancel: cancel, timeout: c.timeout}
+
+	if c.timeout > 0 {
+		s.timer = time.AfterFunc(c.timeout, cancel)
+	}
+
+	return s
+}
+
+func (s *stalls) arm() {
+	if s.timer != nil {
+		s.timer.Reset(s.timeout)
+	}
+}
+
+func (s *stalls) disarm() {
+	if s.timer != nil {
+		s.timer.Stop()
+	}
+}
+
+func (s *stalls) end() {
+	s.disarm()
+	s.cancel()
+}
+
+// explain says that err came of a step running past the timeout, when it
+// did.
+func (s *stalls) explain(err error) error {
+	if err != nil && s.timer != nil && s.ctx.Err() != nil {
+		return fmt.Errorf("the bucket did not answer within %s: %w", s.timeout, err)
+	}
+
+	return err
+}
+
+// reader reads r with each read a step.
+func (s *stalls) reader(r io.Reader) io.Reader {
+	return stallingReader{r: r, stalls: s}
+}
+
+type stallingReader struct {
+	r      io.Reader
+	stalls *stalls
+}
+
+func (r stallingReader) Read(buf []byte) (int, error) {
+	r.stalls.arm()
+	defer r.stalls.disarm()
+
+	return r.r.Read(buf)
+}
+
 // Sync implements pack.Syncer.
 func (c *BucketStore) Sync(name string) error {
 	if c.sync == nil {
@@ -354,14 +482,17 @@ func (c *BucketStore) openFile(key string) (pack.File, error) {
 		return file, nil
 	}
 
-	attrs, err := c.bucket.Attributes(context.Background(), key)
+	ctx, cancel := c.request()
+	defer cancel()
+
+	attrs, err := c.bucket.Attributes(ctx, key)
 	c.count(OpHead, 0)
 
 	if err != nil {
 		if gcerrors.Code(err) == gcerrors.NotFound {
 			return nil, pack.ErrFileNotFound
 		}
-		return nil, err
+		return nil, c.timedOut(ctx, err)
 	}
 
 	return &bucketFile{
@@ -383,7 +514,9 @@ func (c *BucketStore) newWriteFile(key string) (pack.File, error) {
 		},
 	}
 
-	writer, err := c.bucket.NewWriter(context.Background(), key, &blob.WriterOptions{
+	file.writeStalls = c.stalls()
+
+	writer, err := c.bucket.NewWriter(file.writeStalls.ctx, key, &blob.WriterOptions{
 		BufferSize: c.bufferSize(gcsStreamedBufferSize),
 		// runs under the file's lock, from the Write or Close that starts the upload
 		BeforeWrite: func(as func(any) bool) error {
@@ -397,10 +530,12 @@ func (c *BucketStore) newWriteFile(key string) (pack.File, error) {
 	})
 	if err != nil {
 		c.count(OpPut, 0)
+		file.writeStalls.end()
 
-		return nil, err
+		return nil, file.writeStalls.explain(err)
 	}
 
+	file.writeStalls.disarm()
 	file.writer = writer
 
 	c.openFilesMtx.Lock()
@@ -456,20 +591,26 @@ func (c *BucketStore) CreateNew(name string, data []byte) error {
 		return c.createNew(c.key(name), data)
 	}
 
-	err := c.bucket.WriteAll(context.Background(), c.key(name), data, &blob.WriterOptions{IfNotExist: true, BufferSize: c.bufferSize(len(data))})
+	ctx, cancel := c.request()
+	defer cancel()
+
+	err := c.bucket.WriteAll(ctx, c.key(name), data, &blob.WriterOptions{IfNotExist: true, BufferSize: c.bufferSize(len(data))})
 	c.count(OpPut, int64(len(data)))
 
 	if gcerrors.Code(err) == gcerrors.FailedPrecondition {
 		return pack.ErrFileExists
 	}
 
-	return err
+	return c.timedOut(ctx, err)
 }
 
 // Checksum implements pack.Checksummer with the MD5 the bucket reports,
 // empty when it has none.
 func (c *BucketStore) Checksum(name string) ([]byte, error) {
-	attrs, err := c.bucket.Attributes(context.Background(), c.key(name))
+	ctx, cancel := c.request()
+	defer cancel()
+
+	attrs, err := c.bucket.Attributes(ctx, c.key(name))
 	c.count(OpHead, 0)
 
 	if err != nil {
@@ -477,7 +618,7 @@ func (c *BucketStore) Checksum(name string) ([]byte, error) {
 			return nil, pack.ErrFileNotFound
 		}
 
-		return nil, err
+		return nil, c.timedOut(ctx, err)
 	}
 
 	return attrs.MD5, nil
@@ -487,12 +628,15 @@ func (c *BucketStore) Checksum(name string) ([]byte, error) {
 func (c *BucketStore) Delete(name string) error {
 	c.count(OpDelete, 0)
 
-	err := c.bucket.Delete(context.Background(), c.key(name))
+	ctx, cancel := c.request()
+	defer cancel()
+
+	err := c.bucket.Delete(ctx, c.key(name))
 	if gcerrors.Code(err) == gcerrors.NotFound {
 		return pack.ErrFileNotFound
 	}
 
-	return err
+	return c.timedOut(ctx, err)
 }
 
 // listPageSize is how many keys one listing request asks for, which is
@@ -505,7 +649,7 @@ func (c *BucketStore) pages(prefix string, each func(*blob.ListObject) error) er
 	options := &blob.ListOptions{Prefix: prefix}
 
 	for token := blob.FirstPageToken; ; {
-		page, next, err := c.bucket.ListPage(context.Background(), token, listPageSize, options)
+		page, next, err := c.listPage(token, options)
 		c.count(OpList, 0)
 
 		if err != nil {
@@ -531,12 +675,24 @@ func (c *BucketStore) pages(prefix string, each func(*blob.ListObject) error) er
 	}
 }
 
+func (c *BucketStore) listPage(token []byte, options *blob.ListOptions) ([]*blob.ListObject, []byte, error) {
+	ctx, cancel := c.request()
+	defer cancel()
+
+	page, next, err := c.bucket.ListPage(ctx, token, listPageSize, options)
+
+	return page, next, c.timedOut(ctx, err)
+}
+
 // DeleteAll implements pack.ArchiveStorage.
 func (c *BucketStore) DeleteAll() error {
 	return c.pages(blobObjectPrefix, func(object *blob.ListObject) error {
 		c.count(OpDelete, 0)
 
-		return c.bucket.Delete(context.Background(), object.Key)
+		ctx, cancel := c.request()
+		defer cancel()
+
+		return c.timedOut(ctx, c.bucket.Delete(ctx, object.Key))
 	})
 }
 
@@ -621,6 +777,7 @@ func NewBucketStore(bucket *blob.Bucket, options ...BucketOption) *BucketStore {
 	storage := &BucketStore{
 		bucket:    bucket,
 		openFiles: make(map[string]*bucketFile),
+		timeout:   DefaultOperationTimeout,
 	}
 
 	for _, option := range options {
