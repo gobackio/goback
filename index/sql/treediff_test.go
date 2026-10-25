@@ -466,6 +466,29 @@ func TestIndexingRefusesATreeThatHoldsItself(t *testing.T) {
 	require.ErrorIs(t, f.indexWithin(root.Ref()), backup.ErrDanglingRef)
 }
 
+func TestIndexingRefusesACommitOverThePathCap(t *testing.T) {
+	f := newFixture(t)
+
+	// each level names the one below twice, doubling the paths
+	level := f.dir("d", f.file("a.txt", "one"))
+	for range 6 {
+		level = f.dir("d", &proto.TreeNode{Stat: &proto.FileInfo{Name: []byte("l"), Type: proto.NodeType_NODE_DIRECTORY, Mode: 0755}, Ref: level.Ref},
+			&proto.TreeNode{Stat: &proto.FileInfo{Name: []byte("r"), Type: proto.NodeType_NODE_DIRECTORY, Mode: 0755}, Ref: level.Ref})
+	}
+
+	root := f.tree(level)
+
+	f.x.MaxPaths = 100
+	require.ErrorIs(t, f.indexWithin(root.Ref()), proto.ErrInvalidObject)
+
+	commits, err := f.x.CommitInfo(f.ctx, "world", f.clock, 10)
+	require.NoError(t, err)
+	require.Empty(t, commits)
+
+	f.x.MaxPaths = 1000
+	require.NoError(t, f.indexWithin(root.Ref()))
+}
+
 func TestIndexingRecordsEveryPathOfASubtreeSharedByManyDirectories(t *testing.T) {
 	f := newFixture(t)
 	shared := f.dir("x", f.file("a.txt", "one"))

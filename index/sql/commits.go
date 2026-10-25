@@ -394,7 +394,7 @@ func (x *Index) planCommit(ctx context.Context, commit *proto.Commit, ref *proto
 
 	at := plan.at
 	plan.newestGone = newest != nil && newest.TombstonedAt != nil
-	diff := &treeDiff{read: c, store: x.reads(), setID: setID, at: at, tolerant: !strict, full: plan.newestGone}
+	diff := &treeDiff{read: c, store: x.reads(), setID: setID, at: at, tolerant: !strict, full: plan.newestGone, maxPaths: x.maxPaths()}
 
 	root := &proto.Tree{}
 	if treeObj == nil {
@@ -410,6 +410,10 @@ func (x *Index) planCommit(ctx context.Context, commit *proto.Commit, ref *proto
 	steps.Lap("walk")
 
 	if err != nil {
+		if strict && errors.Is(err, errTooManyPaths) {
+			return commitPlan{}, fmt.Errorf("%w: commit %x: %v", proto.ErrInvalidObject, ref.Hash, err)
+		}
+
 		if strict {
 			return commitPlan{}, fmt.Errorf("%w: %v", backup.ErrDanglingRef, err)
 		}
@@ -635,7 +639,13 @@ type treeDiff struct {
 	// of the set, for a set whose newest commit is tombstoned: its open
 	// rows describe no commit once the rows only that one held are dropped
 	full bool
+
+	// paths counts the paths the walk planned, which fails past maxPaths
+	paths, maxPaths int64
 }
+
+// errTooManyPaths is a walk that went past the path cap.
+var errTooManyPaths = errors.New("too many paths")
 
 // treeRow and fileRow are versions a commit opens.
 type treeRow struct {
@@ -1011,6 +1021,10 @@ func (d *treeDiff) walk(ctx context.Context, rootRef *proto.Ref, root *proto.Tre
 			descend = append(descend, down...)
 			large = append(large, big...)
 			vanished = append(vanished, gone...)
+
+			if d.paths += int64(len(l.tree.GetNodes())); d.paths > d.maxPaths {
+				return fmt.Errorf("%w: more than %d", errTooManyPaths, d.maxPaths)
+			}
 		}
 
 		if err := d.refLarge(ctx, large); err != nil {

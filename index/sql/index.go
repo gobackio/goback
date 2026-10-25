@@ -45,6 +45,18 @@ var (
 // sqliteFile is the database file inside a local index directory.
 const sqliteFile = "index.db"
 
+// DefaultMaxPaths is the paths indexing a commit walks before it refuses
+// the commit, far above what a real backup holds.
+const DefaultMaxPaths = 50_000_000
+
+func (x *Index) maxPaths() int64 {
+	if x.MaxPaths > 0 {
+		return x.MaxPaths
+	}
+
+	return DefaultMaxPaths
+}
+
 // Index is the store index over one database.
 type Index struct {
 	backup.ObjectStore
@@ -72,6 +84,9 @@ type Index struct {
 	// group carries everything its sets reach, whatever another group
 	// reaches too. nil counts every set of the store together.
 	Grouping func(ctx context.Context) (map[int64]int64, error)
+	// MaxPaths caps the paths indexing a commit walks: a commit over it is
+	// refused with proto.ErrInvalidObject. Zero means DefaultMaxPaths.
+	MaxPaths int64
 
 	stampMu   sync.Mutex
 	lastStamp time.Time
