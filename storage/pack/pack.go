@@ -611,6 +611,11 @@ func (ps *PackStorage) write(ctx context.Context, object *proto.Object) (*writeS
 		return nil, err
 	}
 
+	return ps.writeRecord(ctx, hdr, stored)
+}
+
+// writeRecord is write for a record already encoded, filed under hdr.Ref.
+func (ps *PackStorage) writeRecord(ctx context.Context, hdr *proto.ObjectHeader, stored []byte) (*writeSession, error) {
 	ws, err := ps.writeSessionFor(ctx)
 	if err != nil {
 		return nil, err
@@ -627,12 +632,12 @@ func (ps *PackStorage) write(ctx context.Context, object *proto.Object) (*writeS
 			return err
 		}
 
-		ws.addPending(a, object.Ref())
+		ws.addPending(a, hdr.Ref)
 
 		// queued under the session lock, so a finalize that follows
 		// finds the row queued and writes it first
 		if a.rows != nil {
-			if record := a.indexLocation(object.Ref()); record != nil {
+			if record := a.indexLocation(hdr.Ref); record != nil {
 				claimed, indexed = a, a.rows.enqueue(*record)
 			}
 		}

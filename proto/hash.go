@@ -160,7 +160,8 @@ func StoredHash(stored []byte) []byte {
 
 // VerifyStored checks stored bytes against their header: the stored hash
 // when present, and the ref of everything but a sealed blob, which its
-// stored hash alone checks.
+// stored hash alone checks, so that a PRF-named blob a store has yet to
+// reseal still reads back.
 func VerifyStored(hdr *ObjectHeader, stored []byte) error {
 	if len(hdr.StoredHash) > 0 && !hmac.Equal(StoredHash(stored), hdr.StoredHash) {
 		return ErrRefMismatch

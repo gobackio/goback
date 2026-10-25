@@ -94,6 +94,10 @@ func TestWhileOneProcessMaintainsTheStoreAnotherMaintainsNothingAndReportsBusy(t
 			require.True(t, revivals[0].Busy, "revive")
 			require.False(t, revivals[0].Whole(), "a busy revival checked nothing")
 
+			resealed, err := other.Reseal(ctx, nil)
+			require.NoError(t, err)
+			require.True(t, resealed.Busy, "reseal")
+
 			close(resume)
 
 			result := <-done

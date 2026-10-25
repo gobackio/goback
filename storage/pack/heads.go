@@ -1,6 +1,7 @@
 package pack
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,6 +120,33 @@ func (ps *PackStorage) AdvanceHead(object *proto.Object) error {
 	if ok && current.ReceivedAtNs >= commit.GetReceivedAtNs() {
 		return nil
 	}
+
+	return ps.writeHead(object)
+}
+
+// moveHead points the set of replacement at it where the set's head names
+// old.
+func (ps *PackStorage) moveHead(old *proto.Ref, replacement *proto.Object) error {
+	commit := replacement.GetCommit()
+	if commit.GetSetId() == 0 {
+		return nil
+	}
+
+	held := &ps.headMtx[commit.GetSetId()%uint64(len(ps.headMtx))]
+	held.Lock()
+	defer held.Unlock()
+
+	current, ok, err := readHead(ps.storage, commit.GetSetId())
+	if err != nil || !ok || !bytes.Equal(current.Commit, old.Hash) {
+		return err
+	}
+
+	return ps.writeHead(replacement)
+}
+
+// writeHead points the commit's set at it.
+func (ps *PackStorage) writeHead(object *proto.Object) error {
+	commit := object.GetCommit()
 
 	data, err := json.Marshal(Head{SetID: commit.GetSetId(), Set: commit.GetBackupSet(), Commit: object.Ref().Hash, ReceivedAtNs: commit.GetReceivedAtNs()})
 	if err != nil {

@@ -84,13 +84,14 @@ func DefaultPolicy() Policy {
 
 // Key is a store key, named after its store, with the policy the agent
 // writes under. It is a pair of Tink keysets: deterministic AEAD seals,
-// a PRF derives the key id.
+// a PRF derives the key id and the digests PRF-named blobs carry.
 type Key struct {
 	Name   string
 	Policy Policy
 
 	seal, ident *keyset.Handle
 	sealer      tink.DeterministicAEAD
+	prf         *prf.Set
 	id          []byte
 }
 
@@ -121,7 +122,7 @@ func Generate(name string) (*Key, error) {
 }
 
 // New makes a key from its keysets: deterministic AEAD to seal with and a
-// PRF to derive the key id from.
+// PRF to derive the key id and digests from.
 func New(name string, policy Policy, seal, ident *keyset.Handle) (*Key, error) {
 	sealer, err := daead.New(seal)
 	if err != nil {
@@ -138,7 +139,7 @@ func New(name string, policy Policy, seal, ident *keyset.Handle) (*Key, error) {
 		return nil, err
 	}
 
-	return &Key{Name: name, Policy: policy, seal: seal, ident: ident, sealer: sealer, id: id}, nil
+	return &Key{Name: name, Policy: policy, seal: seal, ident: ident, sealer: sealer, prf: set, id: id}, nil
 }
 
 // Load reads a key file written by Save.
@@ -288,6 +289,29 @@ func (k *Key) OpenBlob(sealed []byte) ([]byte, error) {
 
 func (k *Key) blobAD() []byte {
 	return append([]byte("blob"), k.id...)
+}
+
+// Digest is the PRF of a blob's plaintext, which a PRF-named blob's ref is
+// made from: equal under one key, unrelated under another.
+func (k *Key) Digest(plaintext []byte) []byte {
+	out, err := k.prf.ComputePrimaryPRF(plaintext, 32)
+	if err != nil {
+		panic(fmt.Sprintf("computing a digest under store key %s: %v", k.IDString(), err))
+	}
+
+	return out
+}
+
+// OpenPRFBlob opens a PRF-named blob: stored bytes sealed bound to "blob"
+// and the ref made from their plaintext's Digest, the form a store held
+// sealed blobs in until it was resealed.
+func (k *Key) OpenPRFBlob(sealed, ref []byte) ([]byte, error) {
+	stored, err := k.sealer.DecryptDeterministically(sealed, append([]byte("blob"), ref...))
+	if err != nil {
+		return nil, ErrWrongKey
+	}
+
+	return stored, nil
 }
 
 // SealInline seals a small file's whole content.

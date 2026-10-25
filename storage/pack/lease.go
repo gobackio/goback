@@ -15,9 +15,9 @@ import (
 
 // MaintenanceExt names the leases on the store's maintenance: <n>.maintenance
 // is the nth, held by the process that created it until it releases it or
-// stops renewing it. Collect, RewritePlan, Repair, Revive and Compact each
-// take it, and in another process that finds the newest one held they do
-// nothing and report Busy.
+// stops renewing it. Collect, RewritePlan, Repair, Revive, Reseal and
+// Compact each take it, and in another process that finds the newest one
+// held they do nothing and report Busy.
 const MaintenanceExt = ".maintenance"
 
 // maintenanceLeaseTTL is how long a lease nobody renews stays held, and

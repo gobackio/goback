@@ -58,6 +58,29 @@ func TestABlobOpensOnlyAsABlobUnderItsKey(t *testing.T) {
 	require.ErrorIs(t, err, ErrWrongKey, "a blob is bound to the id of the key that sealed it")
 }
 
+func TestAPRFNamedBlobOpensOnlyUnderItsRef(t *testing.T) {
+	key := testKey(t)
+	data := saveData(3000)
+	ref := key.Digest(data)
+	sealed := key.encrypt(data, append([]byte("blob"), ref...))
+
+	opened, err := key.OpenPRFBlob(sealed, ref)
+	require.NoError(t, err)
+	require.Equal(t, data, opened)
+
+	_, err = key.OpenPRFBlob(sealed, key.Digest(saveData(3001)))
+	require.ErrorIs(t, err, ErrWrongKey)
+
+	_, err = key.OpenBlob(sealed)
+	require.ErrorIs(t, err, ErrWrongKey)
+}
+
+func TestDigestsArePrivateToTheirKey(t *testing.T) {
+	data := saveData(5000)
+
+	require.NotEqual(t, testKey(t).Digest(data), testKey(t).Digest(data))
+}
+
 func TestInlineContentRoundTrips(t *testing.T) {
 	key := testKey(t)
 
