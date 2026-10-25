@@ -3,6 +3,7 @@
 package mapping
 
 import (
+	"math"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -79,7 +80,17 @@ func Seconds(d time.Duration) int64 {
 	return int64(d / time.Second)
 }
 
-// Duration is a count of seconds as a duration.
+// Duration is a count of seconds as a duration; a count past what a
+// duration holds is the longest one, or the shortest.
 func Duration(seconds int64) time.Duration {
+	const most = math.MaxInt64 / int64(time.Second)
+
+	switch {
+	case seconds > most:
+		return math.MaxInt64
+	case seconds < -most:
+		return math.MinInt64
+	}
+
 	return time.Duration(seconds) * time.Second
 }
