@@ -593,7 +593,12 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 
 	purgeStart := time.Now()
 	phase = progress.Start(ctx, progress.OpCollect, progress.PhasePurge, 0, 0)
-	report.Purged, err = ps.PurgeQuarantine(opts.Quarantine, opts.Now)
+	purgeNow, err := storageNow(ps.storage, opts.Now)
+	if err != nil {
+		return nil, errors.Wrap(err, "reading when the gc state was stored")
+	}
+
+	report.Purged, err = ps.PurgeQuarantine(opts.Quarantine, purgeNow)
 	if err != nil {
 		return nil, errors.Wrap(err, "purging the quarantine")
 	}

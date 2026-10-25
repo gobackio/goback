@@ -71,6 +71,33 @@ func TestARewriteKeepsWhatItRetiredUntilTheQuarantineEnds(t *testing.T) {
 	requireStored(t, store, kept, true)
 }
 
+func TestACollectionWhoseClockRunsAheadOfTheStoragePurgesNothingEarly(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	retiredChain(t, store)
+
+	_, err := store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+	second, err := store.Collect(ctx, gcOptions(t, 48*time.Hour))
+	require.NoError(t, err)
+	require.NotZero(t, second.Swept)
+	require.Zero(t, second.Purged, "what it retired was stored moments ago")
+
+	retired, err := store.retiredArchives()
+	require.NoError(t, err)
+	require.NotEmpty(t, retired)
+
+	third, err := store.Collect(ctx, gcOptions(t, 96*time.Hour))
+	require.NoError(t, err)
+	require.Zero(t, third.Purged)
+
+	for name := range retired {
+		require.True(t, store.hasIndexFile(name), "the files of %s stay", name)
+	}
+}
+
 func TestRestoringAQuarantinedArchiveBringsItsObjectsBack(t *testing.T) {
 	store := newGCStore(t, t.TempDir())
 	t.Cleanup(func() { _ = store.Close() })

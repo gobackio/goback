@@ -194,6 +194,8 @@ func TestACollectionDeletesASessionsMarkersOnceNoArchiveOrHorizonHoldsIt(t *test
 	requireMarkers(t, store, spanning.ID, false, false)
 	requireMarkers(t, store, committed.ID, true, true)
 
+	_, err = store.PurgeQuarantine(DefaultQuarantine, time.Now().Add(72*time.Hour))
+	require.NoError(t, err)
 	_, err = store.Collect(ctx, gcOptions(t, 72*time.Hour))
 	require.NoError(t, err)
 	requireMarkers(t, store, committed.ID, false, false)

@@ -441,6 +441,28 @@ func loadGCState(storage ArchiveStorage) (*gcState, error) {
 	return state, nil
 }
 
+// storageNow caps now at when the storage says it last stored the gc
+// state, so a process whose clock runs ahead of the storage's purges no
+// earlier than the storage's clock allows.
+func storageNow(storage ArchiveStorage, now time.Time) (time.Time, error) {
+	file, err := storage.Open(gcStateName)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	if stored := info.ModTime(); !stored.IsZero() && stored.Before(now) {
+		return stored, nil
+	}
+
+	return now, nil
+}
+
 func storeGCState(storage ArchiveStorage, state *gcState) error {
 	file, err := storage.Create(gcStateName)
 	if err != nil {
