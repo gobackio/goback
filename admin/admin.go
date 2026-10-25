@@ -1,6 +1,6 @@
 // Package admin implements the Admin service of a store server: sets, the
 // store policy, retention, escrow and job triggers. The server serves it
-// beside the Store service, behind the same credentials.
+// beside the Store service.
 package admin
 
 import (

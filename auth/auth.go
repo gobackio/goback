@@ -1,6 +1,6 @@
-// Package auth carries the caller's identity through a request: the one
-// secret every agent of a server shares, and the agent id each agent
-// declares.
+// Package auth carries the caller's identity through a request: the key
+// it presented, the backup key every agent of a server shares or the
+// admin key, and the agent id each agent declares.
 package auth
 
 import (
@@ -19,9 +19,11 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Principal is who is calling: the agent id the caller declared.
+// Principal is who is calling: the agent id the caller declared, and
+// whether it presented the admin key.
 type Principal struct {
 	AgentID string
+	Admin   bool
 }
 
 // ErrUnauthenticated is returned when a request carries no principal.
@@ -97,13 +99,21 @@ type Authenticator func(ctx context.Context) (context.Context, error)
 // SharedSecret authenticates callers presenting secret as bearer token
 // and attaches the agent they declare as the principal.
 func SharedSecret(secret string) Authenticator {
+	return Keys(secret, "")
+}
+
+// Keys authenticates callers presenting the backup or the admin key as
+// bearer token and attaches the agent they declare as the principal, an
+// Admin one for the admin key. An empty admin key admits no admin.
+func Keys(backup, admin string) Authenticator {
 	return func(ctx context.Context) (context.Context, error) {
 		presented, ok := Bearer(ctx)
 		if !ok {
 			return nil, status.Error(codes.Unauthenticated, "missing secret")
 		}
 
-		if !equalSecrets(presented, secret) {
+		isAdmin := admin != "" && equalSecrets(presented, admin)
+		if !isAdmin && !equalSecrets(presented, backup) {
 			return nil, status.Error(codes.Unauthenticated, "wrong secret")
 		}
 
@@ -112,7 +122,7 @@ func SharedSecret(secret string) Authenticator {
 			return nil, status.Error(codes.Unauthenticated, "missing agent id")
 		}
 
-		return WithPrincipal(ctx, &Principal{AgentID: agent}), nil
+		return WithPrincipal(ctx, &Principal{AgentID: agent, Admin: isAdmin}), nil
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"path"
 	"runtime/debug"
 	"time"
 
@@ -47,8 +48,13 @@ var serveKeepalive = keepalive.ServerParameters{
 
 // ServeOptions say how Serve serves a store.
 type ServeOptions struct {
-	// Secret is what every agent presents; Serve refuses an empty one.
+	// Secret is the backup key every agent presents, which backs up, reads
+	// and pins and nothing else; Serve refuses an empty one.
 	Secret string
+	// AdminKey is what an operator presents for every other call: deleting
+	// commits and sets, changing retention or the store policy, retiring,
+	// collecting and escrowing the store key. Empty refuses those calls.
+	AdminKey string
 	// TLS is what the server presents to agents. Without it Serve listens
 	// in plaintext only when PlaintextBehindProxy says a proxy in front
 	// terminates TLS.
@@ -62,7 +68,8 @@ type ServeOptions struct {
 
 // Serve serves the repo to agents over gRPC on listener, as goback server
 // does: the store API, the Admin service when the index keeps sets and
-// policy, health checks, whose readiness fails while the index does not
+// policy, with the calls that delete or change anything open to the admin
+// key alone, health checks, whose readiness fails while the index does not
 // answer or the server drains, and the maintenance jobs of opts.Schedule.
 // It returns once ctx ends, after the calls in flight finish, or when the
 // listener fails, and in either case once the maintenance job under way
@@ -70,6 +77,10 @@ type ServeOptions struct {
 func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptions) error {
 	if opts.Secret == "" {
 		return errors.New("no secret: a store server accepts no anonymous calls")
+	}
+
+	if opts.AdminKey == opts.Secret {
+		return errors.New("the admin key is the backup key: every agent could then delete what the others backed up")
 	}
 
 	var creds credentials.TransportCredentials
@@ -105,14 +116,15 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 	}
 
 	remote := storage.NewServer(storage.NewStore(r.Index, sessions))
+	keys := auth.Keys(opts.Secret, opts.AdminKey)
 
 	srv := grpc.NewServer(
 		grpc.Creds(creds),
 		grpc.MaxConcurrentStreams(serveStreams),
 		grpc.KeepaliveParams(serveKeepalive),
 		grpc.StatsHandler(otelgrpc.NewServerHandler(otelgrpc.WithPublicEndpoint())),
-		grpc.ChainUnaryInterceptor(recoverUnary(logger), health.Unary(auth.UnaryInterceptor(opts.Secret), remote.UnaryInterceptor())),
-		grpc.ChainStreamInterceptor(recoverStream(logger), health.Stream(auth.StreamInterceptor(opts.Secret), remote.StreamInterceptor())),
+		grpc.ChainUnaryInterceptor(recoverUnary(logger), health.Unary(auth.Unary(keys), gateUnary, remote.UnaryInterceptor())),
+		grpc.ChainStreamInterceptor(recoverStream(logger), health.Stream(auth.Stream(keys), gateStream, remote.StreamInterceptor())),
 	)
 
 	proto.RegisterStoreServer(srv, remote)
@@ -169,6 +181,70 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 	}
 
 	return err
+}
+
+// backupCalls are the calls the backup key makes: backing up, reading and
+// pinning. Every other call takes the admin key.
+var backupCalls = map[string]bool{
+	proto.Store_Put_FullMethodName:          true,
+	proto.Store_PutCommits_FullMethodName:   true,
+	proto.Store_Missing_FullMethodName:      true,
+	proto.Store_PutObjects_FullMethodName:   true,
+	proto.Store_BeginUpload_FullMethodName:  true,
+	proto.Store_SendUpload_FullMethodName:   true,
+	proto.Store_UploadStatus_FullMethodName: true,
+	proto.Store_Get_FullMethodName:          true,
+	proto.Store_ReadFile_FullMethodName:     true,
+	proto.Store_ReadFiles_FullMethodName:    true,
+	proto.Store_FileInfo_FullMethodName:     true,
+	proto.Store_ReadDir_FullMethodName:      true,
+	proto.Store_CommitInfo_FullMethodName:   true,
+	proto.Store_LatestCommit_FullMethodName: true,
+	proto.Store_GetTree_FullMethodName:      true,
+	proto.Store_BeginCommit_FullMethodName:  true,
+	proto.Store_BeginSession_FullMethodName: true,
+	proto.Store_EndSession_FullMethodName:   true,
+	proto.Store_TouchSession_FullMethodName: true,
+	proto.Store_GetPresence_FullMethodName:  true,
+	proto.Store_ListTrash_FullMethodName:    true,
+	proto.Store_CountCommits_FullMethodName: true,
+	proto.Store_GetRetention_FullMethodName: true,
+	proto.Store_ListPins_FullMethodName:     true,
+	proto.Store_EscrowedKeys_FullMethodName: true,
+
+	adminpb.Admin_ListSets_FullMethodName:       true,
+	adminpb.Admin_GetStorePolicy_FullMethodName: true,
+	adminpb.Admin_GetRetention_FullMethodName:   true,
+}
+
+// admit refuses a call the caller's key does not make.
+func admit(ctx context.Context, method string) error {
+	p, err := auth.Require(ctx)
+	if err != nil {
+		return status.Error(codes.Unauthenticated, err.Error())
+	}
+
+	if p.Admin || backupCalls[method] {
+		return nil
+	}
+
+	return status.Errorf(codes.PermissionDenied, "%s takes the server's admin key; the backup key only backs up, reads and pins", path.Base(method))
+}
+
+func gateUnary(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if err := admit(ctx, info.FullMethod); err != nil {
+		return nil, err
+	}
+
+	return handler(ctx, req)
+}
+
+func gateStream(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if err := admit(ss.Context(), info.FullMethod); err != nil {
+		return err
+	}
+
+	return handler(srv, ss)
 }
 
 // recoverUnary answers a call whose handler panics with codes.Internal and

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -35,6 +36,15 @@ var Command = cli.Command{
 		cli.StringFlag{
 			Name:  "secret-file",
 			Usage: "file that holds the secret, to keep it off the command line",
+		},
+		cli.StringFlag{
+			Name:   "admin-key",
+			Usage:  "key that admin commands present, which alone deletes, changes retention or the store policy, retires, collects and escrows",
+			EnvVar: "GOBACK_ADMIN_KEY",
+		},
+		cli.StringFlag{
+			Name:  "admin-key-file",
+			Usage: "file that holds the admin key, to keep it off the command line",
 		},
 		cli.StringFlag{
 			Name:  "tls-cert",
@@ -82,6 +92,11 @@ func serverAction(c *cli.Context) {
 		common.Fatal(err)
 	}
 
+	adminKey, err := keyFrom(c, "admin-key")
+	if err != nil {
+		common.Fatal(err)
+	}
+
 	_, tlsConfig, err := storage.ServerTLS(c.String("tls-cert"), c.String("tls-key"), c.Bool("plaintext-behind-proxy"))
 	if err != nil {
 		common.Fatal(err)
@@ -102,6 +117,7 @@ func serverAction(c *cli.Context) {
 
 	err = repo.Serve(ctx, listener, goback.ServeOptions{
 		Secret:               secret,
+		AdminKey:             adminKey,
 		TLS:                  tlsConfig,
 		PlaintextBehindProxy: c.Bool("plaintext-behind-proxy"),
 		Schedule: maintenance.Schedule{
@@ -129,18 +145,9 @@ func serverAction(c *cli.Context) {
 // sharedSecret reads --secret or --secret-file; the server accepts no
 // anonymous calls.
 func sharedSecret(ctx *cli.Context) (string, error) {
-	secret, file := ctx.String("secret"), ctx.String("secret-file")
-
-	switch {
-	case secret != "" && file != "":
-		return "", errors.New("--secret and --secret-file are exclusive")
-	case file != "":
-		data, err := os.ReadFile(file)
-		if err != nil {
-			return "", err
-		}
-
-		secret = strings.TrimSpace(string(data))
+	secret, err := keyFrom(ctx, "secret")
+	if err != nil {
+		return "", err
 	}
 
 	if secret == "" {
@@ -148,4 +155,23 @@ func sharedSecret(ctx *cli.Context) (string, error) {
 	}
 
 	return secret, nil
+}
+
+// keyFrom reads the flag name or the file its name-file flag names.
+func keyFrom(ctx *cli.Context, name string) (string, error) {
+	key, file := ctx.String(name), ctx.String(name+"-file")
+
+	switch {
+	case key != "" && file != "":
+		return "", fmt.Errorf("--%s and --%s-file are exclusive", name, name)
+	case file != "":
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return "", err
+		}
+
+		key = strings.TrimSpace(string(data))
+	}
+
+	return key, nil
 }

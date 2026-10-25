@@ -63,7 +63,7 @@ func TestALocalRunCreatesItsSetWithItsInitialRetention(t *testing.T) {
 
 // serving serves a fresh repo on loopback until the test ends and opens
 // an agent's repo of it.
-func serving(t *testing.T, ctx context.Context) (repo, agent *Repo) {
+func serving(t *testing.T, ctx context.Context) (repo, agent, operator *Repo) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -76,25 +76,29 @@ func serving(t *testing.T, ctx context.Context) (repo, agent *Repo) {
 
 	served := make(chan error, 1)
 	go func() {
-		served <- repo.Serve(ctx, listener, ServeOptions{Secret: "s3cret", PlaintextBehindProxy: true, Schedule: maintenance.DefaultSchedule})
+		served <- repo.Serve(ctx, listener, ServeOptions{Secret: "s3cret", AdminKey: "4dmin", PlaintextBehindProxy: true, Schedule: maintenance.DefaultSchedule})
 	}()
 
 	agent, err = Open(ctx, Settings{Storage: "goback+insecure://s3cret@" + listener.Addr().String(), AgentID: "agent"})
 	require.NoError(t, err)
 
+	operator, err = Open(ctx, Settings{Storage: "goback+insecure://4dmin@" + listener.Addr().String(), AgentID: "operator"})
+	require.NoError(t, err)
+
 	t.Cleanup(func() {
+		_ = operator.Close()
 		_ = agent.Close()
 		cancel()
 		require.NoError(t, <-served)
 		_ = repo.Close()
 	})
 
-	return repo, agent
+	return repo, agent, operator
 }
 
 func TestARunAgainstAServerCreatesItsSetWithItsInitialRetention(t *testing.T) {
 	ctx := context.Background()
-	repo, agent := serving(t, ctx)
+	repo, agent, _ := serving(t, ctx)
 
 	backUp(t, ctx, agent, "db/wal", &retention.DatabaseLog)
 	require.Equal(t, &retention.DatabaseLog, ownPolicy(t, ctx, repo, "db/wal"))
@@ -107,39 +111,42 @@ func TestARunAgainstAServerCreatesItsSetWithItsInitialRetention(t *testing.T) {
 	require.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
 }
 
-func TestAnAgentSetsItsSetsRetentionThroughTheServer(t *testing.T) {
+func TestAnOperatorSetsASetsRetentionThroughTheServer(t *testing.T) {
 	ctx := context.Background()
-	repo, agent := serving(t, ctx)
+	repo, agent, operator := serving(t, ctx)
 	backUp(t, ctx, agent, "files", nil)
 
-	policies := agent.Index.(interface {
+	type policies interface {
 		GetPolicy(ctx context.Context, set string) (index.SetRetention, error)
 		SetPolicy(ctx context.Context, set string, p *retention.Policy) (bool, error)
-	})
+	}
 
 	own := &retention.Policy{KeepLast: 2, KeepWithin: 36 * time.Hour, Brackets: []retention.Bracket{{Period: retention.Yearly}}}
-	pending, err := policies.SetPolicy(ctx, "files", own)
+	_, err := agent.Index.(policies).SetPolicy(ctx, "files", own)
+	require.Equal(t, codes.PermissionDenied, status.Code(err), "the backup key changes no retention")
+
+	pending, err := operator.Index.(policies).SetPolicy(ctx, "files", own)
 	require.NoError(t, err)
 	require.False(t, pending)
 	require.Equal(t, own, ownPolicy(t, ctx, repo, "files"))
 
-	got, err := policies.GetPolicy(ctx, "files")
+	got, err := operator.Index.(policies).GetPolicy(ctx, "files")
 	require.NoError(t, err)
 	require.Equal(t, index.SetRetention{Policy: own, Effective: *own}, got)
 
 	def := retention.Policy{KeepLast: 3, Brackets: []retention.Bracket{{Period: retention.Daily, Count: 10}}}
 	require.NoError(t, repo.Index.(admin.Index).SetDefaultPolicy(ctx, &def))
-	_, err = policies.SetPolicy(ctx, "files", nil)
+	_, err = operator.Index.(policies).SetPolicy(ctx, "files", nil)
 	require.NoError(t, err)
 
-	got, err = policies.GetPolicy(ctx, "files")
+	got, err = operator.Index.(policies).GetPolicy(ctx, "files")
 	require.NoError(t, err)
 	require.Nil(t, got.Policy)
 	require.Equal(t, def, got.Effective, "the set keeps the store's default")
 
-	_, err = policies.SetPolicy(ctx, "files", &retention.Policy{KeepLast: 1, Brackets: []retention.Bracket{{Period: "fortnightly", Count: 2}}})
+	_, err = operator.Index.(policies).SetPolicy(ctx, "files", &retention.Policy{KeepLast: 1, Brackets: []retention.Bracket{{Period: "fortnightly", Count: 2}}})
 	require.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
 
-	_, err = policies.GetPolicy(ctx, "nothing")
+	_, err = agent.Index.(policies).GetPolicy(ctx, "nothing")
 	require.Equal(t, codes.NotFound, status.Code(err), "%v", err)
 }

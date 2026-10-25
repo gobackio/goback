@@ -97,12 +97,19 @@ compacts every time and collects garbage once the last collection is a week old.
 
 ```sh
 goback --storage gcs://my-bucket --index /var/lib/goback/index \
-  server --address :6060 --secret-file secret --tls-cert cert.pem --tls-key key.pem
+  server --address :6060 --secret-file secret --admin-key-file admin-key \
+  --tls-cert cert.pem --tls-key key.pem
 ```
 
 The server listens on 127.0.0.1:6060 unless `--address` says otherwise.
-Every agent presents the shared secret and its own `--agent-id`. The server
-runs maintenance itself: it sweeps, compacts, retires and collects on its own
+Every agent presents the shared secret and its own `--agent-id`. The secret
+backs up, reads and pins, and nothing else, so one machine's copy of it
+cannot destroy another's backups. Deleting commits or sets, changing
+retention or the store policy, retiring, collecting and escrowing the store
+key take the admin key: `goback://<admin-key>@host:port` in place of the
+secret. Without `--admin-key`, the server refuses those calls; run them on
+the server machine against the store itself instead. The server runs
+maintenance itself: it sweeps, compacts, retires and collects on its own
 intervals.
 
 ## The agent
