@@ -648,7 +648,10 @@ type shadowFS struct {
 	local    backup.LocalFS
 }
 
-var _ backup.FS = shadowFS{}
+var (
+	_ backup.FS         = shadowFS{}
+	_ backup.MetadataFS = shadowFS{}
+)
 
 func (f shadowFS) ReadDir(ctx context.Context, dir string) ([]os.DirEntry, error) {
 	path, err := f.snapshot.Path(dir)
@@ -693,6 +696,33 @@ func (f shadowFS) Readlink(ctx context.Context, path string) (string, error) {
 	}
 
 	return f.local.Readlink(ctx, shadowed)
+}
+
+func (f shadowFS) Security(ctx context.Context, path string) ([]byte, error) {
+	shadowed, err := f.snapshot.Path(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return f.local.Security(ctx, shadowed)
+}
+
+func (f shadowFS) Streams(ctx context.Context, path string) ([]backup.StreamInfo, error) {
+	shadowed, err := f.snapshot.Path(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return f.local.Streams(ctx, shadowed)
+}
+
+func (f shadowFS) OpenStream(ctx context.Context, path, name string) (backup.File, error) {
+	shadowed, err := f.snapshot.Path(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return f.local.OpenStream(ctx, shadowed, name)
 }
 
 func (f shadowFS) Join(dir, name string) string {

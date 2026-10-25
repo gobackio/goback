@@ -132,6 +132,28 @@ func TestAWalkRereadsMetadataOnlyWhereTheChangeTimeMoved(t *testing.T) {
 	require.EqualValues(t, 2, fsys.reads.Load())
 }
 
+// plainFS is the local disk without its MetadataFS methods.
+type plainFS struct{ FS }
+
+func TestAWalkReadsTheMetadataABaseRecordedWithoutIt(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.walker.FS = plainFS{LocalFS{}}
+
+	f.write("a.txt", []byte("one"))
+	f.write("sub/b.txt", []byte("two"))
+
+	first := f.run()
+	require.Nil(t, f.tree(first.Commit.Tree)["a.txt"].Stat.Security)
+
+	fsys := &countingMetadataFS{}
+	f.walker.FS = fsys
+
+	second := f.run()
+	require.EqualValues(t, 3, fsys.reads.Load())
+	require.NotNil(t, f.tree(second.Commit.Tree)["a.txt"].Stat.Security)
+	require.NotNil(t, f.tree(second.Commit.Tree)["sub"].Stat.Security)
+}
+
 func TestEntriesSharingADescriptorStoreItOnce(t *testing.T) {
 	f := newWalkerFixture(t)
 	for _, name := range []string{"a", "b", "c", "d"} {

@@ -85,8 +85,8 @@ func (d *descriptors) stored(sd []byte, ref *proto.Ref, put func() (*proto.Ref, 
 
 // metadata records the security descriptor and streams of the entry at
 // path into stat. It takes them from the base node when the size, mtime
-// and change time say nothing changed, and keeps the base node's for what
-// it cannot read.
+// and change time say nothing changed and the base node holds a security
+// descriptor, and keeps the base node's for what it cannot read.
 func (w *Walker) metadata(ctx context.Context, path, rel string, stat *proto.FileInfo, baseNode *proto.TreeNode) error {
 	fsys, ok := w.fs().(MetadataFS)
 	if !ok {
@@ -102,7 +102,7 @@ func (w *Walker) metadata(ctx context.Context, path, rel string, stat *proto.Fil
 		w.descriptors.hold(base.GetSecurity())
 	}
 
-	if !w.Verify && !w.lost(rel) && base.GetCtimeNs() != 0 &&
+	if !w.Verify && !w.lost(rel) && base.GetCtimeNs() != 0 && base.GetSecurity() != nil &&
 		base.GetCtimeNs() == stat.GetCtimeNs() && base.GetMtimeNs() == stat.GetMtimeNs() && base.GetSize() == stat.GetSize() {
 		stat.Security, stat.Streams = base.GetSecurity(), base.GetStreams()
 		return nil

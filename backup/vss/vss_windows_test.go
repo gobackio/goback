@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gobackio/goback/backup"
+
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 )
@@ -54,6 +56,7 @@ func TestAShadowCopyReadsTheVolumeAsItWas(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.txt")
 	require.NoError(t, os.WriteFile(path, []byte("before"), 0o644))
+	require.NoError(t, os.WriteFile(path+":extra", []byte("stream"), 0o644))
 
 	snapshot, err := Take(context.Background(), dir)
 	require.NoError(t, err)
@@ -67,6 +70,22 @@ func TestAShadowCopyReadsTheVolumeAsItWas(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 	require.Equal(t, "before", string(content))
+
+	meta := fsys.(backup.MetadataFS)
+	sd, err := meta.Security(context.Background(), path)
+	require.NoError(t, err)
+	require.NotEmpty(t, sd)
+
+	streams, err := meta.Streams(context.Background(), path)
+	require.NoError(t, err)
+	require.Equal(t, []backup.StreamInfo{{Name: "extra", Size: 6}}, streams)
+
+	stream, err := meta.OpenStream(context.Background(), path, "extra")
+	require.NoError(t, err)
+	content, err = io.ReadAll(stream)
+	require.NoError(t, err)
+	require.NoError(t, stream.Close())
+	require.Equal(t, "stream", string(content))
 
 	shadowed, err := snapshot.Path(path)
 	require.NoError(t, err)
