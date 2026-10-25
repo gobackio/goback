@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
 
+	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,6 +77,50 @@ func TestARestoreWritesTheNewestBaseAndRecoversFromTheWALSet(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(conf), "restore_command = 'goback postgres wal-get --commit "+hex.EncodeToString(wal.Ref.Hash)+" %f %p'")
 	require.NotContains(t, string(conf), "recovery_target_time")
+}
+
+func TestARestoreKeepsTheRestoreCommandsSettingsOutOfTheDataDirectory(t *testing.T) {
+	f := newWALFixture(t)
+
+	_, err := f.runBase(baseTar(t, 42), nil)
+	require.NoError(t, err)
+
+	f.spoolSegment(7, 42)
+	_, err = f.run()
+	require.NoError(t, err)
+
+	env := map[string]string{"GOBACK_PASSPHRASE": `0123 "it's" $HOME \n!` + "`x`\nline", "GOBACK_STORAGE": "goback://s3cr3t@backup:7000"}
+	dir := filepath.Join(t.TempDir(), "data")
+	r := &Restore{
+		Objects:        f.index,
+		Latest:         func(ctx context.Context, set string) (*proto.Ref, error) { return f.index.LatestCommit(ctx, set) },
+		BaseSet:        "db-base",
+		WALSet:         "db-wal",
+		RestoreCommand: func(*proto.Ref) string { return "goback postgres wal-get %f %p" },
+		Env:            env,
+	}
+
+	_, err = r.Run(f.ctx, dir)
+	require.NoError(t, err)
+
+	path, err := EnvFile(dir)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Dir(dir), filepath.Dir(path))
+
+	read, err := godotenv.Read(path)
+	require.NoError(t, err)
+	require.Equal(t, env, read)
+
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
+
+	conf, err := os.ReadFile(filepath.Join(dir, "postgresql.auto.conf"))
+	require.NoError(t, err)
+	require.NotContains(t, string(conf), "s3cr3t")
+	require.Contains(t, string(conf), "recovery_end_command = "+confString("rm -f "+ShellQuote(path)))
 }
 
 func TestARestoreBeforePostgres12RecoversThroughRecoveryConf(t *testing.T) {

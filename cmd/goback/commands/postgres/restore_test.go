@@ -9,39 +9,48 @@ import (
 	"github.com/urfave/cli"
 )
 
-func TestGlobalArgsEndWhereTheCommandStarts(t *testing.T) {
-	for _, args := range [][]string{
-		{"--agent-id", "postgres", "--storage", "/srv/store", "--json"},
-		{"--agent-id=postgres", "-s", "postgres", "--index", "postgres://db/index"},
-		{"--storage", "postgres"},
-		{},
-	} {
-		line := append(append([]string{"goback"}, args...), "postgres", "restore", "--base-set", "postgres", "postgres")
-
-		got := []string{"not run"}
-
-		restore := restoreCmd
-		restore.Action = func(c *cli.Context) error {
-			got = globalArgs(c, line)
-			return nil
-		}
-
-		cmd := Command
-		cmd.Subcommands = []cli.Command{restore}
-
-		app := cli.NewApp()
-		app.Commands = []cli.Command{cmd}
-		app.Flags = []cli.Flag{
-			cli.BoolFlag{Name: "json"},
-			cli.StringFlag{Name: "storage"},
-			cli.StringFlag{Name: "index"},
-			cli.StringFlag{Name: "set, s"},
-			cli.StringFlag{Name: "agent-id"},
-		}
-
-		require.NoError(t, app.Run(line))
-		require.Equal(t, args, append([]string{}, got...), "%q", args)
+func TestTheRestoreCommandReadsTheFlagsWithAVariableFromTheEnvFile(t *testing.T) {
+	for _, env := range []string{"GOBACK_STORAGE", "GOBACK_INDEX", "GOBACK_PASSPHRASE", "GOBACK_JSON"} {
+		t.Setenv(env, "")
 	}
+
+	line := []string{"goback", "--agent-id", "pg", "--storage", "goback://s3cr3t@backup:7000", "--passphrase", "correct horse", "--json",
+		"postgres", "restore", "--base-set", "postgres", "postgres"}
+
+	var (
+		command string
+		env     map[string]string
+	)
+
+	restore := restoreCmd
+	restore.Action = func(c *cli.Context) error {
+		var err error
+		command, env, err = invocation(c, "/srv/pg.goback.env")
+
+		return err
+	}
+
+	cmd := Command
+	cmd.Subcommands = []cli.Command{restore}
+
+	app := cli.NewApp()
+	app.Commands = []cli.Command{cmd}
+	app.Flags = []cli.Flag{
+		cli.StringFlag{Name: "env-file", EnvVar: "GOBACK_ENV_FILE"},
+		cli.BoolFlag{Name: "json", EnvVar: "GOBACK_JSON"},
+		cli.StringFlag{Name: "storage", EnvVar: "GOBACK_STORAGE"},
+		cli.StringFlag{Name: "index", EnvVar: "GOBACK_INDEX"},
+		cli.StringFlag{Name: "set, s"},
+		cli.StringFlag{Name: "agent-id"},
+		cli.StringFlag{Name: "passphrase", EnvVar: "GOBACK_PASSPHRASE"},
+		cli.StringFlag{Name: "blob-cache-size", Value: "4GB"},
+	}
+
+	require.NoError(t, app.Run(line))
+	require.Equal(t, map[string]string{"GOBACK_STORAGE": "goback://s3cr3t@backup:7000", "GOBACK_PASSPHRASE": "correct horse", "GOBACK_JSON": "true"}, env)
+	require.NotContains(t, command, "s3cr3t")
+	require.NotContains(t, command, "horse")
+	require.True(t, strings.HasSuffix(command, " --env-file '/srv/pg.goback.env' '--agent-id=pg'"), command)
 }
 
 func TestWALGetStopsRecoveryWhenItCannotReadTheCommit(t *testing.T) {

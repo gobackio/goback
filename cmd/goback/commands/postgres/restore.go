@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,9 +27,11 @@ var restoreCmd = cli.Command{
 	ArgsUsage: "<data directory>",
 	Description: "With --wal-set, restore sets a restore_command that runs goback for each WAL file Postgres asks\n" +
 		"for. It runs this binary with the global flags given here, or the command in --goback. The command\n" +
-		"and its flags go into postgresql.auto.conf, or into recovery.conf before Postgres 12. Settings\n" +
-		"given as environment variables must also be set in Postgres's environment. With --copy-wal, restore\n" +
-		"copies the WAL into pg_wal instead. Postgres then needs neither goback nor the store.",
+		"goes into postgresql.auto.conf, or into recovery.conf before Postgres 12. The flags that have an\n" +
+		"environment variable go into <data directory>.goback.env, mode 0600, which recovery removes when it\n" +
+		"ends. Other settings given as environment variables must also be set in Postgres's environment.\n" +
+		"With --copy-wal, restore copies the WAL into pg_wal instead. Postgres then needs neither goback nor\n" +
+		"the store.",
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:  "base-set",
@@ -100,14 +103,18 @@ func restoreAction(c *cli.Context) error {
 	if !c.Bool("copy-wal") {
 		goback := c.String("goback")
 		if goback == "" {
-			var err error
-			if goback, err = invocation(c); err != nil {
+			envFile, err := postgres.EnvFile(c.Args().First())
+			if err != nil {
+				return err
+			}
+
+			if goback, r.Env, err = invocation(c, envFile); err != nil {
 				return err
 			}
 		}
 
 		r.RestoreCommand = func(wal *proto.Ref) string {
-			return strings.ReplaceAll(goback, "%", "%%") + " postgres wal-get --wal-set " + shellQuote(c.String("wal-set")) + " --commit " + hex.EncodeToString(wal.Hash) + " %f %p"
+			return strings.ReplaceAll(goback, "%", "%%") + " postgres wal-get --wal-set " + postgres.ShellQuote(c.String("wal-set")) + " --commit " + hex.EncodeToString(wal.Hash) + " %f %p"
 		}
 	}
 
@@ -143,39 +150,56 @@ func restoreAction(c *cli.Context) error {
 	return nil
 }
 
-// invocation is this binary with the global flags it was started with, quoted
-// for the shell restore_command runs in.
-func invocation(c *cli.Context) (string, error) {
+// invocation is this binary reading envFile, quoted for the shell
+// restore_command runs in, and the global flags it was started with as it
+// is to read them: those with an environment variable in env, the others
+// on its command line.
+func invocation(c *cli.Context, envFile string) (string, map[string]string, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
-	words := []string{shellQuote(exe)}
-	for _, arg := range globalArgs(c, os.Args) {
-		words = append(words, shellQuote(arg))
-	}
+	words := []string{postgres.ShellQuote(exe), "--env-file", postgres.ShellQuote(envFile)}
+	env := map[string]string{}
 
-	return strings.Join(words, " "), nil
-}
-
-// globalArgs is the part of args, the command line c was parsed from, that
-// the app's own flags took: what comes before the first command's name.
-func globalArgs(c *cli.Context, args []string) []string {
 	for c.Parent() != nil {
 		c = c.Parent()
 	}
 
-	end := len(args) - len(c.Args())
-	if end < 1 {
-		return nil
+	for _, f := range c.App.Flags {
+		var name, value, envVar, unset string
+
+		switch f := f.(type) {
+		case cli.StringFlag:
+			name, envVar, unset = firstName(f.Name), f.EnvVar, f.Value
+			value = c.GlobalString(name)
+		case cli.BoolFlag:
+			name, envVar, unset = firstName(f.Name), f.EnvVar, "false"
+			value = strconv.FormatBool(c.GlobalBool(name))
+		case cli.BoolTFlag:
+			name, envVar, unset = firstName(f.Name), f.EnvVar, "true"
+			value = strconv.FormatBool(c.GlobalBoolT(name))
+		default:
+			return "", nil, fmt.Errorf("restore_command cannot pass on the global flag %s", f.GetName())
+		}
+
+		switch {
+		case name == "env-file" || value == unset:
+		case envVar != "":
+			env[envVar] = value
+		default:
+			words = append(words, postgres.ShellQuote("--"+name+"="+value))
+		}
 	}
 
-	return args[1:end]
+	return strings.Join(words, " "), env, nil
 }
 
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+// firstName is the first of a flag's names.
+func firstName(names string) string {
+	name, _, _ := strings.Cut(names, ",")
+	return strings.TrimSpace(name)
 }
 
 var walGetCmd = cli.Command{

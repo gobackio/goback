@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -45,6 +46,12 @@ type Restore struct {
 	// commit's files, with %f and %p for Postgres to fill in. When nil, the
 	// WAL recovery reads is copied into the data directory's pg_wal.
 	RestoreCommand func(walCommit *proto.Ref) string
+	// Env, with a RestoreCommand, holds the settings it needs, as variable
+	// names and their values, so none of them goes into the data directory.
+	// Run writes them, mode 0600, to EnvFile(dir) on the local disk, as the
+	// lines goback --env-file reads, and sets a recovery_end_command that
+	// removes that file once recovery ends.
+	Env map[string]string
 	// Workers bounds how many files are written at once; 0 means
 	// backup.DefaultRestoreWorkers.
 	Workers int
@@ -94,6 +101,44 @@ func (r *Restore) Run(ctx context.Context, dir string) (*RestoreResult, error) {
 	result.WAL = walRef
 
 	return result, r.configureRecovery(ctx, dir, base, walRef, wal, result)
+}
+
+// EnvFile is where Run writes Restore.Env for a restore into dir: beside
+// the data directory, as an absolute path.
+func EnvFile(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+
+	return abs + ".goback.env", nil
+}
+
+// envEscape escapes a value for the double quotes of an env file.
+var envEscape = strings.NewReplacer(`\`, `\\`, "\n", `\n`, "\r", `\r`, `"`, `\"`, "!", `\!`, "$", `\$`, "`", "\\`")
+
+// writeEnv writes env to path, readable by its owner alone.
+func writeEnv(path string, env map[string]string) error {
+	var b strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(env)) {
+		fmt.Fprintf(&b, "%s=\"%s\"\n", name, envEscape.Replace(env[name]))
+	}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+
+	err = f.Chmod(0o600)
+	if _, writeErr := f.WriteString(b.String()); err == nil {
+		err = writeErr
+	}
+
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+
+	return err
 }
 
 func (r *Restore) fs() backup.WriteFS {
@@ -404,6 +449,19 @@ func (r *Restore) configureRecovery(ctx context.Context, dir string, base *proto
 		settings = append(settings, "recovery_target_time = "+confString(r.At.UTC().Format("2006-01-02 15:04:05.999999+00")))
 	}
 
+	if r.RestoreCommand != nil && r.Env != nil {
+		path, err := EnvFile(dir)
+		if err != nil {
+			return err
+		}
+
+		if err := writeEnv(path, r.Env); err != nil {
+			return fmt.Errorf("writing the restore_command's settings: %w", err)
+		}
+
+		settings = append(settings, "recovery_end_command = "+confString("rm -f "+ShellQuote(path)))
+	}
+
 	name := "postgresql.auto.conf"
 	if major < 12 {
 		name = "recovery.conf"
@@ -450,6 +508,12 @@ func majorVersion(content []byte) (int, error) {
 // starts an escape.
 func confString(s string) string {
 	return "'" + strings.NewReplacer(`\`, `\\`, "'", "''").Replace(s) + "'"
+}
+
+// ShellQuote quotes s as one word for the POSIX shell Postgres runs its
+// restore_command in.
+func ShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // ErrNoWALFile is FetchWAL's error for a file the WAL commit does not hold.
