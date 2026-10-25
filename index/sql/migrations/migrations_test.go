@@ -65,6 +65,62 @@ func TestApplyRecordsRevisions(t *testing.T) {
 	require.Zero(t, n)
 }
 
+// upTo is the SQLite directory up to and including version.
+func upTo(t *testing.T, version string) *migrate.MemDir {
+	t.Helper()
+
+	full, err := Dir(SQLite)
+	require.NoError(t, err)
+	files, err := full.Files()
+	require.NoError(t, err)
+
+	dir := &migrate.MemDir{}
+	for _, f := range files {
+		if f.Version() > version {
+			break
+		}
+
+		require.NoError(t, dir.WriteFile(f.Name(), f.Bytes()))
+	}
+
+	sum, err := dir.Checksum()
+	require.NoError(t, err)
+	require.NoError(t, migrate.WriteSumFile(dir, sum))
+
+	return dir
+}
+
+// TestApplyRebuildsTablesThatRowsReference migrates a database holding a
+// set and rows that reference it from the first schema, through the
+// migrations that rebuild the sets table.
+func TestApplyRebuildsTablesThatRowsReference(t *testing.T) {
+	ctx := context.Background()
+	db := memory(t)
+
+	require.NoError(t, applyDir(ctx, db, SQLite, upTo(t, "20260917165456"), revisionsTable, "", false))
+
+	for _, stmt := range []string{
+		"INSERT INTO sets (name) VALUES ('s')",
+		"INSERT INTO commits (ref, timestamp, received_at, tree, set_id) VALUES (zeroblob(32), '2026-09-16 08:00:00+00:00', '2026-09-16 08:00:00+00:00', zeroblob(32), 1)",
+		"INSERT INTO files (path, dir, valid_from, ref, mtime_ns, mode, user, `group`, size, set_id) VALUES ('a', '', '2026-09-16 08:00:00+00:00', zeroblob(32), 0, 0, '', '', 0, 1)",
+		"INSERT INTO trees (path, dir, valid_from, ref, set_id) VALUES ('d', '', '2026-09-16 08:00:00+00:00', zeroblob(32), 1)",
+		"INSERT INTO set_refs (ref, set_id) VALUES (zeroblob(32), 1)",
+	} {
+		_, err := db.ExecContext(ctx, stmt)
+		require.NoError(t, err, stmt)
+	}
+
+	require.NoError(t, Apply(ctx, db, SQLite))
+
+	var n int
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT count(*) FROM commits WHERE set_id = (SELECT id FROM sets WHERE name = 's')").Scan(&n))
+	require.Equal(t, 1, n)
+
+	var keys bool
+	require.NoError(t, db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&keys))
+	require.True(t, keys, "the connection gets its foreign keys back")
+}
+
 func TestApplyRefusesADirtyDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := memory(t)

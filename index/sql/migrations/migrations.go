@@ -7,6 +7,7 @@ package migrations
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -94,17 +95,13 @@ func ApplyDir(ctx context.Context, db *sql.DB, dialect string, dir migrate.Dir, 
 func applyDir(ctx context.Context, db *sql.DB, dialect string, dir migrate.Dir, table, lock string, allowDirty bool) error {
 	switch dialect {
 	case SQLite:
-		tx, err := db.BeginTx(ctx, nil)
+		conn, err := db.Conn(ctx)
 		if err != nil {
 			return err
 		}
+		defer conn.Close()
 
-		if err := apply(ctx, tx, dialect, dir, table, allowDirty); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-
-		return tx.Commit()
+		return applySQLite(ctx, conn, dir, table, allowDirty)
 	case Postgres:
 		drv, err := postgres.Open(db)
 		if err != nil {
@@ -121,6 +118,78 @@ func applyDir(ctx context.Context, db *sql.DB, dialect string, dir migrate.Dir, 
 	default:
 		return fmt.Errorf("no migrations for dialect %q", dialect)
 	}
+}
+
+// applySQLite runs the pending migrations in one transaction on conn with
+// its foreign keys off, as a table rebuild needs: SQLite ignores the
+// pragma inside a transaction, where dropping the old table would delete
+// through the keys that reference it. The keys are checked before the
+// commit and turned back on after it.
+func applySQLite(ctx context.Context, conn *sql.Conn, dir migrate.Dir, table string, allowDirty bool) (err error) {
+	var keys bool
+	if err := conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&keys); err != nil {
+		return fmt.Errorf("reading the foreign_keys pragma: %w", err)
+	}
+
+	if keys {
+		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = off"); err != nil {
+			return err
+		}
+
+		defer func() {
+			if _, onErr := conn.ExecContext(context.WithoutCancel(ctx), "PRAGMA foreign_keys = on"); onErr != nil {
+				// a connection without its foreign keys never goes back to
+				// the pool
+				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+				err = errors.Join(err, onErr)
+			}
+		}()
+	}
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	if err := apply(ctx, tx, SQLite, dir, table, allowDirty); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if keys {
+		if err := foreignKeyCheck(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// foreignKeyCheck fails on the first row a foreign key of the database no
+// longer finds.
+func foreignKeyCheck(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, "PRAGMA foreign_key_check")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		var (
+			child, parent string
+			rowid         sql.NullInt64
+			key           int64
+		)
+
+		if err := rows.Scan(&child, &rowid, &parent, &key); err != nil {
+			return err
+		}
+
+		return fmt.Errorf("migrating leaves row %d of %s without its %s", rowid.Int64, child, parent)
+	}
+
+	return rows.Err()
 }
 
 // querier is what the migration runs on: a database or a transaction.
