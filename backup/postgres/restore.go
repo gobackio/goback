@@ -433,9 +433,10 @@ func majorVersion(content []byte) (int, error) {
 	return n, nil
 }
 
-// confString quotes s as a postgresql.conf string.
+// confString quotes s as a postgresql.conf string, in which a backslash
+// starts an escape.
 func confString(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	return "'" + strings.NewReplacer(`\`, `\\`, "'", "''").Replace(s) + "'"
 }
 
 // ErrNoWALFile is FetchWAL's error for a file the WAL commit does not hold.

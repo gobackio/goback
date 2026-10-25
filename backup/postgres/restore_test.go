@@ -196,6 +196,10 @@ func TestARestoreLeavesADirectoryInUseAlone(t *testing.T) {
 	require.ErrorContains(t, err, "not empty")
 }
 
+func TestConfStringEscapesQuotesAndBackslashes(t *testing.T) {
+	require.Equal(t, `'it''s C:\\goback\\n'`, confString(`it's C:\goback\n`))
+}
+
 func TestFetchWALWritesWhatTheCommitHolds(t *testing.T) {
 	f := newWALFixture(t)
 
