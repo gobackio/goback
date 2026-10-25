@@ -224,6 +224,15 @@ func (x *Index) Close() error {
 	return client.Close()
 }
 
+// Ping reports whether the database answers.
+func (x *Index) Ping(ctx context.Context) error {
+	if x.db == nil {
+		return errors.New("the index is not open")
+	}
+
+	return x.db.PingContext(ctx)
+}
+
 func (x *Index) now() time.Time {
 	now := time.Now()
 	if x.Now != nil {

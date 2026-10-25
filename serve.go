@@ -58,8 +58,9 @@ type ServeOptions struct {
 
 // Serve serves the repo to agents over gRPC on listener, as goback server
 // does: the store API, the Admin service when the index keeps sets and
-// policy, health checks, and the maintenance jobs of opts.Schedule. It
-// returns once ctx ends, after the calls in flight finish, or when the
+// policy, health checks, whose readiness fails while the index does not
+// answer or the server drains, and the maintenance jobs of opts.Schedule.
+// It returns once ctx ends, after the calls in flight finish, or when the
 // listener fails.
 func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptions) error {
 	if opts.Secret == "" {
@@ -110,7 +111,13 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 	)
 
 	proto.RegisterStoreServer(srv, remote)
-	(&health.Probe{}).Register(srv)
+
+	probe := &health.Probe{}
+	if index, ok := r.Index.(interface{ Ping(context.Context) error }); ok {
+		probe.Add("index", index.Ping)
+	}
+
+	probe.Register(srv)
 
 	runner := maintenance.NewRunner(r.Store, r.Index, opts.Schedule)
 	runner.Logger = logger
@@ -129,7 +136,10 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 
 	go runner.Run(ctx)
 
-	stopped := context.AfterFunc(ctx, srv.GracefulStop)
+	stopped := context.AfterFunc(ctx, func() {
+		probe.Drain()
+		srv.GracefulStop()
+	})
 	defer stopped()
 
 	logger.Info("listening", "address", listener.Addr().String())
