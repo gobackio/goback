@@ -772,12 +772,7 @@ func (bfr *fileReader) measure(ctx context.Context) error {
 	}
 
 	if bfr.file.GetSplitDepth() > 0 {
-		var total uint64
-		for _, length := range bfr.file.GetSplitLengths() {
-			total += length
-		}
-
-		bfr.total = int64(total)
+		bfr.total = int64(sum(bfr.file.GetSplitLengths()))
 
 		return nil
 	}
@@ -810,6 +805,10 @@ func (bfr *fileReader) locate(ctx context.Context) error {
 
 	bfr.partIndex = sort.Search(len(bfr.parts), bfr.search)
 
+	if bfr.partIndex == len(bfr.parts) || bfr.offset < int64(bfr.parts[bfr.partIndex].Offset) {
+		return errors.Errorf("no part of file %x holds offset %d", bfr.fileRef(), bfr.offset)
+	}
+
 	return nil
 }
 
@@ -831,8 +830,13 @@ func (bfr *fileReader) partsAt(ctx context.Context, offset uint64) ([]*proto.Fil
 	file := bfr.file
 	var start uint64
 
+	length := sum(file.GetSplitLengths())
+
 	for file.GetSplitDepth() > 0 {
 		lengths := file.GetSplitLengths()
+		if len(lengths) == 0 || len(lengths) != len(file.GetSplits()) || sum(lengths) != length {
+			return nil, errors.Errorf("a split of file %x does not hold the length recorded for it", bfr.fileRef())
+		}
 
 		i := 0
 		for ; i < len(lengths)-1 && offset >= start+lengths[i]; i++ {
@@ -844,7 +848,11 @@ func (bfr *fileReader) partsAt(ctx context.Context, offset uint64) ([]*proto.Fil
 			return nil, errors.Wrapf(err, "file %x", bfr.fileRef())
 		}
 
-		file = sub
+		file, length = sub, lengths[i]
+	}
+
+	if end, ok := contiguous(file.GetParts()); !ok || end != length {
+		return nil, errors.Errorf("a split of file %x does not hold the length recorded for it", bfr.fileRef())
 	}
 
 	return rebased(file.GetParts(), int64(start)), nil
@@ -932,6 +940,11 @@ func (bfr *fileReader) getFileParts(ctx context.Context) ([]*proto.FilePart, err
 		return nil, err
 	}
 
+	end, ok := contiguous(parts)
+	if !ok || bfr.file.GetSplitDepth() > 0 && end != sum(bfr.file.GetSplitLengths()) {
+		return nil, errors.Errorf("the parts of file %x do not run back to back over its length", bfr.fileRef())
+	}
+
 	bfr.all = parts
 	bfr.parts = parts
 	bfr.partIndex = 0
@@ -944,6 +957,31 @@ func (bfr *fileReader) getFileParts(ctx context.Context) ([]*proto.FilePart, err
 	}
 
 	return parts, nil
+}
+
+// contiguous returns where parts end and whether they run back to back
+// from 0.
+func contiguous(parts []*proto.FilePart) (uint64, bool) {
+	var end uint64
+
+	for _, part := range parts {
+		if part.GetOffset() != end {
+			return end, false
+		}
+
+		end += part.GetLength()
+	}
+
+	return end, true
+}
+
+func sum(lengths []uint64) uint64 {
+	var total uint64
+	for _, length := range lengths {
+		total += length
+	}
+
+	return total
 }
 
 func (bfr *fileReader) loadParts(ctx context.Context) ([]*proto.FilePart, error) {

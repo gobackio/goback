@@ -146,6 +146,39 @@ func TestFileReaderMissingPart(t *testing.T) {
 	})
 }
 
+func TestASplitFileWhoseLengthsDisagreeWithItsSubFilesFailsToRead(t *testing.T) {
+	ctx := context.Background()
+	store := newMemStore()
+
+	blob := proto.NewObject(&proto.Blob{Data: bytes.Repeat([]byte("x"), 20000)})
+	require.NoError(t, store.Put(ctx, blob))
+
+	leaf := proto.NewObject(&proto.File{Parts: []*proto.FilePart{{Ref: blob.Ref(), Offset: 0, Length: 20000}}})
+	require.NoError(t, store.Put(ctx, leaf))
+
+	for name, lengths := range map[string][]uint64{
+		"gap":     {30000, 20000},
+		"overlap": {10000, 20000},
+		"short":   {20000, 30000},
+	} {
+		t.Run(name, func(t *testing.T) {
+			file := &proto.File{Splits: []*proto.Ref{leaf.Ref(), leaf.Ref()}, SplitLengths: lengths, SplitDepth: 1}
+
+			_, err := newFileReader(ctx, store, file, nil).WriteTo(io.Discard)
+			require.Error(t, err)
+
+			_, err = io.ReadAll(newFileReader(ctx, store, file, nil))
+			require.Error(t, err)
+
+			reader := newFileReader(ctx, store, file, nil)
+			_, err = reader.Seek(int64(lengths[0]-1), io.SeekStart)
+			require.NoError(t, err)
+			_, err = io.ReadAll(reader)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestFileReaderWriteToCancel(t *testing.T) {
 	store := newMemStore()
 	_, file := writeTestFile(t, store, 4*maxBlobSize)
