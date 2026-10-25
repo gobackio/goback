@@ -136,7 +136,7 @@ func TestAResumedMarkMarksAgainABatchWhoseRunsDidNotSurvive(t *testing.T) {
 	_, err := store.Collect(ctx, opts)
 	require.ErrorIs(t, err, interrupted)
 
-	runs, err := filepath.Glob(filepath.Join(opts.TempDir, "goback-gc", "gen-1", "batch-0-*.run"))
+	runs, err := filepath.Glob(filepath.Join(opts.TempDir, "goback-gc", "gen-1-*", "batch-0-*.run"))
 	require.NoError(t, err)
 	require.NotEmpty(t, runs)
 	for _, run := range runs {
@@ -275,6 +275,7 @@ func TestACheckBeforeASweepThatFailsLeavesNoRuns(t *testing.T) {
 	_, err = store.Collect(ctx, opts)
 	require.ErrorIs(t, err, interrupted)
 
-	_, err = os.Stat(filepath.Join(opts.TempDir, "goback-gc-check", "goback-gc", "gen-2"))
-	require.ErrorIs(t, err, os.ErrNotExist)
+	dirs, err := filepath.Glob(filepath.Join(opts.TempDir, "goback-gc-check", "goback-gc", "gen-2-*"))
+	require.NoError(t, err)
+	require.Empty(t, dirs)
 }

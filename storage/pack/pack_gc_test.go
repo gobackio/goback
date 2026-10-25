@@ -281,7 +281,11 @@ func TestCollectResumesInterruptedMark(t *testing.T) {
 	_, err := store.Collect(ctx, opts)
 	require.ErrorIs(t, err, interrupted)
 
-	runDir := filepath.Join(opts.TempDir, "goback-gc", "gen-1")
+	runDirs, err := filepath.Glob(filepath.Join(opts.TempDir, "goback-gc", "gen-1-*"))
+	require.NoError(t, err)
+	require.Len(t, runDirs, 1)
+	runDir := runDirs[0]
+
 	done, err := filepath.Glob(filepath.Join(runDir, "batch-*.done"))
 	require.NoError(t, err)
 	require.Len(t, done, 2, "the completed batches are checkpointed")
@@ -1515,6 +1519,69 @@ func TestAnErasureFlagsOnlyWhatNoGroupReaches(t *testing.T) {
 	a, _, err := store.indexLocation(ctx, erased.Ref())
 	require.NoError(t, err)
 	require.True(t, a.gcResult().Erase)
+}
+
+func TestStoresSharingATempDirAreCollectedAtOnce(t *testing.T) {
+	ctx := context.Background()
+	temp := t.TempDir()
+
+	var stores []*PackStorage
+	for range 2 {
+		store := newGCStore(t, t.TempDir())
+		t.Cleanup(func() { _ = store.Close() })
+
+		reachable, unreachable := makeGCTestData(t)
+		putAll(t, store, append(append([]*proto.Object{}, reachable...), unreachable...))
+		stores = append(stores, store)
+	}
+
+	defer func(n int) { rootBatch = n; gcAfterBatch = nil }(rootBatch)
+	rootBatch = 2
+
+	opts := gcOptions(t, 0)
+	opts.TempDir = temp
+
+	var inner error
+	gcAfterBatch = func(batch int) error {
+		if batch == 0 {
+			gcAfterBatch = nil
+			_, inner = stores[1].Collect(ctx, opts)
+		}
+		return nil
+	}
+
+	_, err := stores[0].Collect(ctx, opts)
+	require.NoError(t, err)
+	require.NoError(t, inner)
+}
+
+func TestACollectionDeletesRunDirectoriesLeftUnwrittenForAWeek(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+
+	reachable, unreachable := makeGCTestData(t)
+	putAll(t, store, append(append([]*proto.Object{}, reachable...), unreachable...))
+
+	opts := gcOptions(t, 0)
+	stale := filepath.Join(opts.TempDir, "goback-gc", "gen-3")
+	fresh := filepath.Join(opts.TempDir, "goback-gc", "gen-1-other")
+
+	for _, dir := range []string{stale, fresh} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "snapshot"), []byte("x"), 0o644))
+	}
+
+	old := time.Now().Add(-8 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(filepath.Join(stale, "snapshot"), old, old))
+	require.NoError(t, os.Chtimes(stale, old, old))
+
+	_, err := store.Collect(context.Background(), opts)
+	require.NoError(t, err)
+
+	_, err = os.Stat(stale)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(fresh)
+	require.NoError(t, err)
 }
 
 func TestACollectionThatFindsAReachableObjectMissingCondemnsAndSweepsNothing(t *testing.T) {

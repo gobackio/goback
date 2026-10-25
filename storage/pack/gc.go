@@ -1212,14 +1212,71 @@ func (r *gcRun) snapshotID() string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-// openRunDir prepares the run directory, keeping the runs of batches an
+// staleRunDir is how long a run directory goes unwritten before any
+// collection sharing its parent deletes it.
+const staleRunDir = 7 * 24 * time.Hour
+
+// removeStaleRunDirs deletes the run directories under parent other than
+// keep that nothing has written to for staleRunDir.
+func removeStaleRunDirs(parent, keep string, now time.Time) {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return
+	}
+
+	for _, e := range entries {
+		dir := filepath.Join(parent, e.Name())
+		if !e.IsDir() || dir == keep {
+			continue
+		}
+
+		if written, ok := lastWritten(dir); ok && now.Sub(written) >= staleRunDir {
+			_ = os.RemoveAll(dir)
+		}
+	}
+}
+
+// lastWritten is the newest modification time of dir and what it holds.
+func lastWritten(dir string) (time.Time, bool) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	newest := info.ModTime()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			return time.Time{}, false
+		}
+
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+	}
+
+	return newest, true
+}
+
+// openRunDir prepares the run directory, named after the snapshot so that
+// stores sharing a TempDir keep apart, keeping the runs of batches an
 // interrupted mark of the same snapshot completed and that read back as
 // their checkpoints recorded them; any other batch is marked again.
 func (r *gcRun) openRunDir(batches [][]gcRoot) (*liveRuns, map[int]bool, error) {
-	r.runDir = filepath.Join(r.opts.TempDir, "goback-gc", fmt.Sprintf("gen-%d", r.gen))
+	id := r.snapshotID()
+	parent := filepath.Join(r.opts.TempDir, "goback-gc")
+	r.runDir = filepath.Join(parent, fmt.Sprintf("gen-%d-%s", r.gen, id[:16]))
 	manifest := filepath.Join(r.runDir, "snapshot")
 
-	if data, err := os.ReadFile(manifest); err != nil || string(data) != r.snapshotID() {
+	removeStaleRunDirs(parent, r.runDir, time.Now())
+
+	if data, err := os.ReadFile(manifest); err != nil || string(data) != id {
 		if err := os.RemoveAll(r.runDir); err != nil {
 			return nil, nil, err
 		}
@@ -1228,7 +1285,7 @@ func (r *gcRun) openRunDir(batches [][]gcRoot) (*liveRuns, map[int]bool, error) 
 			return nil, nil, err
 		}
 
-		if err := os.WriteFile(manifest, []byte(r.snapshotID()), 0o644); err != nil {
+		if err := os.WriteFile(manifest, []byte(id), 0o644); err != nil {
 			return nil, nil, err
 		}
 	}
