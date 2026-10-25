@@ -191,11 +191,11 @@ func TestARunEndsAtAGapOrItsSpan(t *testing.T) {
 		return records
 	}
 
-	end, span := runOf(at(0, 100, 100, 250), 0)
+	end, span := runOf(at(0, 100, 100, 250), 0, runGap)
 	require.Equal(t, 4, end, "a repeat and a small gap stay in the run")
 	require.EqualValues(t, 350, span)
 
-	end, _ = runOf(at(0, 100, 200+runGap+1), 0)
+	end, _ = runOf(at(0, 100, 200+runGap+1), 0, runGap)
 	require.Equal(t, 2, end, "a wide gap ends it")
 
 	whole := make([]locatedRecord, runSpan/(1<<20)+1)
@@ -203,7 +203,52 @@ func TestARunEndsAtAGapOrItsSpan(t *testing.T) {
 		whole[i] = locatedRecord{index: i, rec: &IndexRecord{Offset: uint32(i << 20), Length: 1 << 20}}
 	}
 
-	end, span = runOf(whole, 0)
+	end, span = runOf(whole, 0, runGap)
 	require.Equal(t, len(whole)-1, end, "so does its span")
 	require.EqualValues(t, runSpan, span)
+}
+
+func TestARunCoversNoRecordThatWasNotAskedFor(t *testing.T) {
+	ctx := context.Background()
+	store, settle := locatable(t, WithAtRestKey(atRestKey(t)))
+
+	var objects []*proto.Object
+	for _, object := range []*proto.Object{
+		proto.NewObject(&proto.Blob{Data: []byte("mine")}),
+		proto.NewObject(&proto.File{Inline: []byte("my file")}),
+		proto.NewObject(&proto.Blob{Data: []byte("mine too")}),
+		proto.NewObject(&proto.Blob{Data: []byte("theirs")}),
+		proto.NewObject(&proto.Blob{Data: []byte("mine as well")}),
+	} {
+		require.NoError(t, store.Put(ctx, object))
+		objects = append(objects, object)
+	}
+
+	store = settle()
+
+	refs := []*proto.Ref{objects[0].Ref(), objects[1].Ref(), objects[2].Ref(), objects[4].Ref()}
+	runs, err := store.LocateRecords(ctx, refs)
+	require.NoError(t, err)
+	require.Len(t, runs, 2, "a record between two asked for splits them")
+
+	for _, run := range runs {
+		var located []*proto.Ref
+
+		body := fetch(t, run.GetLocation())
+		for _, record := range run.GetRecords() {
+			object, err := DecodeRecord(body[record.GetOffset():record.GetOffset()+record.GetLength()], run.GetLocation().GetAtRestKey())
+			require.NoError(t, err)
+			located = append(located, object.Ref())
+		}
+
+		switch len(located) {
+		case 2:
+			require.True(t, located[0].Equal(objects[0].Ref()) && located[1].Equal(objects[2].Ref()), "a file asked for joins the blobs around it")
+		case 1:
+			require.True(t, located[0].Equal(objects[4].Ref()))
+			require.EqualValues(t, run.GetRecords()[0].GetLength(), run.GetLocation().GetLength(), "the range is the one record")
+		default:
+			t.Fatalf("a run of %d records", len(located))
+		}
+	}
 }

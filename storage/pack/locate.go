@@ -26,8 +26,8 @@ type RangeSigner interface {
 }
 
 const (
-	// runGap is how far apart two records may sit and still share a run;
-	// runSpan bounds the bytes one run covers.
+	// runGap is how far apart two records the store reads itself may sit
+	// and still share a run; runSpan bounds the bytes one run covers.
 	runGap  = 64 << 10
 	runSpan = 16 << 20
 
@@ -44,8 +44,10 @@ type locatedRecord struct {
 }
 
 // LocateRecords implements backup.RecordLocator for objects in archives
-// the storage can sign ranges of. A commit, tree or file, and any object
-// the cache holds, is never located: the store serves those itself.
+// the storage can sign ranges of. Every byte a run covers is a record of
+// one of refs. A commit, tree or file, and any object the cache holds, is
+// never located: the store serves those itself, though a run spans them
+// where they lie between records it locates.
 func (ps *PackStorage) LocateRecords(ctx context.Context, refs []*proto.Ref) ([]*proto.LocatedRun, error) {
 	signer, ok := ps.storage.(RangeSigner)
 	if !ok {
@@ -57,16 +59,7 @@ func (ps *PackStorage) LocateRecords(ctx context.Context, refs []*proto.Ref) ([]
 		return nil, err
 	}
 
-	for a, located := range byArchive {
-		located = slices.DeleteFunc(located, func(r locatedRecord) bool { return ps.serves(ctx, refs[r.index], r.rec) })
-		if len(located) == 0 {
-			delete(byArchive, a)
-		} else {
-			byArchive[a] = located
-		}
-	}
-
-	return ps.signRuns(ctx, signer, byArchive)
+	return ps.signRuns(ctx, signer, byArchive, func(r locatedRecord) bool { return ps.serves(ctx, refs[r.index], r.rec) })
 }
 
 // serves reports whether the store answers ref itself rather than
@@ -110,16 +103,26 @@ func (ps *PackStorage) locateRecords(scope Scope, refs []*proto.Ref, liveOnly bo
 	return byArchive, nil
 }
 
-// signRuns signs the runs of byArchive, or returns none when the storage
-// cannot sign them.
-func (ps *PackStorage) signRuns(ctx context.Context, signer RangeSigner, byArchive map[*archive][]locatedRecord) ([]*proto.LocatedRun, error) {
+// signRuns signs the runs of byArchive, leaving out the records served
+// reports, or returns none when the storage cannot sign them.
+func (ps *PackStorage) signRuns(ctx context.Context, signer RangeSigner, byArchive map[*archive][]locatedRecord, served func(locatedRecord) bool) ([]*proto.LocatedRun, error) {
 	var runs []*proto.LocatedRun
 
 	for a, records := range byArchive {
 		for start := 0; start < len(records); {
-			end, span := runOf(records, start)
+			// a signed run covers records asked for and no byte between them
+			end, _ := runOf(records, start, 0)
 
-			run, err := ps.signRun(ctx, signer, a, records[start:end], span)
+			located := slices.DeleteFunc(slices.Clone(records[start:end]), served)
+			start = end
+
+			if len(located) == 0 {
+				continue
+			}
+
+			_, span := runOf(located, 0, runSpan)
+
+			run, err := ps.signRun(ctx, signer, a, located, span)
 			if errors.Is(err, ErrNoSignedURL) {
 				return nil, nil
 			}
@@ -129,7 +132,6 @@ func (ps *PackStorage) signRuns(ctx context.Context, signer RangeSigner, byArchi
 			}
 
 			runs = append(runs, run)
-			start = end
 		}
 	}
 
@@ -178,7 +180,7 @@ func (ps *PackStorage) readRecords(ctx context.Context, refs []*proto.Ref, liveO
 		}
 
 		for start := 0; start < len(uncached); {
-			end, span := runOf(uncached, start)
+			end, span := runOf(uncached, start, runGap)
 			run := uncached[start:end]
 
 			slots <- struct{}{}
@@ -224,10 +226,11 @@ func (ps *PackStorage) readRun(ctx context.Context, a *archive, refs []*proto.Re
 	}
 }
 
-// runOf extends the run starting at start while the records stay close
-// together, and returns where it ends and how many bytes it covers. The
-// same record twice overlaps itself, which a run takes in its stride.
-func runOf(records []locatedRecord, start int) (int, int64) {
+// runOf extends the run starting at start while each record lies at most
+// gap bytes past the run, and returns where it ends and how many bytes it
+// covers. The same record twice overlaps itself, which a run takes in its
+// stride.
+func runOf(records []locatedRecord, start int, gap int64) (int, int64) {
 	from := int64(records[start].rec.Offset)
 	reach := from + int64(records[start].rec.Length)
 
@@ -236,7 +239,7 @@ func runOf(records []locatedRecord, start int) (int, int64) {
 		offset := int64(records[end].rec.Offset)
 		grown := max(reach, offset+int64(records[end].rec.Length))
 
-		if offset-reach > runGap || grown-from > runSpan {
+		if offset-reach > gap || grown-from > runSpan {
 			break
 		}
 

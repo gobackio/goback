@@ -716,7 +716,16 @@ func TestRestoreFilesReadsSmallFilesInGroups(t *testing.T) {
 		requireRestored(t, f, into)
 
 		require.LessOrEqual(t, seen.calls.Load(), int64(20))
-		require.LessOrEqual(t, seen.fetches.Load(), int64(20))
+
+		fetches := int64(20)
+		if located {
+			// each round of sizes leaves a record between the files' that
+			// none of them is read from, and a signed run spans no record
+			// it was not asked for
+			fetches += int64(len(f.files) / 6)
+		}
+
+		require.LessOrEqual(t, seen.fetches.Load(), fetches)
 	}
 }
 
