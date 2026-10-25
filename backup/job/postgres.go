@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -62,8 +65,10 @@ func PostgresBase(ctx context.Context, env *Env, s PostgresBaseSettings) (*backu
 	}
 
 	args := []string{"-D", "-", "-Ft", "-X", "fetch", "--checkpoint=fast"}
-	if s.DBName != "" {
-		args = append(args, "--dbname", s.DBName)
+
+	dbname, password := withoutPassword(s.DBName)
+	if dbname != "" {
+		args = append(args, "--dbname", dbname)
 	}
 
 	stderr, flush := env.stderr("pg_basebackup")
@@ -71,6 +76,10 @@ func PostgresBase(ctx context.Context, env *Env, s PostgresBaseSettings) (*backu
 
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stderr = stderr
+
+	if password != "" {
+		cmd.Env = append(os.Environ(), "PGPASSWORD="+password)
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -98,6 +107,122 @@ func PostgresBase(ctx context.Context, env *Env, s PostgresBaseSettings) (*backu
 	}
 
 	return result, err
+}
+
+// withoutPassword splits the password out of a libpq connection string, as
+// key=value pairs or a URL, so that it reaches pg_basebackup through its
+// environment rather than its command line. A string it cannot read comes
+// back whole.
+func withoutPassword(conninfo string) (string, string) {
+	if strings.HasPrefix(conninfo, "postgres://") || strings.HasPrefix(conninfo, "postgresql://") {
+		u, err := url.Parse(conninfo)
+		if err != nil {
+			return conninfo, ""
+		}
+
+		password, _ := u.User.Password()
+
+		query := u.Query()
+		if query.Has("password") {
+			password = query.Get("password")
+			query.Del("password")
+			u.RawQuery = query.Encode()
+		}
+
+		switch {
+		case password == "":
+			return conninfo, ""
+		case u.User.Username() == "":
+			u.User = nil
+		default:
+			u.User = url.User(u.User.Username())
+		}
+
+		return u.String(), password
+	}
+
+	pairs, ok := conninfoPairs(conninfo)
+	if !ok {
+		return conninfo, ""
+	}
+
+	var (
+		kept     []string
+		password string
+	)
+
+	quote := strings.NewReplacer(`\`, `\\`, `'`, `\'`)
+	for _, pair := range pairs {
+		if pair[0] == "password" {
+			password = pair[1]
+			continue
+		}
+
+		kept = append(kept, pair[0]+"='"+quote.Replace(pair[1])+"'")
+	}
+
+	if password == "" {
+		return conninfo, ""
+	}
+
+	return strings.Join(kept, " "), password
+}
+
+// conninfoPairs reads a libpq connection string of key=value pairs, a
+// value quoted in single quotes or not, with backslash escapes.
+func conninfoPairs(s string) ([][2]string, bool) {
+	const space = " \t\n\r\f\v"
+
+	var pairs [][2]string
+
+	for {
+		s = strings.TrimLeft(s, space)
+		if s == "" {
+			return pairs, true
+		}
+
+		key, rest, ok := strings.Cut(s, "=")
+		key = strings.TrimRight(key, space)
+		if !ok || key == "" || strings.ContainsAny(key, space) {
+			return nil, false
+		}
+
+		s = strings.TrimLeft(rest, space)
+
+		quoted := strings.HasPrefix(s, "'")
+		if quoted {
+			s = s[1:]
+		}
+
+		var value strings.Builder
+
+		i := 0
+	scan:
+		for ; i < len(s); i++ {
+			switch c := s[i]; {
+			case c == '\\' && i+1 < len(s):
+				i++
+				value.WriteByte(s[i])
+			case quoted && c == '\'':
+				break scan
+			case !quoted && strings.IndexByte(space, c) >= 0:
+				break scan
+			default:
+				value.WriteByte(c)
+			}
+		}
+
+		if quoted {
+			if i == len(s) {
+				return nil, false
+			}
+
+			i++
+		}
+
+		pairs = append(pairs, [2]string{key, value.String()})
+		s = s[i:]
+	}
 }
 
 // PostgresReceiveSettings say how PostgresReceive streams WAL.
