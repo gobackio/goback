@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage/cache"
 )
 
@@ -30,6 +31,9 @@ type spoolCommit struct {
 	// Files are the spool's whole binlogs to commit.
 	Files []string
 	Open  *OpenBinlog
+	// Confirmed, when set, is when the server last confirmed it had
+	// nothing past what Files and Open hold.
+	Confirmed time.Time
 
 	// copies, when set, keeps what one commit reads and writes for the
 	// next; Run rotates it
@@ -94,16 +98,24 @@ func (c *spoolCommit) Run(ctx context.Context) (*backup.WalkResult, error) {
 		}
 	}
 
+	opened := make(map[string]time.Time, len(c.Files)+1)
+
 	for _, name := range c.Files {
-		if err := c.check(c.Spool.path(name), name); err != nil {
+		at, err := c.check(c.Spool.path(name), name)
+		if err != nil {
 			return nil, err
 		}
+
+		opened[name] = at
 	}
 
 	if c.Open != nil {
-		if err := c.check(c.Open.Path, c.Open.Name); err != nil {
+		at, err := c.check(c.Open.Path, c.Open.Name)
+		if err != nil {
 			return nil, err
 		}
+
+		opened[c.Open.Name+partialSuffix] = at
 	}
 
 	included := make(map[string]bool, len(c.Files))
@@ -191,19 +203,33 @@ func (c *spoolCommit) Run(ctx context.Context) (*backup.WalkResult, error) {
 	last := names[len(names)-1]
 	w.Metadata[MetaEndBinlog], _ = isPartial(last)
 
+	var lastAt time.Time
+
 	switch {
 	case last == open:
 		w.Metadata[MetaEndPos] = strconv.FormatInt(c.Open.Size, 10)
+		lastAt = c.Open.ModTime
 	case included[last]:
 		if info, err := os.Stat(c.Spool.path(last)); err == nil {
 			w.Metadata[MetaEndPos] = strconv.FormatInt(info.Size(), 10)
+			lastAt = info.ModTime()
 		}
 	default:
 		for _, node := range held.chains[c.Chain] {
 			if string(node.Stat.Name) == last {
 				w.Metadata[MetaEndPos] = strconv.FormatInt(node.Stat.GetSize(), 10)
+				lastAt = time.Unix(0, node.Stat.GetMtimeNs())
 			}
 		}
+	}
+
+	from, to := c.coverage(held, names, opened, lastAt)
+	if !from.IsZero() {
+		w.Metadata[MetaCoveredFrom] = formatTime(from)
+	}
+
+	if !to.IsZero() {
+		w.Metadata[MetaCoveredTo] = formatTime(to)
 	}
 
 	result, err := w.Run(ctx)
@@ -214,16 +240,78 @@ func (c *spoolCommit) Run(ctx context.Context) (*backup.WalkResult, error) {
 	return result, c.Spool.Remove(c.Files...)
 }
 
-// check checks that the binlog at path opens as one the server wrote.
-func (c *spoolCommit) check(path, name string) error {
-	serverID, err := readBinlogFileServerID(path)
+// check checks that the binlog at path opens as one the server wrote, and
+// returns when the server opened it.
+func (c *spoolCommit) check(path, name string) (time.Time, error) {
+	h, err := readBinlogFileStart(path)
 	if err != nil {
-		return fmt.Errorf("%s: %w", name, err)
+		return time.Time{}, fmt.Errorf("%s: %w", name, err)
 	}
 
-	if serverID != c.Server.ServerID {
-		return fmt.Errorf("%w: %s was written by server_id %d, the server is %d", ErrForeignBinlog, name, serverID, c.Server.ServerID)
+	if h.serverID != c.Server.ServerID {
+		return time.Time{}, fmt.Errorf("%w: %s was written by server_id %d, the server is %d", ErrForeignBinlog, name, h.serverID, c.Server.ServerID)
 	}
 
-	return nil
+	return time.Unix(int64(h.timestamp), 0), nil
+}
+
+// coverage is when the stretch of names, the commit's binlogs of its
+// chain, that runs unbroken to their end starts, and up to when it is
+// complete, given when the server opened the binlogs read from the spool
+// and the time of the last event; a zero time is one it can't tell.
+func (c *spoolCommit) coverage(held *binlogCommit, names []string, opened map[string]time.Time, lastAt time.Time) (time.Time, time.Time) {
+	start := stretchStart(names)
+	to := latest(lastAt, c.Confirmed)
+
+	var previous []*proto.TreeNode
+	if held != nil {
+		previous = held.chains[c.Chain]
+	}
+
+	if held != nil && held.chain == c.Chain {
+		to = latest(to, parseTime(held.meta[MetaCoveredTo]))
+
+		before := make([]string, len(previous))
+		for i, node := range previous {
+			before[i] = string(node.Stat.Name)
+		}
+
+		was, _ := isPartial(stretchStart(before))
+		now, _ := isPartial(start)
+
+		if from := parseTime(held.meta[MetaCoveredFrom]); !from.IsZero() && was == now {
+			return from, to
+		}
+	}
+
+	if from, ok := opened[start]; ok {
+		return from, to
+	}
+
+	// a whole binlog ends with the Rotate event the server writes as it
+	// opens the next
+	for _, node := range previous {
+		name := string(node.Stat.Name)
+		if _, partial := isPartial(name); !partial && follows(name, start) {
+			return time.Unix(0, node.Stat.GetMtimeNs()), to
+		}
+	}
+
+	return time.Time{}, to
+}
+
+// stretchStart is the first of names, sorted binlogs of one chain, after
+// the last one missing or held only in part.
+func stretchStart(names []string) string {
+	for i := len(names) - 1; i > 0; i-- {
+		if _, partial := isPartial(names[i-1]); partial || !follows(names[i-1], names[i]) {
+			return names[i]
+		}
+	}
+
+	if len(names) == 0 {
+		return ""
+	}
+
+	return names[0]
 }

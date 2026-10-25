@@ -148,11 +148,15 @@ type (
 	xlogData struct {
 		start uint64
 		data  []byte
-		// serverEnd is where the server's WAL ends.
+		// serverEnd is where the server's WAL ends, as of sent, when the
+		// server sent the message.
 		serverEnd uint64
+		sent      time.Time
 	}
+	// keepalive says the server sent its WAL up to serverEnd by sent.
 	keepalive struct {
 		serverEnd uint64
+		sent      time.Time
 		reply     bool
 	}
 	// timelineEnd is the end of the streamed timeline: the server goes on
@@ -232,14 +236,14 @@ func (s *pgStream) next(ctx context.Context, deadline time.Time) (any, error) {
 				return nil, err
 			}
 
-			return xlogData{start: uint64(x.WALStart), data: x.WALData, serverEnd: uint64(x.ServerWALEnd)}, nil
+			return xlogData{start: uint64(x.WALStart), data: x.WALData, serverEnd: uint64(x.ServerWALEnd), sent: x.ServerTime}, nil
 		case pglogrepl.PrimaryKeepaliveMessageByteID:
 			k, err := pglogrepl.ParsePrimaryKeepaliveMessage(msg.Data[1:])
 			if err != nil {
 				return nil, err
 			}
 
-			return keepalive{serverEnd: uint64(k.ServerWALEnd), reply: k.ReplyRequested}, nil
+			return keepalive{serverEnd: uint64(k.ServerWALEnd), sent: k.ServerTime, reply: k.ReplyRequested}, nil
 		}
 
 		return nil, nil

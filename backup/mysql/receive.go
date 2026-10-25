@@ -275,11 +275,15 @@ type receiveRun struct {
 	flushed  int64
 	// oldest is when the oldest byte no stored commit holds arrived;
 	// sinceCut when the first byte after the last cut did
-	oldest    time.Time
-	sinceCut  time.Time
-	committed string
-	commitPos int64
-	lagBytes  int64
+	oldest   time.Time
+	sinceCut time.Time
+	// confirmed is when a heartbeat last said the server had nothing past
+	// what the spool holds; cutConfirmed what the last cut took of it
+	confirmed    time.Time
+	cutConfirmed time.Time
+	committed    string
+	commitPos    int64
+	lagBytes     int64
 	// until, when set, is the binlog and size the run stops after
 	until *Binlog
 }
@@ -798,6 +802,12 @@ func (run *receiveRun) handle(ev *streamEvent) error {
 
 	switch {
 	case h.kind == heartbeatEvent || h.kind == heartbeatEventV2:
+		// the server sends one only once it sent everything it has; its
+		// timestamp is always zero
+		if name, pos := run.w.position(); name != "" && pos == int64(h.logPos) {
+			run.confirmed = run.r.now()
+		}
+
 		return nil
 	case h.kind == rotateEvent && (h.logPos == 0 || h.flags&artificialEvent != 0):
 		// the server names the binlog it sends from
@@ -847,8 +857,10 @@ func (run *receiveRun) handle(ev *streamEvent) error {
 	return nil
 }
 
+// waiting reports whether a commit has anything to add: new binlog, a
+// retry, or a later confirmation that nothing followed.
 func (run *receiveRun) waiting() bool {
-	return run.received > run.cutAt || run.retry
+	return run.received > run.cutAt || run.retry || run.confirmed.After(run.cutConfirmed)
 }
 
 // tick starts a commit when one is due, reports, and watches the server.
@@ -920,6 +932,7 @@ func (run *receiveRun) cut() (*cut, error) {
 	}
 
 	run.cutAt, run.sinceCut = run.received, time.Time{}
+	c.confirmed, run.cutConfirmed = run.confirmed, run.confirmed
 
 	return c, nil
 }
@@ -930,17 +943,18 @@ func (run *receiveRun) commit(c *cut) *spoolCommit {
 	r := run.r
 
 	return &spoolCommit{
-		Walker:  r.Walker(),
-		Spool:   r.Spool,
-		DumpSet: r.DumpSet,
-		Window:  r.Window,
-		Now:     time.Now,
-		Chain:   run.chain,
-		Server:  run.srv,
-		ID:      run.id,
-		Files:   c.files,
-		Open:    c.open,
-		copies:  r.recent(),
+		Walker:    r.Walker(),
+		Spool:     r.Spool,
+		DumpSet:   r.DumpSet,
+		Window:    r.Window,
+		Now:       time.Now,
+		Chain:     run.chain,
+		Server:    run.srv,
+		ID:        run.id,
+		Files:     c.files,
+		Open:      c.open,
+		Confirmed: c.confirmed,
+		copies:    r.recent(),
 	}
 }
 

@@ -282,6 +282,108 @@ func TestTheReceiverCommitsNothingWhileIdle(t *testing.T) {
 	require.Equal(t, 1, commits, "the format description is committed once, and nothing after")
 }
 
+// covered lists what the binlog set's commits say their binlogs cover,
+// newest first.
+func (rf *receiverFixture) covered() [][2]time.Time {
+	rf.t.Helper()
+
+	commits, err := rf.index.CommitInfo(rf.ctx, "db-binlog", t0.Add(time.Hour), 100)
+	require.NoError(rf.t, err)
+
+	var covered [][2]time.Time
+	for _, c := range commits {
+		covered = append(covered, [2]time.Time{parseTime(c.GetMetadata()[MetaCoveredFrom]), parseTime(c.GetMetadata()[MetaCoveredTo])})
+	}
+
+	return covered
+}
+
+func TestABinlogCommitCoversItsBinlogsFromTheirFirstEventToTheirLast(t *testing.T) {
+	rf := newReceiverFixture(t)
+	rf.mustDump()
+
+	s := &binlogScript{serverID: 1}
+	s.open("binlog.000001", ts(0)).event(2, ts(time.Second), 50).rotate(ts(2 * time.Second))
+	s.open("binlog.000002", ts(2*time.Second)).event(2, ts(3*time.Second), 50)
+	rf.script(s)
+	rf.stopAfter(90 * time.Second)
+
+	require.NoError(t, rf.run())
+	require.Equal(t, [2]time.Time{t0, t0.Add(3 * time.Second)}, rf.covered()[0])
+
+	end := s.end
+	s = &binlogScript{serverID: 1, name: "binlog.000002", end: end}
+	s.event(2, ts(100*time.Second), 50)
+	s.events = append([]any{&streamEvent{header: eventHeader{kind: rotateEvent, flags: artificialEvent}, next: "binlog.000002", pos: uint64(end)},
+		streamed(eventBytes(formatDescriptionEvent, 1, ts(2*time.Second), 0, 100, 0))}, s.events...)
+
+	rf.dump.now = t0.Add(100 * time.Second)
+	rf.dump.scripts = [][]any{s.events}
+	rf.stop = make(chan struct{})
+	rf.stopped = sync.Once{}
+	rf.stopAfter(110 * time.Second)
+
+	require.NoError(t, rf.run())
+	require.Equal(t, map[int][]string{1: {"binlog.000001", "binlog.000002.partial"}}, rf.chains())
+	require.Equal(t, [2]time.Time{t0, t0.Add(100 * time.Second)}, rf.covered()[0], "the stretch still starts at the first binlog, which the spool no longer holds")
+}
+
+func TestHeartbeatsMoveAQuietBinlogSetsCoverageOn(t *testing.T) {
+	rf := newReceiverFixture(t)
+	rf.mustDump()
+
+	s := &binlogScript{serverID: 1}
+	s.open("binlog.000001", ts(0)).event(2, ts(time.Second), 50)
+	rf.script(s)
+
+	heartbeat := streamed(eventBytes(heartbeatEvent, 1, 0, s.end, eventHeaderLen+len("binlog.000001"), 0))
+	stale := streamed(eventBytes(heartbeatEvent, 1, 0, s.end-50, eventHeaderLen+len("binlog.000001"), 0))
+
+	// each beat waits for the commits before it, so each lands in its own
+	beats := []struct {
+		at      time.Duration
+		stored  int
+		message *streamEvent
+	}{{2 * time.Minute, 1, heartbeat}, {3 * time.Minute, 2, stale}, {4 * time.Minute, 2, heartbeat}}
+
+	rf.dump.tick = func(now time.Time) {
+		if len(beats) > 0 && now.Sub(t0) >= beats[0].at {
+			require.Eventually(t, func() bool { return len(rf.covered()) >= beats[0].stored }, 10*time.Second, time.Millisecond)
+
+			rf.dump.mu.Lock()
+			rf.dump.script = append(rf.dump.script, beats[0].message)
+			rf.dump.mu.Unlock()
+
+			beats = beats[1:]
+		}
+
+		if now.Sub(t0) >= 5*time.Minute {
+			rf.stopped.Do(func() { close(rf.stop) })
+		}
+	}
+
+	require.NoError(t, rf.run())
+	require.Equal(t, [][2]time.Time{
+		{t0, t0.Add(4 * time.Minute)},
+		{t0, t0.Add(2 * time.Minute)},
+		{t0, t0.Add(time.Second)},
+	}, rf.covered(), "a heartbeat at another position than the received binlog's end confirms nothing")
+}
+
+func TestTheCoveredStretchStartsAfterTheLastMissingBinlog(t *testing.T) {
+	for _, tc := range []struct {
+		names []string
+		start string
+	}{
+		{[]string{"b.000001", "b.000002", "b.000003.partial"}, "b.000001"},
+		{[]string{"b.000001", "b.000003", "b.000004"}, "b.000003"},
+		{[]string{"b.000001", "b.000002.partial", "b.000005", "b.000006.partial"}, "b.000005"},
+		{[]string{"b.000007.partial"}, "b.000007.partial"},
+	} {
+		require.Equal(t, tc.start, stretchStart(tc.names), tc.names)
+	}
+}
+
 func TestATornEventIsReceivedAgain(t *testing.T) {
 	spool := Spool{Dir: t.TempDir()}
 	require.NoError(t, os.MkdirAll(spool.receiving(), 0o700))

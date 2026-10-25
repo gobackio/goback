@@ -216,6 +216,49 @@ func slicesContainsFunc(sent []sentStatus, f func(sentStatus) bool) bool {
 	return false
 }
 
+func TestTheServerConfirmsWhatACaughtUpSessionHolds(t *testing.T) {
+	f := &fakeStream{}
+	start := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	stop := make(chan struct{})
+
+	f.script = []any{
+		xlogData{start: 0, data: wal(0, 100), serverEnd: 200, sent: start},
+		xlogData{start: 100, data: wal(100, 100), serverEnd: 200, sent: start.Add(time.Second)},
+	}
+
+	later := map[time.Duration]any{
+		30 * time.Second:  keepalive{serverEnd: 200, sent: start.Add(30 * time.Second)},
+		90 * time.Second:  xlogData{start: 200, data: wal(200, 100), serverEnd: 400, sent: start.Add(90 * time.Second)},
+		100 * time.Second: keepalive{serverEnd: 300, sent: start.Add(100 * time.Second)},
+		160 * time.Second: xlogData{start: 300, data: wal(300, 100), serverEnd: 400, sent: start.Add(160 * time.Second)},
+		250 * time.Second: keepalive{serverEnd: 400, sent: start.Add(250 * time.Second)},
+	}
+
+	f.tick = func(now time.Time) {
+		if m, ok := later[now.Sub(start)]; ok {
+			f.mu.Lock()
+			f.script = append(f.script, m)
+			f.mu.Unlock()
+		}
+
+		if now.Sub(start) == 400*time.Second {
+			close(stop)
+		}
+	}
+
+	var confirmed []time.Duration
+
+	s := newSession(t, f, func(_ context.Context, c *cut) (*backup.WalkResult, error) {
+		confirmed = append(confirmed, c.confirmed.Sub(start))
+		return &backup.WalkResult{Ref: &proto.Ref{Hash: []byte{1}}}, nil
+	})
+	f.settle(s)
+
+	require.NoError(t, s.run(context.Background(), stop))
+	require.Equal(t, []time.Duration{30 * time.Second, 30 * time.Second, 160 * time.Second, 250 * time.Second}, confirmed,
+		"a keepalive confirms nothing while WAL is still coming, and alone it makes a commit")
+}
+
 func TestAFailedCommitKeepsTheFlushAndIsRetried(t *testing.T) {
 	f := &fakeStream{script: []any{xlogData{start: 0, data: wal(0, 100)}}}
 	stop := make(chan struct{})

@@ -1,12 +1,15 @@
 package postgres
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -32,6 +35,9 @@ type WALBackup struct {
 	// holds it up to its length as <name>.partial, in place of the previous
 	// commit's partial segment of its timeline.
 	Open *OpenSegment
+	// Confirmed, when set, is when the server last confirmed it had no WAL
+	// past what Files and Open hold.
+	Confirmed time.Time
 
 	// copies, when set, keeps what one commit reads and writes for the
 	// next; Run rotates it
@@ -189,12 +195,199 @@ func (b *WALBackup) Run(ctx context.Context) (*backup.WalkResult, error) {
 		w.Metadata[MetaEndLSN] = FormatLSN(end.lsn)
 	}
 
+	from, to, err := b.coverage(prev, names, segSize, w.Metadata[MetaTimeline])
+	if err != nil {
+		return nil, err
+	}
+
+	if !from.IsZero() {
+		w.Metadata[MetaCoveredFrom] = formatTime(from)
+	}
+
+	if !to.IsZero() {
+		w.Metadata[MetaCoveredTo] = formatTime(to)
+	}
+
 	result, err := w.Run(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	return result, b.Spool.Remove(spooled...)
+}
+
+// coverage is when the stretch of names that runs to their end with no
+// segment missing starts, and up to when it is complete, for a commit
+// ending on timeline; a zero time is one it can't tell.
+func (b *WALBackup) coverage(prev *heldSet, names []string, segSize uint64, timeline string) (time.Time, time.Time, error) {
+	held := make(map[string]time.Time, len(prev.names))
+	for i, name := range prev.names {
+		held[name] = time.Unix(0, prev.nodes[i].Stat.GetMtimeNs())
+	}
+
+	open := ""
+	if b.Open != nil {
+		open = b.Open.Name + partialSuffix
+	}
+
+	// a segment's mtime is its last commit's time, the epoch before any
+	mtime := func(name string) time.Time {
+		at := held[name]
+
+		switch {
+		case name == open:
+			at = b.Open.ModTime
+		case slices.Contains(b.Files, name):
+			if info, err := os.Stat(b.Spool.path(name)); err == nil {
+				at = info.ModTime()
+			}
+		}
+
+		if !at.After(time.Unix(0, 0)) {
+			return time.Time{}
+		}
+
+		return at
+	}
+
+	to := b.Confirmed
+	for _, name := range names {
+		if _, partial := isPartial(name); partial || isSegment(name) {
+			to = latest(to, mtime(name))
+		}
+	}
+
+	var was map[string]string
+	if prev.commit != nil {
+		was = prev.commit.GetMetadata()
+	}
+
+	if was[MetaTimeline] == timeline {
+		to = latest(to, parseTime(was[MetaCoveredTo]))
+	}
+
+	if segSize == 0 {
+		return parseTime(was[MetaCoveredFrom]), to, nil
+	}
+
+	start := stretchStart(names, segSize)
+	if start == "" {
+		return time.Time{}, to, nil
+	}
+
+	n := segmentNumber(start, segSize)
+
+	if from := parseTime(was[MetaCoveredFrom]); !from.IsZero() {
+		if before := stretchStart(prev.names, segSize); before != "" && segmentNumber(before, segSize) == n {
+			return from, to, nil
+		}
+	}
+
+	for _, name := range prev.names {
+		if isSegment(name) && segmentNumber(name, segSize) == n-1 {
+			if from := mtime(name); !from.IsZero() {
+				return from, to, nil
+			}
+		}
+	}
+
+	path, size := "", int64(-1)
+
+	switch {
+	case start == open:
+		path, size = b.Open.Path, b.Open.Size
+	case slices.Contains(b.Files, start):
+		path = b.Spool.path(start)
+	default:
+		return time.Time{}, to, nil
+	}
+
+	from, err := firstXact(path, start, size)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+
+	if from.IsZero() {
+		// every commit the stretch lacks came before its first segment, so
+		// before anything it holds or was confirmed
+		from = to
+	}
+
+	return from, to, nil
+}
+
+// stretchStart is the first segment, whole or partial, of names after the
+// last one missing or held only in part, by the positions of segments in
+// the WAL of every timeline; empty when names hold none.
+func stretchStart(names []string, segSize uint64) string {
+	type position struct {
+		name  string
+		n     uint64
+		whole bool
+	}
+
+	var held []position
+
+	for _, name := range names {
+		segment, partial := isPartial(name)
+		if !partial {
+			if !isSegment(name) {
+				continue
+			}
+
+			segment = name
+		}
+
+		held = append(held, position{name: name, n: segmentNumber(segment, segSize), whole: !partial})
+	}
+
+	slices.SortStableFunc(held, func(a, b position) int { return cmp.Compare(a.n, b.n) })
+
+	merged := held[:0]
+	for _, p := range held {
+		if last := len(merged) - 1; last >= 0 && merged[last].n == p.n {
+			merged[last].whole = merged[last].whole || p.whole
+			continue
+		}
+
+		merged = append(merged, p)
+	}
+
+	for i := len(merged) - 1; i > 0; i-- {
+		if merged[i].n != merged[i-1].n+1 || !merged[i-1].whole {
+			return merged[i].name
+		}
+	}
+
+	if len(merged) == 0 {
+		return ""
+	}
+
+	return merged[0].name
+}
+
+// firstXact is the time of the first transaction commit or abort in the
+// first size bytes, all when negative, of the segment file name at path.
+func firstXact(path, name string, size int64) (time.Time, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer file.Close()
+
+	var r io.Reader = file
+	if size >= 0 {
+		r = io.LimitReader(file, size)
+	}
+
+	segment, _ := strings.CutSuffix(name, partialSuffix)
+
+	scan := &walScan{}
+	if _, err := io.Copy(scan.segment(segment), r); err != nil {
+		return time.Time{}, err
+	}
+
+	return scan.firstXact, nil
 }
 
 // growing lists the files the commit continues from the previous commit's

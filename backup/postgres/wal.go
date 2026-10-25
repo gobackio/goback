@@ -32,6 +32,13 @@ const (
 	// MetaEndLSN is where the WAL a WAL commit holds ends, its open
 	// segment included; MetaTimeline then names the timeline it ends on.
 	MetaEndLSN = "pg.end_lsn"
+	// MetaCoveredFrom and MetaCoveredTo bound, as RFC 3339 times of
+	// transaction commits and aborts, the stretch a WAL commit holds with no
+	// segment missing up to its end: from the last commit before its WAL,
+	// or its first, to its last, or to when the server last confirmed it
+	// had no WAL past what the commit holds.
+	MetaCoveredFrom = "pg.covered_from"
+	MetaCoveredTo   = "pg.covered_to"
 	// MetaCapture says how a WAL commit's WAL was collected: CaptureReplication,
 	// or archive for WAL that archive_command delivered, which restore reads
 	// alike.
@@ -271,4 +278,22 @@ func ParseLSN(s string) (uint64, error) {
 	}
 
 	return h<<32 | l, nil
+}
+
+func formatTime(t time.Time) string {
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// parseTime reads a time formatTime wrote; zero for anything else.
+func parseTime(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339Nano, s)
+	return t
+}
+
+func latest(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+
+	return a
 }

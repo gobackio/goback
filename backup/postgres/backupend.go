@@ -47,11 +47,12 @@ var postgresEpoch = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 // backup's tar holds: at the end of the end-of-backup record that names a
 // backup's start, which is what Postgres reports as the stop location.
 // xactTime is the time of the last transaction commit or abort read, which
-// a recovery target time is judged by.
+// a recovery target time is judged by, and firstXact that of the first.
 type walScan struct {
-	stops    map[uint64]uint64
-	xactTime time.Time
-	done     bool
+	stops     map[uint64]uint64
+	xactTime  time.Time
+	firstXact time.Time
+	done      bool
 
 	pageSize uint64
 	segSize  uint64
@@ -254,6 +255,9 @@ func (e *walScan) xactRecord(h []byte) {
 
 		if pos+8 <= len(h) {
 			e.xactTime = postgresEpoch.Add(time.Duration(int64(binary.LittleEndian.Uint64(h[pos:]))) * time.Microsecond)
+			if e.firstXact.IsZero() {
+				e.firstXact = e.xactTime
+			}
 		}
 
 		return

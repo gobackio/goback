@@ -12,6 +12,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/blobcache"
+	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/index/sql"
 	"github.com/gobackio/goback/proto"
@@ -30,6 +31,8 @@ type walFixture struct {
 	store *pack.PackStorage
 	spool Spool
 	now   time.Time
+	// confirmed is what the commits say the server confirmed
+	confirmed time.Time
 }
 
 func newWALFixture(t *testing.T) *walFixture {
@@ -48,14 +51,23 @@ func newWALFixture(t *testing.T) *walFixture {
 	return &walFixture{t: t, ctx: context.Background(), index: index, store: store, spool: Spool{Dir: t.TempDir()}, now: time.Now().Add(time.Minute)}
 }
 
-// spoolSegment spools segment n of timeline 1 of the cluster systemID.
+// spoolSegment spools segment n of timeline 1 of the cluster systemID,
+// stamped as a segment without a commit is.
 func (f *walFixture) spoolSegment(n uint64, systemID uint64) string {
 	f.t.Helper()
 
 	name := walName(1, n)
-	require.NoError(f.t, f.spool.put(name, append(header(1, n*segSize, systemID), byte(n))))
+	f.spoolAt(name, append(header(1, n*segSize, systemID), byte(n)), time.Unix(0, 0))
 
 	return name
+}
+
+// spoolAt spools content under name, its mtime at.
+func (f *walFixture) spoolAt(name string, content []byte, at time.Time) {
+	f.t.Helper()
+
+	require.NoError(f.t, f.spool.put(name, content))
+	require.NoError(f.t, os.Chtimes(f.spool.path(name), at, at))
 }
 
 func walName(timeline uint32, n uint64) string {
@@ -88,13 +100,14 @@ func (f *walFixture) commit(objects backup.ObjectStore, key *storekey.Key, open 
 	require.NoError(f.t, err)
 
 	b := &WALBackup{
-		Walker:  &backup.Walker{Index: f.index, Objects: objects, Set: "db-wal", AgentID: "a", Root: f.spool.Dir, Workers: 2, Key: key},
-		Spool:   f.spool,
-		BaseSet: "db-base",
-		Window:  14 * 24 * time.Hour,
-		Now:     func() time.Time { return f.now },
-		Files:   files,
-		Open:    open,
+		Walker:    &backup.Walker{Index: f.index, Objects: objects, Set: "db-wal", AgentID: "a", Root: f.spool.Dir, Workers: 2, Key: key},
+		Spool:     f.spool,
+		BaseSet:   "db-base",
+		Window:    14 * 24 * time.Hour,
+		Now:       func() time.Time { return f.now },
+		Files:     files,
+		Open:      open,
+		Confirmed: f.confirmed,
 	}
 
 	return b.Run(f.ctx)
@@ -501,6 +514,74 @@ func TestTheSegmentBeingReceivedIsCommittedAsPartialUntilItIsWhole(t *testing.T)
 	got, err := os.ReadFile(dst)
 	require.NoError(t, err)
 	require.Equal(t, segmentContent(1, 2, 400<<10), got, "the whole segment, from the parts it shares with its partial versions")
+}
+
+func TestAWALCommitCoversItsWALFromItsFirstCommitToItsLast(t *testing.T) {
+	f := newWALFixture(t)
+	require.NoError(t, f.index.SetDefaultPolicy(f.ctx, &retention.KeepAll))
+
+	at := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+
+	w := &walWriter{}
+	w.xact(xactCommit, at)
+	w.xact(xactCommit, at.Add(time.Second))
+	w.fill(4 * testSegSize)
+	w.xact(xactCommit, at.Add(2*time.Second))
+	w.fill(8 * testSegSize)
+	w.xact(xactCommit, at.Add(8*time.Second))
+	w.fill(9 * testSegSize)
+
+	segment := func(n uint64) []byte { return w.wal[(n-3)*testSegSize : (n-2)*testSegSize] }
+
+	open := func(n uint64, size int, modTime time.Time) *OpenSegment {
+		path := filepath.Join(f.spool.Dir, receivingDir, walName(1, n))
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, segment(n)[:size], 0o600))
+
+		return &OpenSegment{Name: walName(1, n), Path: path, Size: int64(size), ModTime: modTime}
+	}
+
+	covered := func(result *backup.WalkResult) [2]time.Time {
+		return [2]time.Time{parseTime(result.Commit.Metadata[MetaCoveredFrom]), parseTime(result.Commit.Metadata[MetaCoveredTo])}
+	}
+
+	f.base(3)
+	f.spoolAt(walName(1, 3), segment(3), at.Add(time.Second))
+
+	result, err := f.receive(open(4, 512, at.Add(2*time.Second)))
+	require.NoError(t, err)
+	require.Equal(t, [2]time.Time{at, at.Add(2 * time.Second)}, covered(result))
+
+	f.spoolAt(walName(1, 4), segment(4), at.Add(2*time.Second))
+	f.confirmed = at.Add(5 * time.Second)
+
+	result, err = f.receive(open(5, 512, at.Add(2*time.Second)))
+	require.NoError(t, err)
+	require.Equal(t, [2]time.Time{at, at.Add(5 * time.Second)}, covered(result), "a quiet stretch is covered up to the server's confirmation")
+
+	f.base(8)
+	f.spoolAt(walName(1, 8), segment(8), at.Add(8*time.Second))
+	f.confirmed = time.Time{}
+
+	result, err = f.run()
+	require.NoError(t, err)
+	require.Contains(t, f.held(result), walName(1, 3), "the WAL before the missing segments stays")
+	require.Equal(t, [2]time.Time{at.Add(8 * time.Second), at.Add(8 * time.Second)}, covered(result), "the stretch after the missing segments starts at its first commit")
+}
+
+func TestTheCoveredStretchStartsAfterTheLastMissingSegment(t *testing.T) {
+	for _, tc := range []struct {
+		names []string
+		start string
+	}{
+		{[]string{walName(1, 3), walName(1, 4), walName(1, 5) + partialSuffix}, walName(1, 3)},
+		{[]string{walName(1, 3), walName(1, 4) + partialSuffix, walName(1, 7), "00000002.history"}, walName(1, 7)},
+		{[]string{walName(1, 3), walName(1, 4) + partialSuffix, walName(2, 4), walName(2, 5)}, walName(1, 3)},
+		{[]string{walName(1, 3), walName(1, 5)}, walName(1, 5)},
+		{[]string{"00000002.history"}, ""},
+	} {
+		require.Equal(t, tc.start, stretchStart(tc.names, segSize), tc.names)
+	}
 }
 
 func TestAPartialSegmentThatSkipsOneIsRefused(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The commit metadata the MySQL sets carry.
@@ -42,6 +43,12 @@ const (
 	// holds of its chain end, its partial binlog included.
 	MetaEndBinlog = "mysql.end_binlog"
 	MetaEndPos    = "mysql.end_pos"
+	// MetaCoveredFrom and MetaCoveredTo bound, as RFC 3339 times, the
+	// stretch of its chain a binlog commit holds with no binlog missing up
+	// to its end: from the stretch's first event to its last, or to when
+	// the server last confirmed by a heartbeat that nothing followed.
+	MetaCoveredFrom = "mysql.covered_from"
+	MetaCoveredTo   = "mysql.covered_to"
 	// MetaCapture is how a binlog commit's binlogs were collected:
 	// CaptureReplication, or files for binlogs copied from the server's
 	// binlog directory, which restore reads alike.
@@ -375,4 +382,22 @@ func binlogName(base string, n uint64, like string) string {
 	like, _ = isPartial(like)
 	width := len(like) - strings.LastIndexByte(like, '.') - 1
 	return fmt.Sprintf("%s.%0*d", base, width, n)
+}
+
+func formatTime(t time.Time) string {
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// parseTime reads a time formatTime wrote; zero for anything else.
+func parseTime(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339Nano, s)
+	return t
+}
+
+func latest(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+
+	return a
 }

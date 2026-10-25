@@ -347,6 +347,9 @@ func TestAPointInTimeRestoreFromReplication(t *testing.T) {
 
 			require.Equal(t, CaptureReplication, last.GetMetadata()[MetaCapture])
 
+			from, to := parseTime(last.GetMetadata()[MetaCoveredFrom]), parseTime(last.GetMetadata()[MetaCoveredTo])
+			require.True(t, from.Before(at) && to.After(at), "the WAL covers %s to %s", from, to)
+
 			end, err := ParseLSN(last.GetMetadata()[MetaEndLSN])
 			require.NoError(t, err)
 			require.NotZero(t, end%(16<<20), "the newest WAL is only in the partial segment")

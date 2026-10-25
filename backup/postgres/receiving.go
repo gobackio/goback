@@ -190,6 +190,9 @@ type cut struct {
 	open *OpenSegment
 	// end is where the WAL the commit holds ends.
 	end uint64
+	// confirmed is when the server last confirmed it had no WAL past end;
+	// zero when it has not since the session started.
+	confirmed time.Time
 }
 
 // cut makes what was received durable and describes it for a commit. The

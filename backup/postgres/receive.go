@@ -310,14 +310,15 @@ func (r *Receiver) baseStarts(ctx context.Context) ([]string, error) {
 
 func (r *Receiver) commit(ctx context.Context, c *cut) (*backup.WalkResult, error) {
 	b := &WALBackup{
-		Walker:  r.Walker(),
-		Spool:   r.Spool,
-		BaseSet: r.BaseSet,
-		Window:  r.Window,
-		Now:     time.Now,
-		Files:   c.files,
-		Open:    c.open,
-		copies:  r.recent(),
+		Walker:    r.Walker(),
+		Spool:     r.Spool,
+		BaseSet:   r.BaseSet,
+		Window:    r.Window,
+		Now:       time.Now,
+		Files:     c.files,
+		Open:      c.open,
+		Confirmed: c.confirmed,
+		copies:    r.recent(),
 	}
 
 	return b.Run(ctx)
@@ -457,6 +458,7 @@ func (run *receiveRun) session(ctx context.Context, stop <-chan struct{}, at *po
 		restart:   slot.restartLSN,
 		until:     run.until,
 		commit:    r.commit,
+		caughtUp:  from.lsn >= id.position,
 	}
 
 	r.logger().Info("streaming WAL", "slot", run.slot, "timeline", from.timeline, "from", FormatLSN(from.lsn))
@@ -645,6 +647,11 @@ type session struct {
 	// sinceCut when the first WAL after the last cut did.
 	oldest   time.Time
 	sinceCut time.Time
+
+	// caughtUp is set while the server's newest message said it had no WAL
+	// past what was received; confirmed is the newest time it said so.
+	caughtUp  bool
+	confirmed time.Time
 }
 
 type commitDone struct {
@@ -665,6 +672,8 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 		lastCommit  = now
 		cutEnd      = s.w.written
 		downAt      time.Time
+		// cutConfirmed is the confirmation the last cut took
+		cutConfirmed time.Time
 	)
 
 	commitCtx, abandon := context.WithCancel(ctx)
@@ -730,9 +739,9 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 			return fmt.Errorf("the server is shutting down and the commit of what it sent took longer than %s, so that WAL waits in the spool", shutdownCommitWait)
 		}
 
-		waiting := s.w.written > cutEnd || s.retry
+		waiting := s.w.written > cutEnd || s.retry || s.confirmed.After(cutConfirmed)
 		if inflight == nil && s.due(now.Sub(lastCommit), waiting, failures) {
-			c, err := s.w.cut()
+			c, err := s.cut()
 			if err != nil {
 				return err
 			}
@@ -741,7 +750,7 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 				return err
 			}
 
-			lastCommit, cutEnd, s.sinceCut = now, c.end, time.Time{}
+			lastCommit, cutEnd, cutConfirmed, s.sinceCut = now, c.end, c.confirmed, time.Time{}
 
 			ch := make(chan commitDone, 1)
 			go func() {
@@ -753,7 +762,9 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 		}
 
 		if now.Sub(lastStatus) >= statusInterval {
-			if err := s.status(false); err != nil {
+			// caught up, the receiver asks for a keepalive back, which
+			// confirms the server still has nothing more
+			if err := s.status(s.caughtUp); err != nil {
 				return err
 			}
 
@@ -797,6 +808,11 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 			s.received = true
 			s.serverEnd = max(s.serverEnd, m.serverEnd, s.w.written)
 
+			s.caughtUp = s.w.written >= m.serverEnd
+			if s.caughtUp {
+				s.confirmed = latest(s.confirmed, m.sent)
+			}
+
 			if s.oldest.IsZero() {
 				s.oldest = r.now()
 			}
@@ -806,6 +822,11 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 			}
 		case keepalive:
 			s.serverEnd = max(s.serverEnd, m.serverEnd)
+
+			// its end is where the server's sending stands, not its WAL's
+			if s.caughtUp && m.serverEnd <= s.w.written {
+				s.confirmed = latest(s.confirmed, m.sent)
+			}
 
 			if m.reply {
 				if err := s.status(false); err != nil {
@@ -921,7 +942,7 @@ func (s *session) drain(ctx context.Context, inflight *chan commitDone, failures
 // server.
 func (s *session) final(ctx context.Context, waiting bool) error {
 	if waiting {
-		c, err := s.w.cut()
+		c, err := s.cut()
 		if err != nil {
 			return err
 		}
@@ -943,6 +964,16 @@ func (s *session) final(ctx context.Context, waiting bool) error {
 	}
 
 	return s.status(false)
+}
+
+// cut is the writer's cut, with the server's confirmation of it.
+func (s *session) cut() (*cut, error) {
+	c, err := s.w.cut()
+	if err == nil {
+		c.confirmed = s.confirmed
+	}
+
+	return c, err
 }
 
 func (s *session) follow(ctx context.Context, end timelineEnd) error {

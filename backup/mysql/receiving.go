@@ -343,6 +343,9 @@ type cut struct {
 	// end and pos are where the binlogs the commit holds end.
 	end string
 	pos int64
+	// confirmed is when the server last confirmed it had nothing past
+	// them; zero when it has not since the run started.
+	confirmed time.Time
 }
 
 // cut makes what was received durable and describes it for a commit. The

@@ -322,6 +322,9 @@ func receiveRoundTrip(t *testing.T, version, replayImage, reset string) {
 	meta := commit.GetMetadata()
 	require.NotEqual(t, meta[MetaLastBinlog], meta[MetaEndBinlog], "the binlog being written is committed as partial")
 
+	from, to := parseTime(meta[MetaCoveredFrom]), parseTime(meta[MetaCoveredTo])
+	require.True(t, from.Before(at) && !to.Before(at.Truncate(time.Second)), "the binlogs cover %s to %s", from, to)
+
 	target := s.target(replayImage)
 
 	s.restore(target, at)
