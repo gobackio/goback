@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -245,6 +246,10 @@ func (l *treeList) addPaths(ctx context.Context, root *proto.Ref, dir string, to
 
 		into := dir
 		for _, part := range parents {
+			if err := checkName(part); err != nil {
+				return err
+			}
+
 			into = l.fsys.Join(into, part)
 		}
 
@@ -277,13 +282,13 @@ func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, 
 	renamed := map[string]string{}
 
 	return l.reader.WalkTree(ctx, ref, parent, func(rel string, info os.FileInfo, ref *proto.Ref) error {
-		if !filepath.IsLocal(rel) {
-			return fmt.Errorf("the tree holds %q, outside the directory restored into", rel)
-		}
-
 		stat, _ := info.Sys().(*proto.FileInfo)
 		if stat == nil {
 			return fmt.Errorf("no stat for %s", rel)
+		}
+
+		if err := checkName(string(stat.GetName())); err != nil {
+			return err
 		}
 
 		parts := strings.Split(rel, string(filepath.Separator))
@@ -320,8 +325,8 @@ func (l *treeList) entry(top, into, under string, stat *proto.FileInfo, ref *pro
 	info := proto.GetOSFileInfo(stat)
 
 	name := string(stat.GetName())
-	if !filepath.IsLocal(name) {
-		return "", "", fmt.Errorf("the tree holds %q, outside the directory restored into", name)
+	if err := checkName(name); err != nil {
+		return "", "", err
 	}
 
 	if l.name != nil {
@@ -335,6 +340,21 @@ func (l *treeList) entry(top, into, under string, stat *proto.FileInfo, ref *pro
 	l.append(path, rel, info, stat, ref)
 
 	return path, rel, nil
+}
+
+// checkName refuses the name of a tree entry that is no single name in a
+// directory, so it cannot reach outside the one it is listed in, and on
+// Windows a name the platform cannot hold.
+func checkName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") || (filepath.Separator == '\\' && strings.ContainsRune(name, '\\')) {
+		return fmt.Errorf("the tree holds an entry named %q, which is not a name", name)
+	}
+
+	if !filepath.IsLocal(name) {
+		return fmt.Errorf("the tree holds %q, which is no file name on %s", name, runtime.GOOS)
+	}
+
+	return nil
 }
 
 // relPath joins the slash-separated path under and the names below it.

@@ -56,24 +56,82 @@ func TestRestoreTreeWritesTheTreeAndDeletesWhatItDoesNotHold(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(dst, "gone.txt"))
 }
 
-func TestRestoreTreeRefusesAPathOutsideTheDirectory(t *testing.T) {
+// treeBuilder puts the nodes of hand-made trees in a store.
+type treeBuilder struct {
+	t     *testing.T
+	store *memStore
+}
+
+func newTreeBuilder(t *testing.T) treeBuilder {
+	return treeBuilder{t: t, store: newMemStore()}
+}
+
+func (b treeBuilder) file(name, content string, mode os.FileMode) *proto.TreeNode {
+	file := proto.NewObject(&proto.File{Inline: []byte(content)})
+	require.NoError(b.t, b.store.Put(context.Background(), file))
+
+	return &proto.TreeNode{Stat: &proto.FileInfo{Name: []byte(name), Type: proto.NodeType_NODE_FILE, Size: int64(len(content)), Mode: uint32(mode)}, Ref: file.Ref()}
+}
+
+func (b treeBuilder) link(name, target string) *proto.TreeNode {
+	return &proto.TreeNode{Stat: &proto.FileInfo{Name: []byte(name), Type: proto.NodeType_NODE_SYMLINK, LinkTarget: []byte(target), Mode: uint32(os.ModeSymlink | 0o777)}}
+}
+
+func (b treeBuilder) dir(name string, mode os.FileMode, nodes ...*proto.TreeNode) *proto.TreeNode {
+	tree := proto.NewObject(&proto.Tree{Nodes: nodes})
+	require.NoError(b.t, b.store.Put(context.Background(), tree))
+
+	return &proto.TreeNode{Stat: &proto.FileInfo{Name: []byte(name), Type: proto.NodeType_NODE_DIRECTORY, Mode: uint32(os.ModeDir | mode)}, Ref: tree.Ref()}
+}
+
+func (b treeBuilder) commit(nodes ...*proto.TreeNode) *proto.Commit {
+	tree := proto.NewObject(&proto.Tree{Nodes: nodes})
+	require.NoError(b.t, b.store.Put(context.Background(), tree))
+
+	return &proto.Commit{BackupSet: "s", Tree: tree.Ref()}
+}
+
+func TestRestoreTreeRefusesAnEntryNamedOutsideItsDirectory(t *testing.T) {
 	ctx := context.Background()
-	store := newMemStore()
+	b := newTreeBuilder(t)
+	outside := t.TempDir()
 
-	file := proto.NewObject(&proto.File{Inline: []byte("x")})
-	require.NoError(t, store.Put(ctx, file))
+	pwned := func(name string) *proto.TreeNode { return b.file(name, "pwned", 0o644) }
 
-	tree := proto.NewObject(&proto.Tree{Nodes: []*proto.TreeNode{{
-		Stat: &proto.FileInfo{Name: []byte("../evil"), Type: proto.NodeType_NODE_FILE, Size: 1},
-		Ref:  file.Ref(),
-	}}})
-	require.NoError(t, store.Put(ctx, tree))
+	cases := map[string][]*proto.TreeNode{
+		"parent":            {pwned("../pwned")},
+		"through a link":    {b.link("x", outside), pwned("x/pwned")},
+		"dot link":          {b.link(".", outside), pwned("pwned")},
+		"dot link below":    {b.dir("a", 0o755, b.link(".", outside), pwned("pwned"))},
+		"dot dot file":      {b.dir("a", 0o755, pwned(".."))},
+		"dot file":          {pwned(".")},
+		"nul":               {pwned("a\x00b")},
+		"slashed directory": {b.dir("a/..", 0o755, pwned("pwned"))},
+	}
 
-	dir := filepath.Join(t.TempDir(), "dst")
+	for name, nodes := range cases {
+		t.Run(name, func(t *testing.T) {
+			base := t.TempDir()
+			dir := filepath.Join(base, "dst")
 
-	err := (&Restorer{Store: store}).RestoreTree(ctx, &proto.Commit{BackupSet: "s", Tree: tree.Ref()}, dir, TreeOptions{})
-	require.ErrorContains(t, err, "outside the directory")
-	require.NoFileExists(t, filepath.Join(filepath.Dir(dir), "evil"))
+			err := (&Restorer{Store: b.store}).RestoreTree(ctx, b.commit(nodes...), dir, TreeOptions{})
+			require.Error(t, err)
+
+			for _, d := range []string{outside, base} {
+				entries, err := os.ReadDir(d)
+				require.NoError(t, err)
+
+				for _, e := range entries {
+					require.Equal(t, "dst", e.Name(), "nothing is written beside the directory")
+				}
+			}
+
+			info, err := os.Lstat(dir)
+			if err == nil {
+				require.True(t, info.IsDir())
+			}
+		})
+	}
 }
 
 func TestRemoveUnrestoredKeepsWhatTheRestoreWroteUnderAnotherSpelling(t *testing.T) {
