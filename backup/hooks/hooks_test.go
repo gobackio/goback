@@ -35,6 +35,21 @@ func TestRunPreCapturesOutput(t *testing.T) {
 	require.Contains(t, logged.String(), "hook=pre")
 }
 
+func TestAHookRunsWithoutGobacksSecrets(t *testing.T) {
+	t.Setenv("GOBACK_PASSPHRASE", "correct-horse")
+	t.Setenv("GOBACK_HOOK_TEST", "kept")
+
+	show := `echo "$GOBACK_PASSPHRASE $GOBACK_HOOK_TEST"`
+	if runtime.GOOS == "windows" {
+		show = "echo %GOBACK_PASSPHRASE% %GOBACK_HOOK_TEST%"
+	}
+
+	out, err := (&Runner{Pre: show, Stdout: io.Discard}).RunPre(context.Background())
+	require.NoError(t, err)
+	require.NotContains(t, out, "correct-horse")
+	require.Contains(t, out, "kept")
+}
+
 func TestRunPreReportsFailure(t *testing.T) {
 	_, fail, _ := commands()
 	r := &Runner{Pre: fail}

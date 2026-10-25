@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/gobackio/goback/backup/childenv"
 )
 
 // Runner runs a backup's pre and post hooks through the system shell.
@@ -56,6 +58,7 @@ func (r *Runner) run(ctx context.Context, name, command string) (string, error) 
 	var out capture
 
 	cmd := shell(ctx, command)
+	cmd.Env = childenv.Environ()
 	cmd.Stdout = io.MultiWriter(&out, r.writer(r.Stdout, os.Stdout))
 	cmd.Stderr = r.writer(r.Stderr, os.Stderr)
 	cmd.WaitDelay = 5 * time.Second

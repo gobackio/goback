@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/gobackio/goback/backup/childenv"
 )
 
 // Exec is a Client that runs the installed client programs. They connect as
@@ -43,6 +45,7 @@ func (e *Exec) stderr() io.Writer {
 func (e *Exec) command(ctx context.Context, program string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, program, e.args(args...)...)
 	cmd.Stderr = e.stderr()
+	cmd.Env = childenv.Environ()
 
 	return cmd
 }
@@ -185,7 +188,7 @@ func (e *Exec) BinlogVersion(ctx context.Context) (string, error) {
 
 func (e *Exec) replayCommands(ctx context.Context, args []string) (*exec.Cmd, *exec.Cmd) {
 	binlog := e.command(ctx, e.Mysqlbinlog, args...)
-	binlog.Env = append(os.Environ(), "TZ=UTC")
+	binlog.Env = append(binlog.Env, "TZ=UTC")
 
 	return binlog, e.loadCommand(ctx)
 }

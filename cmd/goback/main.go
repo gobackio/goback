@@ -131,6 +131,11 @@ func main() {
 			EnvVar: "GOBACK_PASSPHRASE",
 		},
 		cli.StringFlag{
+			Name:   "passphrase-file",
+			Usage:  "file holding the passphrase of the escrowed store key; used when --passphrase is not set",
+			EnvVar: "GOBACK_PASSPHRASE_FILE",
+		},
+		cli.StringFlag{
 			Name:  "at-rest-key",
 			Usage: "key file that seals the archives of a local, gcs:// or s3:// store, made with goback key at-rest; without it, objects are stored as received",
 		},

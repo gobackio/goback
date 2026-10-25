@@ -34,6 +34,7 @@ var Command = cli.Command{
 			Flags: []cli.Flag{
 				cli.StringFlag{Name: "key", Usage: "key file to escrow", Value: "store.key"},
 				passphraseFlag,
+				passphraseFileFlag,
 				cli.BoolFlag{Name: "upload", Usage: "keep the escrowed key with the --storage store instead of printing it"},
 			},
 		},
@@ -51,6 +52,7 @@ var Command = cli.Command{
 				cli.StringFlag{Name: "escrow", Usage: "escrowed key file, as printed by key escrow; - reads standard input", Value: "-"},
 				outFlag("store.key"),
 				passphraseFlag,
+				passphraseFileFlag,
 			},
 		},
 		{
@@ -75,10 +77,20 @@ var passphraseFlag = cli.StringFlag{
 	EnvVar: "GOBACK_PASSPHRASE",
 }
 
+var passphraseFileFlag = cli.StringFlag{
+	Name:   "passphrase-file",
+	Usage:  "file holding the escrow passphrase; used when --passphrase is not set",
+	EnvVar: "GOBACK_PASSPHRASE_FILE",
+}
+
 func passphrase(c *cli.Context) (string, error) {
-	p := c.String("passphrase")
+	p, err := common.Passphrase(c.String("passphrase"), c.String("passphrase-file"))
+	if err != nil {
+		return "", err
+	}
+
 	if p == "" {
-		return "", errors.New("a passphrase is required (--passphrase or GOBACK_PASSPHRASE)")
+		return "", errors.New("a passphrase is required (--passphrase, --passphrase-file, GOBACK_PASSPHRASE or GOBACK_PASSPHRASE_FILE)")
 	}
 
 	return p, nil

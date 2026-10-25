@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/agent"
@@ -46,6 +47,7 @@ var storeKeys = []struct {
 	{"cache-dir", "cache-dir", "GOBACK_CACHE_DIR", func(s *agent.Store) *string { return &s.CacheDir }},
 	{"metadata-cache-size", "metadata-cache-size", "", func(s *agent.Store) *string { return &s.MetadataCacheSize }},
 	{"blob-cache-size", "blob-cache-size", "", func(s *agent.Store) *string { return &s.BlobCacheSize }},
+	{"passphrase-file", "passphrase-file", "GOBACK_PASSPHRASE_FILE", func(s *agent.Store) *string { return &s.PassphraseFile }},
 }
 
 // source names where a flag's value came from: its variable when that is
@@ -114,6 +116,7 @@ func load(path string, g globals) (*setup, error) {
 
 	if passphrase {
 		s.settings.Passphrase = g.GlobalString("passphrase")
+		s.overrides = slices.DeleteFunc(s.overrides, func(o override) bool { return o.Key == "passphrase-file" })
 		s.overrides = append(s.overrides, override{"passphrase-file", source("passphrase", "GOBACK_PASSPHRASE", s.settings.Passphrase)})
 	}
 

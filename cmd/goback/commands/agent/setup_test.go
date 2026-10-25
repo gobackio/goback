@@ -107,6 +107,19 @@ backups: [{name: a, every: 1h, path: {dir: /a}}]
 	require.NoError(t, err)
 	require.Equal(t, "from flag", s.settings.Passphrase)
 	require.Len(t, s.overrides, 1)
+
+	other := filepath.Join(dir, "other")
+	require.NoError(t, os.WriteFile(other, []byte("from the flag's file\n"), 0o600))
+
+	s, err = load(path, cliDefaults(map[string]string{"passphrase-file": other}))
+	require.NoError(t, err)
+	require.Equal(t, "from the flag's file", s.settings.Passphrase)
+	require.Equal(t, []override{{"passphrase-file", "--passphrase-file"}}, s.overrides)
+
+	s, err = load(path, cliDefaults(map[string]string{"passphrase-file": other, "passphrase": "from flag"}))
+	require.NoError(t, err)
+	require.Equal(t, "from flag", s.settings.Passphrase)
+	require.Len(t, s.overrides, 1)
 }
 
 func TestTheFileSetsBlobCacheOnBackupUnlessTheFlagDoes(t *testing.T) {

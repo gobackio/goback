@@ -3,7 +3,10 @@ package common
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"os"
+	"strings"
 
 	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/agent"
@@ -26,9 +29,25 @@ func Settings(c *cli.Context) (goback.Settings, error) {
 		BlobCacheSize:     c.GlobalString("blob-cache-size"),
 	}.Settings()
 
-	settings.Passphrase = c.GlobalString("passphrase")
+	passphrase, perr := Passphrase(c.GlobalString("passphrase"), c.GlobalString("passphrase-file"))
+	settings.Passphrase = passphrase
 
-	return settings, err
+	return settings, errors.Join(err, perr)
+}
+
+// Passphrase is value, else the contents of the file at path without the
+// space around them, else empty.
+func Passphrase(value, path string) (string, error) {
+	if value != "" || path == "" {
+		return value, nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading the passphrase file: %w", err)
+	}
+
+	return strings.TrimSpace(string(data)), nil
 }
 
 // OpenRepo opens the store the global flags name, or exits. Close it with

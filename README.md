@@ -22,8 +22,8 @@ agents into one store.
   encrypted before they leave the agent. File sizes, times and modes, the shape
   of each tree and the commits' metadata stay visible to the store. The key can
   be escrowed in the store under a passphrase (`goback key escrow`) and opened
-  with `--passphrase`. Without the key or the passphrase, nothing can be
-  restored.
+  with `--passphrase-file` or `--passphrase`. Without the key or the
+  passphrase, nothing can be restored.
 - **At-rest key (server side).** With `--at-rest-key`, archives are sealed
   where they are stored, independently of the store key.
 

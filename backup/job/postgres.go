@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/childenv"
 	"github.com/gobackio/goback/backup/postgres"
 	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/storage/cache"
@@ -76,9 +76,10 @@ func PostgresBase(ctx context.Context, env *Env, s PostgresBaseSettings) (*backu
 
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stderr = stderr
+	cmd.Env = childenv.Environ()
 
 	if password != "" {
-		cmd.Env = append(os.Environ(), "PGPASSWORD="+password)
+		cmd.Env = append(cmd.Env, "PGPASSWORD="+password)
 	}
 
 	stdout, err := cmd.StdoutPipe()

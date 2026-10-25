@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gobackio/goback/backup/childenv"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -287,7 +289,10 @@ func Check(ctx context.Context, connString, pgBasebackup, slot string, allowUnca
 // checkBasebackup says what keeps program from taking base backups of a
 // server at version, or nothing.
 func checkBasebackup(ctx context.Context, program string, version int) string {
-	out, err := exec.CommandContext(ctx, program, "--version").Output()
+	cmd := exec.CommandContext(ctx, program, "--version")
+	cmd.Env = childenv.Environ()
+
+	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Sprintf("Postgres %s takes base backups through pg_basebackup %s, and running %s failed: %v", versionString(version), majorString(version), program, err)
 	}
