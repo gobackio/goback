@@ -126,24 +126,27 @@ func (f *walFixture) receiver(client *storage.Client, objects backup.ObjectStore
 	}
 }
 
-// growing is segment 1 of timeline 1 while it is received. It grows by
+// growing is segment n of timeline 1 while it is received. It grows by
 // the same random block again and again, so its new parts repeat parts its
 // previous versions hold.
 type growing struct {
 	f       *walFixture
+	name    string
 	path    string
 	content []byte
 	block   []byte
 }
 
-func (f *walFixture) growing() *growing {
+func (f *walFixture) growing(n uint64) *growing {
 	dir := filepath.Join(f.spool.Dir, receivingDir)
 	require.NoError(f.t, os.MkdirAll(dir, 0o700))
 
 	block := make([]byte, 1<<20)
 	_, _ = rand.Read(block)
 
-	return &growing{f: f, path: filepath.Join(dir, walName(1, 1)), content: segmentContent(1, 1, 4096), block: block}
+	name := walName(1, n)
+
+	return &growing{f: f, name: name, path: filepath.Join(dir, name), content: segmentContent(1, n, 4096), block: block}
 }
 
 // commit has r commit the spool and the segment once it grew by a block.
@@ -156,7 +159,7 @@ func (g *growing) commit(r *Receiver) *backup.WalkResult {
 	files, err := g.f.spool.Files()
 	require.NoError(g.f.t, err)
 
-	result, err := r.commit(g.f.ctx, &cut{files: files, open: &OpenSegment{Name: walName(1, 1), Path: g.path, Size: int64(len(g.content))}})
+	result, err := r.commit(g.f.ctx, &cut{files: files, open: &OpenSegment{Name: g.name, Path: g.path, Size: int64(len(g.content))}})
 	require.NoError(g.f.t, err)
 
 	return result

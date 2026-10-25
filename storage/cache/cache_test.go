@@ -79,3 +79,27 @@ func TestABackupDiffsAgainstWhatTheLastOneWroteWithoutReadingIt(t *testing.T) {
 	require.Zero(t, run())
 	require.Zero(t, run())
 }
+
+func TestRecentCopiesHoldWhatTheLastGenerationKeptOrRead(t *testing.T) {
+	read := proto.NewObject(&proto.Blob{Data: []byte("read")})
+	kept := proto.NewObject(&proto.Blob{Data: []byte("kept")})
+	idle := proto.NewObject(&proto.Blob{Data: []byte("idle")})
+
+	copies := cache.NewRecent()
+	require.NoError(t, copies.Put(read.Ref(), read))
+	require.NoError(t, copies.Put(idle.Ref(), idle))
+
+	copies.Rotate()
+	_, ok := copies.Get(read.Ref())
+	require.True(t, ok)
+	require.NoError(t, copies.Put(kept.Ref(), kept))
+
+	copies.Rotate()
+	_, ok = copies.Get(idle.Ref())
+	require.False(t, ok, "a generation that neither kept nor read it dropped it")
+
+	for _, obj := range []*proto.Object{read, kept} {
+		_, ok = copies.Get(obj.Ref())
+		require.True(t, ok)
+	}
+}

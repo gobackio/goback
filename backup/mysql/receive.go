@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/lockfile"
 	"github.com/gobackio/goback/proto"
+	"github.com/gobackio/goback/storage/cache"
 )
 
 // The receiver's commit cadence.
@@ -93,6 +95,11 @@ type Receiver struct {
 	dial   func(serverID uint32, name string, pos int64) (binlogStream, error)
 	// wait, when set, replaces waiting before a reconnect
 	wait func(time.Duration)
+
+	// copies keeps the newest commit, its trees and files from one commit
+	// to the next, whatever cache the walker's store has
+	copies     *cache.Recent
+	copiesOnce sync.Once
 }
 
 // ReceiverStatus is how a receiver stands.
@@ -410,6 +417,7 @@ func (run *receiveRun) identify(ctx context.Context) error {
 
 func (run *receiveRun) held(ctx context.Context) (*binlogCommit, error) {
 	w := run.r.Walker()
+	w.Objects = cache.New(run.r.recent(), w.Objects)
 
 	ref, err := w.Index.LatestCommit(ctx, w.Set)
 	if errors.Is(err, backup.ErrNotFound) {
@@ -932,7 +940,14 @@ func (run *receiveRun) commit(c *cut) *spoolCommit {
 		ID:      run.id,
 		Files:   c.files,
 		Open:    c.open,
+		copies:  r.recent(),
 	}
+}
+
+func (r *Receiver) recent() *cache.Recent {
+	r.copiesOnce.Do(func() { r.copies = cache.NewRecent() })
+
+	return r.copies
 }
 
 // collect takes in the commit in flight once it is done; with wait, it

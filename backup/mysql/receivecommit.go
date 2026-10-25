@@ -30,6 +30,10 @@ type spoolCommit struct {
 	// Files are the spool's whole binlogs to commit.
 	Files []string
 	Open  *OpenBinlog
+
+	// copies, when set, keeps what one commit reads and writes for the
+	// next; Run rotates it
+	copies *cache.Recent
 }
 
 // Run commits and then deletes the committed whole binlogs from the spool.
@@ -44,8 +48,14 @@ func (c *spoolCommit) Run(ctx context.Context) (*backup.WalkResult, error) {
 	w := c.Walker
 
 	// the walk diffs against the commit and tree previous reads
+	copies := cache.Copies(cache.NewMemory())
+	if c.copies != nil {
+		c.copies.Rotate()
+		copies = c.copies
+	}
+
 	objects := w.Objects
-	w.Objects = cache.New(cache.NewMemory(), objects)
+	w.Objects = cache.New(copies, objects)
 	defer func() { w.Objects = objects }()
 
 	var held *binlogCommit

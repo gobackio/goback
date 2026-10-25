@@ -208,6 +208,68 @@ func (m *Memory) Drop(ref *proto.Ref) {
 	delete(m.objects, string(ref.GetHash()))
 }
 
+// Recent is Copies in memory that hold what was kept or read since the
+// generation before the current one: Rotate starts a generation and drops
+// every copy the one before it neither kept nor read. Rotated once per
+// commit, it holds what the last commit wrote and what it read of the one
+// before, and nothing older.
+type Recent struct {
+	mtx      sync.Mutex
+	current  map[string]*proto.Object
+	previous map[string]*proto.Object
+}
+
+// NewRecent returns empty Recent copies.
+func NewRecent() *Recent {
+	return &Recent{current: map[string]*proto.Object{}, previous: map[string]*proto.Object{}}
+}
+
+// Rotate starts a generation.
+func (r *Recent) Rotate() {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
+	r.previous, r.current = r.current, map[string]*proto.Object{}
+}
+
+// Get implements Copies; a copy of the previous generation joins the
+// current one.
+func (r *Recent) Get(ref *proto.Ref) (*proto.Object, bool) {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
+	key := string(ref.GetHash())
+	if obj, ok := r.current[key]; ok {
+		return obj, true
+	}
+
+	obj, ok := r.previous[key]
+	if ok {
+		r.current[key] = obj
+	}
+
+	return obj, ok
+}
+
+// Put implements Copies.
+func (r *Recent) Put(ref *proto.Ref, obj *proto.Object) error {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
+	r.current[string(ref.GetHash())] = obj
+
+	return nil
+}
+
+// Drop implements Copies.
+func (r *Recent) Drop(ref *proto.Ref) {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
+	delete(r.current, string(ref.GetHash()))
+	delete(r.previous, string(ref.GetHash()))
+}
+
 // InStore keeps Copies in an object store such as a local badger store.
 func InStore(store backup.ObjectStore) Copies {
 	return storeCopies{store}

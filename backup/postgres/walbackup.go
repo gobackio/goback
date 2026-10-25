@@ -32,6 +32,10 @@ type WALBackup struct {
 	// holds it up to its length as <name>.partial, in place of the previous
 	// commit's partial segment of its timeline.
 	Open *OpenSegment
+
+	// copies, when set, keeps what one commit reads and writes for the
+	// next; Run rotates it
+	copies *cache.Recent
 }
 
 // OpenSegment is a WAL segment a receiver is still writing.
@@ -65,8 +69,14 @@ func (b *WALBackup) Run(ctx context.Context) (*backup.WalkResult, error) {
 	w := b.Walker
 
 	// the walk diffs against the commit and tree previous reads
+	copies := cache.Copies(cache.NewMemory())
+	if b.copies != nil {
+		b.copies.Rotate()
+		copies = b.copies
+	}
+
 	objects := w.Objects
-	w.Objects = cache.New(cache.NewMemory(), objects)
+	w.Objects = cache.New(copies, objects)
 	defer func() { w.Objects = objects }()
 
 	prev, err := b.previous(ctx)

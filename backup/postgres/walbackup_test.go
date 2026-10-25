@@ -296,7 +296,7 @@ func TestReceivingCommitsOverAStoreServerReadNoFileTheLastOneStored(t *testing.T
 	f := newWALFixture(t)
 	client, m := f.served()
 	objects := f.cached(t.TempDir(), client)
-	segment := f.growing()
+	segment := f.growing(1)
 
 	for i := 0; i < 3; i++ {
 		m.reset()
@@ -305,6 +305,44 @@ func TestReceivingCommitsOverAStoreServerReadNoFileTheLastOneStored(t *testing.T
 		if i > 0 {
 			require.Zero(t, m.reads(), "commit %d read what the last one stored", i)
 		}
+	}
+}
+
+func TestAReceiversSteadyCommitsReadNoMetadataWhateverCacheItsCallerSetUp(t *testing.T) {
+	for _, cached := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cached=%v", cached), func(t *testing.T) {
+			f := newWALFixture(t)
+			client, m := f.served()
+
+			objects := backup.ObjectStore(client)
+			if cached {
+				objects = f.cached(t.TempDir(), client)
+			}
+
+			for n := uint64(1); n <= 600; n++ {
+				f.spoolSegment(n, 42)
+			}
+
+			r := f.receiver(client, objects)
+			segment := f.growing(601)
+
+			for i := 0; i < 3; i++ {
+				m.reset()
+				segment.commit(r)
+
+				if i > 0 {
+					require.Zero(t, m.reads(), "commit %d read what the last one wrote", i)
+				}
+			}
+
+			segment.commit(f.receiver(client, client))
+
+			m.reset()
+			result := segment.commit(r)
+			require.NotZero(t, m.reads(), "another receiver's commit is read from the store")
+			require.Len(t, f.held(result), 601)
+			require.Equal(t, int64(len(segment.content)), f.sizes(result)[segment.name+partialSuffix])
+		})
 	}
 }
 

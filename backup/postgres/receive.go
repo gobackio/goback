@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/lockfile"
+	"github.com/gobackio/goback/storage/cache"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -93,6 +95,11 @@ type Receiver struct {
 	// hook, when set, is called at named points of a commit; an error
 	// from it ends Run there, as a crash would.
 	hook func(point string) error
+
+	// copies keeps the newest commit, its trees and files from one commit
+	// to the next, whatever cache the walker's store has
+	copies     *cache.Recent
+	copiesOnce sync.Once
 }
 
 // ReceiverStatus is how a receiver stands.
@@ -257,7 +264,9 @@ func (r *Receiver) Run(ctx context.Context, stop <-chan struct{}) error {
 // setState reads the WAL set's newest commit: the files it holds, and
 // where its WAL ends.
 func (r *Receiver) setState(ctx context.Context, segSize uint64) (*heldSet, uint64, error) {
-	b := &WALBackup{Walker: r.Walker()}
+	w := r.Walker()
+	w.Objects = cache.New(r.recent(), w.Objects)
+	b := &WALBackup{Walker: w}
 
 	held, err := b.previous(ctx)
 	if err != nil {
@@ -308,9 +317,16 @@ func (r *Receiver) commit(ctx context.Context, c *cut) (*backup.WalkResult, erro
 		Now:     time.Now,
 		Files:   c.files,
 		Open:    c.open,
+		copies:  r.recent(),
 	}
 
 	return b.Run(ctx)
+}
+
+func (r *Receiver) recent() *cache.Recent {
+	r.copiesOnce.Do(func() { r.copies = cache.NewRecent() })
+
+	return r.copies
 }
 
 func (r *Receiver) at(point string) error {

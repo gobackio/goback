@@ -8,11 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/index/sql"
 	"github.com/gobackio/goback/proto"
+	"github.com/gobackio/goback/storage/cache"
 
 	"github.com/stretchr/testify/require"
 )
@@ -517,4 +520,84 @@ func TestRestoreRefusesToReplayPastAPartialBinlog(t *testing.T) {
 
 	_, reason := r.unusable(dump, binlogs)
 	require.NotEmpty(t, reason)
+}
+
+// metadataReads counts the commits, trees and files read from the store.
+type metadataReads struct {
+	*sql.Index
+	reads atomic.Int64
+}
+
+func (m *metadataReads) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
+	obj, err := m.Index.Get(ctx, ref)
+	if err == nil && obj.Type().Metadata() {
+		m.reads.Add(1)
+	}
+
+	return obj, err
+}
+
+func TestAReceiversSteadyCommitsReadNoMetadataWhateverCacheItsCallerSetUp(t *testing.T) {
+	for _, cached := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cached=%v", cached), func(t *testing.T) {
+			rf := newReceiverFixture(t)
+			rf.mustDump()
+
+			s := &binlogScript{serverID: 1}
+			s.open("binlog.000001", ts(0))
+			opened := len(s.events)
+
+			for i := 1; i <= 5; i++ {
+				s.event(2, ts(time.Duration(i)*70*time.Second), 50)
+			}
+
+			rf.dump.scripts = [][]any{s.events[:opened]}
+
+			var commits atomic.Int64
+
+			released := 0
+			rf.dump.tick = func(time.Time) {
+				rf.dump.mu.Lock()
+				defer rf.dump.mu.Unlock()
+
+				if int64(released) < commits.Load() && released < 5 {
+					rf.dump.script = append(rf.dump.script, s.events[opened+released])
+					released++
+				}
+
+				if commits.Load() > 5 {
+					rf.stopped.Do(func() { close(rf.stop) })
+				}
+			}
+
+			counted := &metadataReads{Index: rf.index}
+			objects := backup.ObjectStore(counted)
+			if cached {
+				objects = cache.New(cache.NewMemory(), counted)
+			}
+
+			r := rf.receiver()
+			r.Walker = func() *backup.Walker {
+				w := rf.walker("db-binlog")
+				w.Root, w.Objects = rf.spool.Dir, objects
+
+				return w
+			}
+
+			var reads []int64
+			r.Committed = func(*backup.WalkResult) {
+				reads = append(reads, counted.reads.Swap(0))
+				commits.Add(1)
+			}
+
+			require.NoError(t, r.Run(context.Background(), rf.stop))
+			require.Len(t, reads, 6)
+
+			for i, n := range reads[1:] {
+				require.Zero(t, n, "commit %d read what the last one wrote", i+1)
+			}
+
+			require.EqualValues(t, 4+100+5*50, rf.node(1, "binlog.000001.partial").GetSize())
+		})
+	}
 }
