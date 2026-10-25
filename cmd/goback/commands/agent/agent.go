@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -250,11 +252,11 @@ func statusAction(c *cli.Context) error {
 		fmt.Printf("pid %d, %s since %s, updated %s\n", status.PID, status.State, when(status.StartedAt, ""), when(status.UpdatedAt, ""))
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "JOB\tKIND\tSTATE\tLAST START\tRESULT\tLAST SUCCESS\tLAST DIRTY\tFAILURES\tNEXT DUE")
+		fmt.Fprintln(w, "JOB\tKIND\tSTATE\tLAST START\tRESULT\tLAST SUCCESS\tLAST DIRTY\tFAILURES\tNEXT DUE\tWATCH")
 
 		for _, j := range status.Jobs {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n", j.Name, j.Kind, j.State, when(j.LastStart, "-"), j.LastResult,
-				when(j.LastSuccess, "-"), when(j.LastDirty, "-"), j.Failures, when(j.NextDue, "-"))
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", j.Name, j.Kind, j.State, when(j.LastStart, "-"), j.LastResult,
+				when(j.LastSuccess, "-"), when(j.LastDirty, "-"), j.Failures, when(j.NextDue, "-"), watching(j.Watch))
 		}
 
 		_ = w.Flush()
@@ -271,8 +273,46 @@ func statusAction(c *cli.Context) error {
 			if j.LastError != "" {
 				fmt.Printf("%s: %s\n", j.Name, j.LastError)
 			}
+
+			printWatch(j.Name, j.Watch)
 		}
 	})
 
 	return nil
+}
+
+// watching is the WATCH column: the backend following the job's
+// directory, none when nothing does, and - for a job that isn't watched.
+func watching(w *agent.WatchStatus) string {
+	switch {
+	case w == nil:
+		return "-"
+	case w.Following:
+		return w.Backend
+	}
+
+	return "none"
+}
+
+func printWatch(job string, w *agent.WatchStatus) {
+	if w == nil {
+		return
+	}
+
+	if w.Reason != "" {
+		fmt.Printf("%s: following changes: %s\n", job, w.Reason)
+	}
+
+	for _, rel := range slices.Sorted(maps.Keys(w.Unwatched)) {
+		fmt.Printf("%s: /%s is read on every run: %s\n", job, rel, w.Unwatched[rel])
+	}
+
+	if w.FullRead != "" {
+		reason := w.FullRead
+		if w.FullReadDetail != "" {
+			reason += ": " + w.FullReadDetail
+		}
+
+		fmt.Printf("%s: the last run read everything: %s\n", job, reason)
+	}
 }

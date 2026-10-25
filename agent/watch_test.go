@@ -212,3 +212,63 @@ func TestAWatchedJobWithoutARecordWaitsOutTheGapSinceItsLastCommit(t *testing.T)
 		require.True(t, got[0].full)
 	})
 }
+
+func TestTheStatusFileSaysHowAJobIsWatchedAndWhyItsLastRunReadEverything(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.a.StateDir = t.TempDir()
+
+		src := newChangeSource()
+		h.a.Follow = func(string) *watch.Tracker {
+			return watch.NewTracker(func() (watch.Source, error) { return src, nil })
+		}
+
+		task, _ := h.watched("world", Every(24*time.Hour), 5*time.Minute, 48*time.Hour)
+		plain := h.fake("etc", Every(time.Hour), time.Second, nil)
+		h.run(task, plain)
+
+		time.Sleep(time.Minute)
+
+		status, err := ReadStatus(h.a.StateDir)
+		require.NoError(t, err)
+		require.Equal(t, &WatchStatus{Backend: "test", Following: true, FullRead: watch.FullFirst}, status.Jobs[0].Watch)
+		require.Nil(t, status.Jobs[1].Watch)
+
+		src.change("a")
+		time.Sleep(5 * time.Minute)
+
+		status, err = ReadStatus(h.a.StateDir)
+		require.NoError(t, err)
+		require.Equal(t, &WatchStatus{Backend: "test", Following: true}, status.Jobs[0].Watch, "the run on change read only what changed")
+
+		h.stop()
+	})
+}
+
+func TestAJobWhoseDirectoryCantBeFollowedSaysWhy(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.a.StateDir = t.TempDir()
+		h.a.Follow = func(string) *watch.Tracker {
+			return watch.NewTracker(func() (watch.Source, error) {
+				return nil, fmt.Errorf("%w: no backend here", watch.ErrUnavailable)
+			})
+		}
+
+		task, runs := h.watched("world", Every(24*time.Hour), 5*time.Minute, 48*time.Hour)
+		h.run(task)
+
+		time.Sleep(time.Hour)
+		h.stop()
+
+		require.Len(t, runs(), 1, "it runs on its plan alone")
+
+		status, err := ReadStatus(h.a.StateDir)
+		require.NoError(t, err)
+
+		w := status.Jobs[0].Watch
+		require.False(t, w.Following)
+		require.Contains(t, w.Reason, "no backend here")
+		require.Equal(t, watch.FullNotFollowing, w.FullRead)
+	})
+}

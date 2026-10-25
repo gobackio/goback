@@ -348,7 +348,8 @@ func (l *loop) schedule(e *entry, last time.Time) {
 	l.sched.Started(e.task.Set, last)
 }
 
-// unwatch stops following the directory of e's task.
+// unwatch stops following the directory of e's task; its status still
+// says how it was followed.
 func (l *loop) unwatch(e *entry) {
 	if e.tracker == nil {
 		return
@@ -356,7 +357,6 @@ func (l *loop) unwatch(e *entry) {
 
 	l.sched.Unwatch(e.task.Set)
 	_ = e.tracker.Close()
-	e.tracker = nil
 }
 
 func (l *loop) unwatchAll() {
@@ -392,6 +392,8 @@ type entry struct {
 
 	// tracker follows a watched task's directory
 	tracker *watch.Tracker
+	// fullRead and fullReadDetail are why its last run read everything
+	fullRead, fullReadDetail string
 
 	status JobStatus
 }
@@ -414,6 +416,8 @@ type finished struct {
 	result  *backup.WalkResult
 	err     error
 	logger  *slog.Logger
+	// read is what a watched run read, when it began
+	read *watch.Run
 }
 
 // commitEvent is a Serve task's commit, or, with report set, its report.
@@ -857,19 +861,28 @@ func (l *loop) launch(e *entry, now time.Time) {
 	go func() {
 		defer cancel()
 
-		result, err := l.runOnce(ctx, &env, e.task, lastEnd, tracker)
+		var read *watch.Run
+		if tracker != nil {
+			read = &watch.Run{}
+		}
+
+		result, err := l.runOnce(ctx, &env, e.task, lastEnd, read)
 		ended := l.a.now()
 
 		l.afterRun(&env)
 
-		l.done <- finished{e: e, started: now, ended: ended, result: result, err: err, logger: logger}
+		if read != nil && read.Set == "" {
+			read = nil
+		}
+
+		l.done <- finished{e: e, started: now, ended: ended, result: result, err: err, logger: logger, read: read}
 	}()
 }
 
 // runOnce runs t, turning a panic into an error. It first warns when a
 // commit started after this process's last run ended, which only another
 // writer makes.
-func (l *loop) runOnce(ctx context.Context, env *job.Env, t *Task, lastEnd time.Time, tracker *watch.Tracker) (result *backup.WalkResult, err error) {
+func (l *loop) runOnce(ctx context.Context, env *job.Env, t *Task, lastEnd time.Time, read *watch.Run) (result *backup.WalkResult, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			env.Logger.Error("the run panicked", "panic", r, "stack", string(debug.Stack()))
@@ -886,16 +899,16 @@ func (l *loop) runOnce(ctx context.Context, env *job.Env, t *Task, lastEnd time.
 		env.Logger.Warn("another writer committed to the set since this agent's last run; one agent per set", "agent", commit.GetAgentId())
 	}
 
-	if t.Watch == nil || tracker == nil {
+	if t.Watch == nil || read == nil {
 		return t.Run(ctx, env)
 	}
 
-	return l.runWatched(ctx, env, t)
+	return l.runWatched(ctx, env, t, read)
 }
 
 // runWatched runs t reading only what changed since its last run, where
-// the schedule can tell.
-func (l *loop) runWatched(ctx context.Context, env *job.Env, t *Task) (result *backup.WalkResult, err error) {
+// the schedule can tell, and says in read what it read.
+func (l *loop) runWatched(ctx context.Context, env *job.Env, t *Task, read *watch.Run) (result *backup.WalkResult, err error) {
 	latest, err := env.Index.LatestCommit(ctx, t.Set)
 	if errors.Is(err, backup.ErrNotFound) {
 		latest, err = nil, nil
@@ -907,6 +920,7 @@ func (l *loop) runWatched(ctx context.Context, env *job.Env, t *Task) (result *b
 
 	run := l.sched.Begin(t.Set, latest.GetHash(), nil)
 	l.a.ranOnChange(t.Set)
+	*read = run
 
 	if run.Full != "" {
 		env.Logger.Info("reading the whole tree", "reason", run.Full, "detail", run.Detail)
@@ -1036,6 +1050,11 @@ func (l *loop) finish(f finished) {
 
 	if !e.task.Log {
 		l.full--
+	}
+
+	if f.read != nil {
+		e.fullRead, e.fullReadDetail = f.read.Full, f.read.Detail
+		recordWatchedRun(e.task.Name, f.read.Full)
 	}
 
 	result := l.outcome(f)
@@ -1294,10 +1313,31 @@ func (l *loop) state() string {
 	return AgentRunning
 }
 
+// watchStatus is how e's task follows its directory, nil for a task that
+// isn't watched.
+func (e *entry) watchStatus() *WatchStatus {
+	if e.tracker == nil {
+		return nil
+	}
+
+	st := e.tracker.State()
+
+	return &WatchStatus{
+		Backend: st.Backend, Following: st.Following, Reason: st.Reason, Unwatched: st.Unwatched,
+		FullRead: e.fullRead, FullReadDetail: e.fullReadDetail,
+	}
+}
+
 func (l *loop) writeStatus() error {
 	now := l.a.now()
 	l.dirty = false
 	l.lastWrite = now
+
+	for _, e := range l.entries {
+		if w := e.watchStatus(); w != nil {
+			recordWatching(e.task.Name, *w)
+		}
+	}
 
 	if l.a.StateDir == "" {
 		return nil
@@ -1342,6 +1382,8 @@ func (l *loop) writeStatus() error {
 		if e.task.Serve != nil {
 			j.StaleAfter = int64(e.task.StaleAfter / time.Second)
 		}
+
+		j.Watch = e.watchStatus()
 
 		s.Jobs = append(s.Jobs, j)
 	}

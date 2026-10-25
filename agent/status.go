@@ -61,6 +61,26 @@ type JobStatus struct {
 	StaleAfter int64 `json:"stale_after_seconds,omitempty"`
 	// Details are what a long-running task last reported about itself.
 	Details any `json:"details,omitempty"`
+	// Watch is how a watched job follows its directory; nil for one that
+	// isn't watched.
+	Watch *WatchStatus `json:"watch,omitempty"`
+}
+
+// WatchStatus is how a watched job follows its directory for changes.
+type WatchStatus struct {
+	// Backend names how: inotify, fanotify or usn; empty before one opened.
+	Backend   string `json:"backend,omitempty"`
+	Following bool   `json:"following"`
+	// Reason is why the directory isn't followed, or why following last
+	// lost track.
+	Reason string `json:"reason,omitempty"`
+	// Unwatched are the subtrees read on every run, with why.
+	Unwatched map[string]string `json:"unwatched,omitempty"`
+	// FullRead is why the job's last run read the whole tree, one of the
+	// watch.Full reasons, with FullReadDetail saying more; empty when it
+	// read only what changed.
+	FullRead       string `json:"full_read,omitempty"`
+	FullReadDetail string `json:"full_read_detail,omitempty"`
 }
 
 // The states of a task.
