@@ -1049,72 +1049,98 @@ func (ps *PackStorage) putTombstone(ctx context.Context, ws *writeSession, ref *
 	return err
 }
 
-// WalkHeaders implements backup.HeaderWalker over the committed archives.
-func (ps *PackStorage) WalkHeaders(ctx context.Context, t proto.ObjectType, fn func(*proto.ObjectHeader) error) error {
-	ps.mtx.RLock()
-	defer ps.mtx.RUnlock()
+// stoppedWalk is an error a walk's callback or context returned, which
+// ends the walk whatever archive it was in.
+type stoppedWalk struct{ err error }
 
-	for _, archive := range ps.archives {
-		archive.mtx.RLock()
-		pending := archive.state == ArchivePending
-		archive.mtx.RUnlock()
+func (s stoppedWalk) Error() string { return s.err.Error() }
+func (s stoppedWalk) Unwrap() error { return s.err }
 
-		if pending {
-			continue
-		}
+// walkLoaded calls walk for each loaded archive that is not pending,
+// holding no lock of the store while walk runs, so walk may call into it.
+// An archive a rewrite retires during the walk and that then fails is
+// passed over, and the archives loaded since are walked after, among them
+// the rewrite's outputs.
+func (ps *PackStorage) walkLoaded(walk func(*archive) error) error {
+	seen := make(map[*archive]bool)
 
-		visit := func(hdr *proto.ObjectHeader, _ []byte, _, _ uint32) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
+	for {
+		var batch []*archive
 
-			if t == proto.ObjectType_INVALID || hdr.Type == t {
-				return fn(hdr)
-			}
-
-			return nil
-		}
-
-		if t != proto.ObjectType_INVALID {
-			typed, err := archive.foreachOfType(t, false, visit)
-			if err != nil {
-				return err
-			}
-
-			if typed {
+		ps.mtx.RLock()
+		for _, a := range ps.archives {
+			if seen[a] {
 				continue
 			}
+
+			seen[a] = true
+
+			a.mtx.RLock()
+			pending := a.state == ArchivePending
+			a.mtx.RUnlock()
+
+			if !pending {
+				batch = append(batch, a)
+			}
+		}
+		ps.mtx.RUnlock()
+
+		var retired bool
+
+		for _, a := range batch {
+			err := walk(a)
+
+			var stopped stoppedWalk
+			if errors.As(err, &stopped) {
+				return stopped.err
+			}
+
+			if err != nil && !ps.isRetired(a.name) {
+				return err
+			}
+
+			retired = retired || err != nil
 		}
 
-		err := archive.foreach(loadNone, visit)
-		if err != nil {
-			return err
+		if !retired {
+			return nil
 		}
 	}
+}
 
-	return nil
+// WalkHeaders implements backup.HeaderWalker over the committed archives.
+func (ps *PackStorage) WalkHeaders(ctx context.Context, t proto.ObjectType, fn func(*proto.ObjectHeader) error) error {
+	visit := func(hdr *proto.ObjectHeader, _ []byte, _, _ uint32) error {
+		if err := ctx.Err(); err != nil {
+			return stoppedWalk{err}
+		}
+
+		if t == proto.ObjectType_INVALID || hdr.Type == t {
+			if err := fn(hdr); err != nil {
+				return stoppedWalk{err}
+			}
+		}
+
+		return nil
+	}
+
+	return ps.walkLoaded(func(archive *archive) error {
+		if t != proto.ObjectType_INVALID {
+			typed, err := archive.foreachOfType(t, false, visit)
+			if err != nil || typed {
+				return err
+			}
+		}
+
+		return archive.foreach(loadNone, visit)
+	})
 }
 
 // Walk implements backup.ObjectStore.
 func (ps *PackStorage) Walk(ctx context.Context, load bool, t proto.ObjectType, fn backup.ObjectReceiver) error {
-	ps.mtx.RLock()
-	defer ps.mtx.RUnlock()
-
-	for _, archive := range ps.archives {
-		archive.mtx.RLock()
-		pending := archive.state == ArchivePending
-		archive.mtx.RUnlock()
-
-		if pending {
-			continue
-		}
-
-		if err := ps.walkArchive(archive, load, t, fn); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return ps.walkLoaded(func(archive *archive) error {
+		return ps.walkArchive(archive, load, t, fn)
+	})
 }
 
 var _ backup.ArchiveWalker = (*PackStorage)(nil)
@@ -1122,44 +1148,41 @@ var _ backup.ArchiveWalker = (*PackStorage)(nil)
 // WalkArchives implements backup.ArchiveWalker. An archive still open to
 // writes is walked but not named.
 func (ps *PackStorage) WalkArchives(ctx context.Context, t proto.ObjectType, skip func(string) bool, fn backup.ObjectReceiver) ([]string, error) {
-	ps.mtx.RLock()
-	defer ps.mtx.RUnlock()
-
 	var names []string
 
-	for _, archive := range ps.archives {
+	err := ps.walkLoaded(func(archive *archive) error {
 		archive.mtx.RLock()
-		state, final := archive.state, archive.readOnly
+		final := archive.readOnly && archive.state == ArchiveCommitted
 		archive.mtx.RUnlock()
-
-		if state == ArchivePending {
-			continue
-		}
-
-		final = final && state == ArchiveCommitted
 
 		if final && skip(archive.name) {
 			names = append(names, archive.name)
-			continue
+			return nil
 		}
 
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return stoppedWalk{err}
 		}
 
 		if err := ps.walkArchive(archive, true, t, fn); err != nil {
-			return nil, err
+			return err
 		}
 
 		if final {
 			names = append(names, archive.name)
 		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return names, nil
 }
 
-// walkArchive is Walk over one archive.
+// walkArchive is Walk over one archive; an error fn returns comes back as
+// a stoppedWalk.
 func (ps *PackStorage) walkArchive(archive *archive, load bool, t proto.ObjectType, fn backup.ObjectReceiver) error {
 	var pred loadPredicate
 
@@ -1188,7 +1211,11 @@ func (ps *PackStorage) walkArchive(archive *archive, load bool, t proto.ObjectTy
 			}
 		}
 
-		return fn(obj)
+		if err := fn(obj); err != nil {
+			return stoppedWalk{err}
+		}
+
+		return nil
 	}
 
 	if t != proto.ObjectType_INVALID {

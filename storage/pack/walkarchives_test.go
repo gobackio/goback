@@ -2,7 +2,9 @@ package pack
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/gobackio/goback/proto"
 
@@ -58,4 +60,88 @@ func TestWalkArchivesReadsOnlyTheArchivesNotSkipped(t *testing.T) {
 	require.NotEmpty(t, names)
 	require.NotSubset(t, known, names, "a rewrite is a new archive")
 	require.ElementsMatch(t, []string{first.Ref().String(), second.Ref().String()}, pins)
+}
+
+func TestAWalkWhoseCallbackAsksTheStoreLetsAWriterIn(t *testing.T) {
+	store := newTestStore(t, t.TempDir())
+
+	ctx := context.Background()
+	stored := makeTestData(t, 3)
+	putAll(t, store, stored)
+
+	later := makeTestData(t, 1)[0]
+	wrote := make(chan error, 1)
+	walked := make(chan error, 1)
+
+	go func() {
+		first := true
+
+		walked <- store.Walk(ctx, false, proto.ObjectType_INVALID, func(*proto.Object) error {
+			if !first {
+				return nil
+			}
+
+			first = false
+
+			// a writer that opens an archive waits for the store's lock
+			go func() { wrote <- store.Put(ctx, later) }()
+			time.Sleep(100 * time.Millisecond)
+
+			_, err := store.Has(ctx, stored[0].Ref())
+
+			return err
+		})
+	}()
+
+	select {
+	case err := <-walked:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the walk and the writer wait for each other")
+	}
+
+	require.NoError(t, <-wrote)
+	require.NoError(t, store.Close())
+}
+
+func TestAWalkReachesWhatARewriteMovesWhileItRuns(t *testing.T) {
+	store := newTestStore(t, t.TempDir(), WithCompaction(CompactionConfig{MinimumCandidates: 0}))
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	objects := makeTestData(t, 4)
+
+	for _, obj := range objects {
+		require.NoError(t, store.Delete(ctx, obj.Ref()))
+		require.NoError(t, store.Flush())
+	}
+
+	seen := make(map[string]bool)
+	compacted := false
+
+	require.NoError(t, store.WalkHeaders(ctx, proto.ObjectType_TOMBSTONE, func(hdr *proto.ObjectHeader) error {
+		seen[string(hdr.TombstoneFor.Hash)] = true
+
+		if !compacted {
+			compacted = true
+			compact(t, ctx, store)
+		}
+
+		return nil
+	}))
+
+	for _, obj := range objects {
+		require.True(t, seen[string(obj.Ref().Hash)], "tombstone of %x", obj.Ref().Hash)
+	}
+}
+
+func TestAWalkReturnsWhatItsCallbackReturns(t *testing.T) {
+	store := newTestStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+
+	putAll(t, store, makeTestData(t, 3))
+
+	stop := errors.New("stop")
+	err := store.Walk(context.Background(), true, proto.ObjectType_INVALID, func(*proto.Object) error { return stop })
+	require.Equal(t, stop, err)
 }
