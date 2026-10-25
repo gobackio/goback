@@ -185,3 +185,16 @@ func TestTreeWalksInOrderWhileReadingAhead(t *testing.T) {
 		}
 	}
 }
+
+func TestAStoreRefusesASealedObjectThatIsNotABlob(t *testing.T) {
+	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{AgentID: "node-1"})
+	store := NewStore(newMemIndex(), nil)
+
+	for _, kind := range []proto.ObjectType{proto.ObjectType_COMMIT, proto.ObjectType_TREE, proto.ObjectType_FILE, proto.ObjectType_PIN} {
+		sealed := proto.NewObject(&proto.Sealed{Ref: proto.HashPayload(kind, []byte("x")), Type: kind, Data: []byte("junk"), Encryption: proto.Encryption_SEALED})
+
+		_, err := store.Put(ctx, Upload{Object: sealed})
+		require.ErrorIs(t, err, ErrInvalidRequest, kind.String())
+		require.ErrorIs(t, store.PutObjects(ctx, []*proto.Object{sealed}), ErrInvalidRequest, kind.String())
+	}
+}

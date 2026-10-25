@@ -40,3 +40,10 @@ func TestASealedBlobDoesNotOpenUnderAnotherRefOrKey(t *testing.T) {
 	_, err = OpenBlob(other, sealed)
 	require.ErrorIs(t, err, storekey.ErrWrongKey)
 }
+
+func TestASealedObjectReferencesNothing(t *testing.T) {
+	for _, kind := range []proto.ObjectType{proto.ObjectType_COMMIT, proto.ObjectType_TREE, proto.ObjectType_FILE, proto.ObjectType_PIN} {
+		sealed := proto.NewObject(&proto.Sealed{Ref: proto.HashPayload(kind, []byte("x")), Type: kind, Data: []byte("junk"), Encryption: proto.Encryption_SEALED})
+		require.Empty(t, References(sealed), kind.String())
+	}
+}

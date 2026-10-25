@@ -282,6 +282,9 @@ func (o *Object) Canonical() ([]byte, error) {
 		if t.Sealed.Encryption == Encryption_PLAINTEXT {
 			return nil, invalid("sealed object without an encryption mode")
 		}
+		if t.Sealed.Type != ObjectType_BLOB {
+			return nil, invalid("sealed %s object: only a blob is sealed", t.Sealed.Type)
+		}
 		return t.Sealed.GetData(), nil
 	case *Object_Commit:
 		return canonicalCommit(t.Commit)

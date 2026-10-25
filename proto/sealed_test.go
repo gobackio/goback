@@ -129,3 +129,11 @@ func TestPlaintextStoredRoundTrip(t *testing.T) {
 	require.Equal(t, []byte("keyid123"), back.KeyId)
 	require.True(t, back.Ref().Equal(obj.Ref()))
 }
+
+func TestOnlyABlobIsSealed(t *testing.T) {
+	for _, kind := range []ObjectType{ObjectType_COMMIT, ObjectType_TREE, ObjectType_FILE, ObjectType_PIN, ObjectType_POLICY} {
+		sealed := sealedFixture()
+		sealed.Type = kind
+		require.ErrorIs(t, NewObject(sealed).Validate(), ErrInvalidObject, kind.String())
+	}
+}

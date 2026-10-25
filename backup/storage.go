@@ -144,13 +144,13 @@ type HeadKeeper interface {
 // a tree's nodes with their security descriptors and streams, a tree's
 // splits, a file's parts and splits, a pin's target.
 func References(obj *proto.Object) []*proto.Ref {
-	switch obj.Type() {
-	case proto.ObjectType_COMMIT:
-		return []*proto.Ref{obj.GetCommit().GetTree()}
-	case proto.ObjectType_PIN:
-		return []*proto.Ref{obj.GetPin().GetTarget()}
-	case proto.ObjectType_TREE:
-		tree := obj.GetTree()
+	switch t := obj.GetObject().(type) {
+	case *proto.Object_Commit:
+		return []*proto.Ref{t.Commit.GetTree()}
+	case *proto.Object_Pin:
+		return []*proto.Ref{t.Pin.GetTarget()}
+	case *proto.Object_Tree:
+		tree := t.Tree
 		refs := make([]*proto.Ref, 0, len(tree.Nodes)+len(tree.Splits))
 		for _, node := range tree.Nodes {
 			if node.Ref != nil {
@@ -159,8 +159,8 @@ func References(obj *proto.Object) []*proto.Ref {
 			refs = append(refs, node.GetStat().MetadataRefs()...)
 		}
 		return append(refs, tree.Splits...)
-	case proto.ObjectType_FILE:
-		file := obj.GetFile()
+	case *proto.Object_File:
+		file := t.File
 		refs := make([]*proto.Ref, 0, len(file.Parts)+len(file.Splits))
 		for _, part := range file.Parts {
 			refs = append(refs, part.Ref)
