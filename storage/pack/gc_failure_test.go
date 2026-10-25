@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -109,4 +110,103 @@ func TestACollectionThatFailsAfterItsMarkMarksAgainWhenRetried(t *testing.T) {
 	_, err = store.Collect(ctx, gcOptions(t, 96*time.Hour))
 	require.NoError(t, err)
 	requireStored(t, store, reachable, true)
+}
+
+func TestAResumedMarkMarksAgainABatchWhoseRunsDidNotSurvive(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	reachable, unreachable := makeGCTestData(t)
+	putAll(t, store, append(append([]*proto.Object{}, reachable...), unreachable...))
+
+	opts := gcOptions(t, 0)
+
+	defer func(n int) { rootBatch = n; gcAfterBatch = nil }(rootBatch)
+	rootBatch = 2
+
+	interrupted := errors.New("interrupted")
+	gcAfterBatch = func(batch int) error {
+		if batch == 1 {
+			return interrupted
+		}
+		return nil
+	}
+
+	_, err := store.Collect(ctx, opts)
+	require.ErrorIs(t, err, interrupted)
+
+	runs, err := filepath.Glob(filepath.Join(opts.TempDir, "goback-gc", "gen-1", "batch-0-*.run"))
+	require.NoError(t, err)
+	require.NotEmpty(t, runs)
+	for _, run := range runs {
+		require.NoError(t, os.Truncate(run, 0))
+	}
+
+	gcAfterBatch = nil
+	report, err := store.Collect(ctx, opts)
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Resumed)
+	require.EqualValues(t, len(reachable), report.Marked)
+	requirePresent(t, store, reachable, true)
+}
+
+func TestAResumedMarkMarksAgainWhenTheRootsFallIntoOtherBatches(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	reachable, unreachable := makeGCTestData(t)
+	putAll(t, store, append(append([]*proto.Object{}, reachable...), unreachable...))
+
+	var roots [][]byte
+	for _, obj := range reachable {
+		if obj.Type() == proto.ObjectType_COMMIT {
+			roots = append(roots, obj.Ref().Hash)
+		}
+	}
+	slices.SortFunc(roots, bytes.Compare)
+
+	// a set per root, numbered in key order, keeps the roots' order but
+	// gives each a batch of its own
+	opts := gcOptions(t, 0)
+	opts.Owner = func(root []byte) Attribution {
+		return Attribution{Set: int64(slices.IndexFunc(roots, func(r []byte) bool { return bytes.Equal(r, root) }) + 1)}
+	}
+
+	defer func() { gcAfterBatch = nil }()
+
+	interrupted := errors.New("interrupted")
+	gcAfterBatch = func(int) error { return interrupted }
+
+	_, err := store.Collect(ctx, opts)
+	require.ErrorIs(t, err, interrupted)
+
+	gcAfterBatch = nil
+	opts.Owner = nil
+	report, err := store.Collect(ctx, opts)
+	require.NoError(t, err)
+	require.Zero(t, report.Resumed)
+	require.EqualValues(t, len(reachable), report.Marked)
+	requirePresent(t, store, reachable, true)
+}
+
+func TestLiveRunsReportARunThatEndsWithinAnEntry(t *testing.T) {
+	runs := newLiveRuns(t.TempDir(), 2)
+	defer runs.close()
+
+	key := func(n byte) refKey { return refKey{n} }
+	require.NoError(t, runs.add([]liveRef{{key: key(1)}, {key: key(2)}}))
+	require.Len(t, runs.files, 1)
+	require.NoError(t, os.Truncate(runs.files[0], int64(liveRefSize+5)))
+
+	it, err := runs.iterator()
+	require.NoError(t, err)
+	defer it.close()
+
+	_, ok := it.at(key(1))
+	require.True(t, ok)
+	_, ok = it.at(key(2))
+	require.False(t, ok)
+	require.Error(t, it.err())
 }

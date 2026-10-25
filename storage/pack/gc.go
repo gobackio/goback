@@ -1148,25 +1148,26 @@ func (v *visitedSet) claimUnreached(keys []refKey) []refKey {
 }
 
 // snapshotID identifies the generation, the run format, the archives it
-// covers and the sorted roots, so a checkpoint is only resumed against the
-// same snapshot and the same batches, by a build that reads its runs.
+// covers and the sorted roots with all that splits them into batches, so a checkpoint is only resumed against the same snapshot and
+// the same batches, by a build that reads its runs.
 func (r *gcRun) snapshotID() string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%d %d\n", r.gen, liveRefSize)
+	fmt.Fprintf(h, "%d %d %d\n", r.gen, liveRefSize, rootBatch)
 	for _, ga := range r.order {
 		fmt.Fprintf(h, "%s\n", ga.a.name)
 	}
 
 	for _, root := range r.roots {
 		h.Write(root.key[:])
-		h.Write([]byte{byte(root.death)})
+		fmt.Fprintf(h, " %d %d %t %d\n", root.owner.Group, root.owner.Set, root.shallow, root.death)
 	}
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 // openRunDir prepares the run directory, keeping the runs of batches an
-// interrupted mark of the same snapshot completed.
+// interrupted mark of the same snapshot completed and that read back as
+// their checkpoints recorded them; any other batch is marked again.
 func (r *gcRun) openRunDir(batches [][]gcRoot) (*liveRuns, map[int]bool, error) {
 	r.runDir = filepath.Join(r.opts.TempDir, "goback-gc", fmt.Sprintf("gen-%d", r.gen))
 	manifest := filepath.Join(r.runDir, "snapshot")
@@ -1190,27 +1191,39 @@ func (r *gcRun) openRunDir(batches [][]gcRoot) (*liveRuns, map[int]bool, error) 
 		return nil, nil, err
 	}
 
-	done := make(map[int]bool)
-	for _, e := range entries {
-		if batch, ok := strings.CutSuffix(strings.TrimPrefix(e.Name(), "batch-"), ".done"); ok && strings.HasPrefix(e.Name(), "batch-") {
-			if n, err := strconv.Atoi(batch); err == nil {
-				done[n] = true
-			}
-		}
-	}
-
 	live := newLiveRuns(r.runDir, liveRunLimit)
+	done := make(map[int]bool)
+	adopted := make(map[string]bool)
+
 	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".run") {
+		batch, ok := strings.CutSuffix(strings.TrimPrefix(e.Name(), "batch-"), ".done")
+		if !ok || !strings.HasPrefix(e.Name(), "batch-") {
 			continue
 		}
 
-		batch, _, _ := strings.Cut(strings.TrimPrefix(e.Name(), "batch-"), "-")
-		path := filepath.Join(r.runDir, e.Name())
+		n, err := strconv.Atoi(batch)
+		if err != nil || n >= len(batches) {
+			continue
+		}
 
-		if n, err := strconv.Atoi(batch); err == nil && done[n] && n < len(batches) {
+		runs, ok := checkpointed(r.runDir, n)
+		if !ok {
+			if err := os.Remove(filepath.Join(r.runDir, e.Name())); err != nil {
+				return nil, nil, err
+			}
+
+			continue
+		}
+
+		done[n] = true
+		for _, path := range runs {
+			adopted[path] = true
 			live.adopt(path, batches[n][0].owner)
-		} else {
+		}
+	}
+
+	for _, e := range entries {
+		if path := filepath.Join(r.runDir, e.Name()); strings.HasSuffix(e.Name(), ".run") && !adopted[path] {
 			_ = os.Remove(path)
 		}
 	}
@@ -1822,7 +1835,7 @@ func (r *gcRun) scanOf(archives []*gcArchive, runs *liveRuns, hit func(ga *gcArc
 		heap.Fix(&h, 0)
 	}
 
-	return nil
+	return it.err()
 }
 
 // flagErased walks the subtrees of the erased commits still in the

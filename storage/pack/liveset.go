@@ -4,12 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"container/heap"
+	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -48,6 +52,16 @@ type liveRuns struct {
 	files  []string
 	owners []Attribution
 	added  uint64
+	// spilled are the runs of the batch begun last, which its checkpoint lists
+	spilled []runFile
+}
+
+// runFile is what a checkpoint records of one run, so a resumed mark takes
+// on only a run that reads back as it was written.
+type runFile struct {
+	name string
+	size int64
+	sum  string
 }
 
 // adopt takes on a run an interrupted mark left behind.
@@ -120,7 +134,7 @@ func (l *liveRuns) begin(prefix string, owner Attribution) {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
-	l.prefix, l.owner = prefix, owner
+	l.prefix, l.owner, l.spilled = prefix, owner, nil
 }
 
 func (l *liveRuns) spillLocked() error {
@@ -131,7 +145,8 @@ func (l *liveRuns) spillLocked() error {
 		return err
 	}
 
-	w := bufio.NewWriterSize(file, 1<<20)
+	sum := sha256.New()
+	w := bufio.NewWriterSize(io.MultiWriter(file, sum), 1<<20)
 	var entry [liveRefSize]byte
 	for _, ref := range l.buf {
 		copy(entry[:], ref.key[:])
@@ -149,18 +164,25 @@ func (l *liveRuns) spillLocked() error {
 		return err
 	}
 
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+
 	if err := file.Close(); err != nil {
 		return err
 	}
 
 	l.files = append(l.files, file.Name())
 	l.owners = append(l.owners, l.owner)
+	l.spilled = append(l.spilled, runFile{name: filepath.Base(file.Name()), size: int64(len(l.buf) * liveRefSize), sum: fmt.Sprintf("%x", sum.Sum(nil))})
 	l.buf = l.buf[:0]
 
 	return nil
 }
 
-// checkpoint spills what is buffered and marks the batch complete.
+// checkpoint spills what is buffered and marks the batch complete, listing
+// the runs it spilled.
 func (l *liveRuns) checkpoint(batch int) error {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
@@ -171,7 +193,73 @@ func (l *liveRuns) checkpoint(batch int) error {
 		}
 	}
 
-	return os.WriteFile(filepath.Join(l.dir, doneName(batch)), nil, 0o644)
+	var marker bytes.Buffer
+	fmt.Fprintf(&marker, "%d\n", len(l.spilled))
+	for _, run := range l.spilled {
+		fmt.Fprintf(&marker, "%s %d %s\n", run.name, run.size, run.sum)
+	}
+
+	file, err := os.Create(filepath.Join(l.dir, doneName(batch)))
+	if err != nil {
+		return err
+	}
+
+	if _, err := file.Write(marker.Bytes()); err != nil {
+		_ = file.Close()
+		return err
+	}
+
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+
+	return file.Close()
+}
+
+// checkpointed returns the runs the done marker of a batch lists, false
+// when one is missing or does not read back as it was written.
+func checkpointed(dir string, batch int) ([]string, bool) {
+	data, err := os.ReadFile(filepath.Join(dir, doneName(batch)))
+	if err != nil {
+		return nil, false
+	}
+
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	count, err := strconv.Atoi(lines[0])
+	if err != nil || count != len(lines)-1 {
+		return nil, false
+	}
+
+	paths := make([]string, 0, count)
+	for _, line := range lines[1:] {
+		var run runFile
+		if _, err := fmt.Sscanf(line, "%s %d %s", &run.name, &run.size, &run.sum); err != nil {
+			return nil, false
+		}
+
+		path := filepath.Join(dir, filepath.Base(run.name))
+		if !strings.HasPrefix(run.name, batchPrefix(batch)) || !runReadsAs(path, run) {
+			return nil, false
+		}
+
+		paths = append(paths, path)
+	}
+
+	return paths, true
+}
+
+func runReadsAs(path string, run runFile) bool {
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	sum := sha256.New()
+	n, err := io.Copy(sum, file)
+
+	return err == nil && n == run.size && fmt.Sprintf("%x", sum.Sum(nil)) == run.sum
 }
 
 func batchPrefix(batch int) string { return fmt.Sprintf("batch-%d-", batch) }
@@ -225,6 +313,8 @@ type runHead struct {
 	reader *bufio.Reader
 	cur    liveRef
 	owner  Attribution
+	// err is why the run ended other than at an entry's end
+	err error
 }
 
 func (h *runHead) advance() bool {
@@ -240,6 +330,10 @@ func (h *runHead) advance() bool {
 
 	var entry [liveRefSize]byte
 	if _, err := io.ReadFull(h.reader, entry[:]); err != nil {
+		if !errors.Is(err, io.EOF) {
+			h.err = fmt.Errorf("reading live run %s: %w", h.file.Name(), err)
+		}
+
 		return false
 	}
 
@@ -342,6 +436,17 @@ func (it *liveIter) draw() {
 			heap.Pop(&it.heap)
 		}
 	}
+}
+
+// err returns why a run ended early, nil when every run read to its end.
+func (it *liveIter) err() error {
+	for _, h := range it.heads {
+		if h.err != nil {
+			return h.err
+		}
+	}
+
+	return nil
 }
 
 func (it *liveIter) close() {
