@@ -210,6 +210,9 @@ type Walker struct {
 	// local is the root a walk of the local disk lists and opens what it
 	// reads in, where the platform has one
 	local *os.Root
+	// mounts holds the timestamps of each mount a walk of the local disk
+	// reaches
+	mounts *mountTimes
 	// outside is the run's context outside any session, and session the
 	// context of the session it writes in now, which a checkpoint renews
 	outside, session context.Context
@@ -562,6 +565,10 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 		return w.putContent(w.session, 0, bytes.NewReader(nil))
 	})
 	w.traits = w.fs().Traits()
+	w.mounts = nil
+	if isLocal(w.fs()) {
+		w.mounts = newMountTimes()
+	}
 
 	workers := w.ScanWorkers
 	if workers == 0 {
@@ -1337,7 +1344,7 @@ func (w *Walker) reusable(ctx context.Context, path, rel string, parent, info os
 	// the racy rule: a file touched during or after the base run may have
 	// been rewritten within the same timestamp tick, which on a coarse or
 	// skewed FS reaches back by its resolution and skew
-	if stat.MtimeNs+int64(w.traits.Resolution+w.traits.Skew) >= w.baseScan {
+	if stat.MtimeNs+int64(w.racyWindow(path, info)) >= w.baseScan {
 		return false
 	}
 

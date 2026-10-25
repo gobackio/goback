@@ -99,7 +99,8 @@ type Traits struct {
 }
 
 // LocalFS is the local disk, the FS a Walker reads when its FS is nil.
-// Paths are the operating system's.
+// Paths are the operating system's. A walk of it takes each mount's mtime
+// resolution and clock skew from the mount's filesystem.
 type LocalFS struct{}
 
 var (
