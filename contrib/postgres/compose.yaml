@@ -9,7 +9,7 @@ services:
     entrypoint:
       - sh
       - -c
-      - cp /root/binary /opt/goback/goback && mkdir -p /var/lib/goback && chown -R 999:999 /var/lib/goback
+      - cp /usr/bin/goback /opt/goback/goback && mkdir -p /var/lib/goback && chown -R 999:999 /var/lib/goback
     volumes:
       - goback-bin:/opt/goback
       - goback:/var/lib/goback
@@ -61,7 +61,7 @@ services:
       - ./goback.yaml:/etc/goback/goback.yaml:ro
       - goback-agent:/var/lib/goback
     healthcheck:
-      test: [CMD, /root/binary, agent, status, --check]
+      test: [CMD, /usr/bin/goback, agent, status, --check]
       interval: 1m
       timeout: 10s
       start_period: 2m

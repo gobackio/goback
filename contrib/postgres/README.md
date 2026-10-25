@@ -33,7 +33,7 @@
    ```
 
    `all` in the database column doesn't match replication connections; the image's own `host all all all` line covers the agent's normal connection to `postgres`.
-8. Run `docker compose up -d`, and check with `docker compose exec agent /root/binary agent check`, which lists what the cluster lacks: the version, the `REPLICATION` attribute, `max_slot_wal_keep_size`, a free slot and the `pg_hba.conf` lines.
+8. Run `docker compose up -d`, and check with `docker compose exec agent goback agent check`, which lists what the cluster lacks: the version, the `REPLICATION` attribute, `max_slot_wal_keep_size`, a free slot and the `pg_hba.conf` lines.
 
 Details:
 
@@ -49,7 +49,7 @@ Details:
 - **Spool.** The `goback-agent` volume holds what waits for its commit, with the agent's caches and status. Size it for the WAL written while the bucket is unreachable.
 - **WAL retention during a base backup.** A base backup carries the WAL it needs, and Postgres must keep that WAL until the backup ends. The agent's slot does; without it, `wal_keep_size` has to cover the WAL written while a base backup runs.
 - **Tablespaces.** Clusters with extra tablespaces aren't supported: a base backup takes the data directory's tablespace only.
-- **Status.** `docker compose exec agent /root/binary agent status` lists each job's last run; the container's health check fails when the agent hangs or a job goes stale.
+- **Status.** `docker compose exec agent goback agent status` lists each job's last run; the container's health check fails when the agent hangs or a job goes stale.
 
 ## Database settings
 

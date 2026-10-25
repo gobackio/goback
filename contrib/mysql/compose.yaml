@@ -9,7 +9,7 @@ services:
     entrypoint:
       - sh
       - -c
-      - cp /root/binary /opt/goback/goback && chown -R 999:999 /var/lib/goback
+      - cp /usr/bin/goback /opt/goback/goback && chown -R 999:999 /var/lib/goback
     volumes:
       - goback-bin:/opt/goback
       - goback-agent:/var/lib/goback

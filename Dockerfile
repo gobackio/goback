@@ -11,12 +11,11 @@ COPY go.sum .
 RUN go mod download
 
 COPY . .
-RUN mkdir /goback-bin
 
 ARG TARGETOS TARGETARCH
 
 # static, so the binary also runs when copied into other images
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /goback-bin/binary ./cmd/goback
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /goback ./cmd/goback
 
 FROM alpine AS runner
 
@@ -26,6 +25,6 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 WORKDIR /root
 
-COPY --from=builder /goback-bin/binary /root/
+COPY --from=builder /goback /usr/bin/goback
 
-ENTRYPOINT ["/root/binary"]
+ENTRYPOINT ["/usr/bin/goback"]
