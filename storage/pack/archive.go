@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"io"
 	"log/slog"
+	"math"
 	"path"
 	"sort"
 	"sync"
@@ -465,6 +466,50 @@ func (a *archive) readAt(offset, length int64) ([]byte, bool, error) {
 	return buf, false, nil
 }
 
+// maxHeaderSize bounds the object header of a record; the ones goback
+// writes take a few hundred bytes.
+const maxHeaderSize = 64 << 10
+
+// payloadReserve bounds what readPayload reserves before the bytes arrive.
+const payloadReserve = 64 << 20
+
+// splitRecord splits a record into its object header and payload bytes.
+func splitRecord(record []byte) ([]byte, []byte, error) {
+	size, consumed := proto.DecodeVarint(record)
+	if consumed <= 0 || uint64(len(record)-consumed) < size {
+		return nil, nil, errors.New("record is truncated")
+	}
+
+	end := consumed + int(size)
+
+	return record[consumed:end], record[end:], nil
+}
+
+// readPayload reads the size bytes of a payload from r, growing what it
+// holds as they arrive once they exceed payloadReserve.
+func readPayload(r io.Reader, size uint64) ([]byte, error) {
+	if size <= payloadReserve {
+		buf := make([]byte, size)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return nil, err
+		}
+
+		return buf, nil
+	}
+
+	var buf bytes.Buffer
+	n, err := io.CopyN(&buf, r, int64(size))
+	if uint64(n) != size {
+		if err == nil || err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
 // readHeader decodes the object header of one index record.
 func (a *archive) readHeader(loc *IndexRecord) (*proto.ObjectHeader, error) {
 	buf, _, err := a.readRecord(loc)
@@ -472,9 +517,12 @@ func (a *archive) readHeader(loc *IndexRecord) (*proto.ObjectHeader, error) {
 		return nil, err
 	}
 
-	hdrSize, consumed := proto.DecodeVarint(buf)
+	header, _, err := splitRecord(buf)
+	if err != nil {
+		return nil, errors.Wrapf(err, "reading a header in %s", a.name)
+	}
 
-	return proto.NewObjectHeaderFromBytes(buf[consumed : consumed+int(hdrSize)])
+	return proto.NewObjectHeaderFromBytes(header)
 }
 
 func (a *archive) getRaw(ctx context.Context, ref *proto.Ref, loc *IndexRecord) (*proto.Object, error) {
@@ -494,9 +542,12 @@ func (a *archive) getRaw(ctx context.Context, ref *proto.Ref, loc *IndexRecord) 
 // objectFromRecord decodes a record already read from the archive, which
 // is how a caller that fetched several records at once opens each one.
 func (a *archive) objectFromRecord(ctx context.Context, ref *proto.Ref, loc *IndexRecord, buf []byte, readLatency float64) (*proto.Object, error) {
-	hdrSize, consumed := proto.DecodeVarint(buf)
+	header, payload, err := splitRecord(buf)
+	if err != nil {
+		return nil, errors.Wrapf(err, "reading object %x from archive %s", ref.Hash, a.name)
+	}
 
-	hdr, err := proto.NewObjectHeaderFromBytes(buf[consumed : consumed+int(hdrSize)])
+	hdr, err := proto.NewObjectHeaderFromBytes(header)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed parsing object header")
 	}
@@ -514,7 +565,7 @@ func (a *archive) objectFromRecord(ctx context.Context, ref *proto.Ref, loc *Ind
 	archiveReadLatency.Record(ctx, readLatency, attrs)
 	archiveReadSize.Record(ctx, int64(loc.Length), attrs)
 
-	stored, err := openAtRest(a.atRest, hdr, buf[consumed+int(hdrSize):])
+	stored, err := openAtRest(a.atRest, hdr, payload)
 	if err != nil {
 		return nil, errors.Wrapf(err, "reading object %x from archive %s", ref.Hash, a.name)
 	}
@@ -651,13 +702,22 @@ func (a *archive) foreachReader(reader io.Reader, load loadPredicate, callback f
 	for {
 		hdrSizeBytes, err := bufReader.Peek(varIntMaxSize)
 		if len(hdrSizeBytes) != varIntMaxSize {
-			if err == io.EOF {
+			if err != io.EOF {
+				return err
+			}
+
+			// a record is longer than a varint, so only nothing at all
+			// left is the end
+			if len(hdrSizeBytes) == 0 {
 				break
 			}
-			return err
 		}
 
 		hdrSize, consumed := proto.DecodeVarint(hdrSizeBytes)
+		if consumed <= 0 || hdrSize > maxHeaderSize {
+			return errors.Errorf("Failed reading object header: malformed size at %d", offset)
+		}
+
 		_, err = bufReader.Discard(consumed)
 		if err != nil {
 			return err
@@ -680,23 +740,26 @@ func (a *archive) foreachReader(reader io.Reader, load loadPredicate, callback f
 
 		var objOffset = offset
 		var objectBytes []byte
-		if load(hdr) {
-			objectBytes = make([]byte, hdr.Size)
-			n, err = io.ReadFull(bufReader, objectBytes)
-			if n != int(hdr.Size) {
-				return errors.Wrap(io.ErrUnexpectedEOF, "Failed reading object")
-			}
+		if hdr.Size > math.MaxUint32 {
+			return errors.Errorf("Failed reading object: %d bytes at %d", hdr.Size, offset)
+		}
 
-			if err != nil && err != io.EOF {
-				return errors.Wrap(err, "Failed reading object data")
+		if load(hdr) {
+			objectBytes, err = readPayload(bufReader, hdr.Size)
+			if err != nil {
+				return errors.Wrap(err, "Failed reading object")
 			}
 
 			objectBytes, err = openAtRest(a.atRest, hdr, objectBytes)
 			if err != nil {
 				return err
 			}
-		} else {
-			bufReader.Discard(int(hdr.Size))
+		} else if n, err := bufReader.Discard(int(hdr.Size)); uint64(n) != hdr.Size {
+			if err == nil || err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+
+			return errors.Wrap(err, "Failed skipping object")
 		}
 
 		offset += uint32(consumed) + uint32(hdr.Size) + uint32(hdrSize)
@@ -762,16 +825,19 @@ func (a *archive) foreachOfType(t proto.ObjectType, load bool, callback func(hdr
 
 		for _, rec := range records[start:end] {
 			record := buf[int64(rec.Offset)-from : int64(rec.Offset)-from+int64(rec.Length)]
-			hdrSize, consumed := proto.DecodeVarint(record)
+			header, payload, err := splitRecord(record)
+			if err != nil {
+				return true, errors.Wrapf(err, "reading a header in %s", a.name)
+			}
 
-			hdr, err := proto.NewObjectHeaderFromBytes(record[consumed : consumed+int(hdrSize)])
+			hdr, err := proto.NewObjectHeaderFromBytes(header)
 			if err != nil {
 				return true, errors.Wrapf(err, "parsing a header in %s", a.name)
 			}
 
 			var data []byte
 			if load {
-				data, err = openAtRest(a.atRest, hdr, record[consumed+int(hdrSize):])
+				data, err = openAtRest(a.atRest, hdr, payload)
 				if err != nil {
 					return true, err
 				}
