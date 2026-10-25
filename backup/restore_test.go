@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -299,6 +300,36 @@ func TestADestinationPartThatChangesAfterItIsHashedIsNotCopied(t *testing.T) {
 	_, err := r.RestoreFile(context.Background(), path, stat, ref)
 	require.NoError(t, err)
 	requireRestored(t, path, data, stat)
+}
+
+func TestAFileWhosePartsDoNotAddUpIsRefused(t *testing.T) {
+	ctx := context.Background()
+	store := newMemStore()
+
+	blob := proto.NewObject(&proto.Blob{Data: []byte("x")})
+	require.NoError(t, store.Put(ctx, blob))
+
+	for name, parts := range map[string][]*proto.FilePart{
+		"overflowing": {{Offset: 0, Length: math.MaxUint64, Ref: blob.Ref()}},
+		"huge":        {{Offset: 0, Length: 1, Ref: blob.Ref()}, {Offset: 1, Length: math.MaxInt64, Ref: blob.Ref()}},
+	} {
+		file := proto.NewObject(&proto.File{Parts: parts})
+		require.NoError(t, store.Put(ctx, file))
+
+		path := filepath.Join(t.TempDir(), "f")
+		require.NoError(t, os.WriteFile(path, []byte("xx"), 0o644))
+
+		_, err := (&Restorer{Store: store}).RestoreFile(ctx, path, statFor([]byte("x")), file.Ref())
+		require.Error(t, err, name)
+
+		var failed error
+		err = (&Restorer{Store: filesStore{store}}).RestoreFiles(ctx, []FileToRestore{{Path: path, Stat: statFor([]byte("x")), Ref: file.Ref()}}, func(_ int, _ Outcome, err error) error {
+			failed = err
+			return nil
+		})
+		require.NoError(t, err, name)
+		require.Error(t, failed, name)
+	}
 }
 
 func TestRestoreFileLeavesACloudOnlyFilesDestinationAlone(t *testing.T) {

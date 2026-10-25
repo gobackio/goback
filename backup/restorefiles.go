@@ -286,8 +286,12 @@ func (g *group) plan(writes *errgroup.Group, m *member, obj *proto.Object) error
 	}
 
 	reader := newFileReader(m.ctx, r.Store, obj.GetFile(), r.Key)
-	if _, err := reader.getFileParts(m.ctx); err != nil {
+	if err := loadParts(m.ctx, reader); err != nil {
 		return err
+	}
+
+	if reader.size() >= smallFile {
+		return errors.Errorf("file %x holds %d bytes, too many to be read with others", m.file.Ref.GetHash(), reader.size())
 	}
 
 	m.reader = reader

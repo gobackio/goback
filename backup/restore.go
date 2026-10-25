@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -399,7 +400,7 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 	}
 
 	reader := newFileReader(ctx, r.Store, obj.GetFile(), r.Key)
-	if _, err := reader.getFileParts(ctx); err != nil {
+	if err := loadParts(ctx, reader); err != nil {
 		return 0, err
 	}
 
@@ -509,6 +510,27 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 	r.countFile(ctx, OutcomeWritten)
 
 	return OutcomeWritten, nil
+}
+
+// loadParts loads the parts of the file reader reads and refuses them
+// unless they run from offset 0 one after another, within a file's size.
+func loadParts(ctx context.Context, reader *fileReader) error {
+	parts, err := reader.getFileParts(ctx)
+	if err != nil {
+		return err
+	}
+
+	var next uint64
+
+	for i, part := range parts {
+		if part.Offset != next || part.Length > math.MaxInt64-next {
+			return errors.Errorf("file %x: part %d of %d bytes at %d does not follow the part before it", reader.fileRef(), i, part.Length, part.Offset)
+		}
+
+		next += part.Length
+	}
+
+	return nil
 }
 
 // openReaderAt opens path to read at offsets, or returns nil when the
