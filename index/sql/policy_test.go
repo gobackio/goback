@@ -9,6 +9,7 @@ import (
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/index/sql/ent/set"
+	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
 )
@@ -108,6 +109,39 @@ func TestRebuildRestoresWhatOperatorsChanged(t *testing.T) {
 
 	require.NoError(t, reindexErr(f.x.ReIndex(f.ctx)))
 	require.Equal(t, want, f.policyState(f.x), "an index replays only what it has not seen")
+}
+
+// TestTimesCompareAsInstantsOutsideUTC runs where the local zone is not
+// UTC: SQLite compares stored times as text, which only orders instants
+// that are all in one zone.
+func TestTimesCompareAsInstantsOutsideUTC(t *testing.T) {
+	local := time.Local
+	time.Local = time.FixedZone("east", 2*60*60)
+	t.Cleanup(func() { time.Local = local })
+
+	f := newFixture(t)
+
+	old := f.commit("world", f.tree(f.file("a.txt", "one")), false)
+	f.advance(time.Hour)
+	trashed := f.commit("world", f.tree(f.file("a.txt", "two")), false)
+	f.advance(time.Hour)
+	f.commit("world", f.tree(f.file("a.txt", "three")), false)
+
+	require.NoError(t, f.x.DeleteCommit(f.ctx, trashed))
+
+	y := f.index()
+	require.NoError(t, reindexErr(y.ReIndex(f.ctx)))
+	require.NoError(t, y.SetPolicy(f.ctx, "world", &retention.Policy{KeepLast: 1}))
+
+	f.advance(14*24*time.Hour + time.Hour)
+	retired, err := y.RetireCommits(f.ctx, f.clock)
+	require.NoError(t, err)
+	require.Len(t, retired, 2, "the replayed trash window ends when it ended before the rebuild")
+
+	since := retired[0].TombstonedAt.Add(-time.Minute).In(time.Local)
+	tombstoned, err := y.TombstonedCommits(f.ctx, "world", since)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []*proto.Ref{old, trashed}, tombstoned)
 }
 
 func TestPolicySequenceFollowsEveryChange(t *testing.T) {

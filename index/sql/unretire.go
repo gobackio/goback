@@ -29,7 +29,7 @@ func (x *Index) TombstonedCommits(ctx context.Context, name string, since time.T
 
 	query := x.client.CommitRow.Query().Where(commitrow.SetID(setID), commitrow.TombstonedAtNotNil())
 	if !since.IsZero() {
-		query.Where(commitrow.TombstonedAtGTE(since))
+		query.Where(commitrow.TombstonedAtGTE(since.UTC()))
 	}
 
 	rows, err := query.Order(ent.Asc(commitrow.FieldReceivedAt)).All(ctx)

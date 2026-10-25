@@ -202,7 +202,7 @@ func (x *Index) applySetScope(ctx context.Context, tx *ent.Tx, s *proto.SetScope
 			return err
 		}
 
-		_, err = closeSet(ctx, tx, setID, cfg.trash, time.Unix(0, s.ClosedAtNs), s.Erase)
+		_, err = closeSet(ctx, tx, setID, cfg.trash, time.Unix(0, s.ClosedAtNs).UTC(), s.Erase)
 
 		return err
 	case s.State == proto.SetState_SET_ACTIVE && current.State == set.StateClosing:
@@ -234,5 +234,5 @@ func (x *Index) applyCommitScope(ctx context.Context, tx *ent.Tx, s *proto.Commi
 		return err
 	}
 
-	return trashCommit(ctx, tx, row, cfg.trash, time.Unix(0, s.DeletedAtNs))
+	return trashCommit(ctx, tx, row, cfg.trash, time.Unix(0, s.DeletedAtNs).UTC())
 }
