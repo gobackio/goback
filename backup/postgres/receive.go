@@ -39,6 +39,9 @@ const (
 	receiveWait = time.Second
 	// maxCommitBackoff bounds the wait after failed commits.
 	maxCommitBackoff = 5 * time.Minute
+	// shutdownCommitWait bounds how long the server's shutdown waits for
+	// the commit of what it sent.
+	shutdownCommitWait = 30 * time.Second
 )
 
 // Receiver streams a cluster's WAL through a physical replication slot into
@@ -151,9 +154,10 @@ func (r *Receiver) setDefaults() error {
 // until it is caught up, then commits what it received and returns nil.
 // When the server shuts down, it commits what the server sent up to its
 // shutdown at once, so the shutdown doesn't wait for CommitEvery, and
-// returns ErrServerShutDown; when that commit fails, it returns the error at
-// once, so the shutdown doesn't wait for the store. It returns early with an error that needs a
-// person (ErrGap, ErrForeignCluster, ErrUncappedSlot,
+// returns ErrServerShutDown; when that commit fails, or takes longer than
+// 30s, it returns an error at once, leaving the WAL in the spool, so the
+// shutdown doesn't wait for the store. It returns early with an error that
+// needs a person (ErrGap, ErrForeignCluster, ErrUncappedSlot,
 // ErrSynchronousStandby, ErrSlotActive) or, on any other failure, one a
 // restart may clear. When ctx ends, it stops without the last commit.
 func (r *Receiver) Run(ctx context.Context, stop <-chan struct{}) error {
@@ -644,7 +648,11 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 		lastMonitor = now
 		lastCommit  = now
 		cutEnd      = s.w.written
+		downAt      time.Time
 	)
+
+	commitCtx, abandon := context.WithCancel(ctx)
+	defer abandon()
 
 	defer func() {
 		if inflight != nil {
@@ -697,6 +705,15 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 
 		now = r.now()
 
+		if s.shuttingDown() && downAt.IsZero() {
+			downAt = now
+		}
+
+		if inflight != nil && !downAt.IsZero() && now.Sub(downAt) >= shutdownCommitWait {
+			abandon()
+			return fmt.Errorf("the server is shutting down and the commit of what it sent took longer than %s, so that WAL waits in the spool", shutdownCommitWait)
+		}
+
 		waiting := s.w.written > cutEnd || s.retry
 		if inflight == nil && s.due(now.Sub(lastCommit), waiting, failures) {
 			c, err := s.w.cut()
@@ -712,7 +729,7 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 
 			ch := make(chan commitDone, 1)
 			go func() {
-				result, err := s.commit(ctx, c)
+				result, err := s.commit(commitCtx, c)
 				ch <- commitDone{cut: c, result: result, err: err}
 			}()
 

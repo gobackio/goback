@@ -273,6 +273,38 @@ func TestAFailedCommitWhileTheServerShutsDownEndsTheSession(t *testing.T) {
 	require.True(t, s.retry, "the WAL waits in the spool")
 }
 
+func TestACommitThatHangsWhileTheServerShutsDownIsAbandoned(t *testing.T) {
+	f := &fakeStream{script: []any{xlogData{start: 0, data: wal(0, 100)}}}
+	stop := make(chan struct{})
+	start := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+
+	f.tick = func(now time.Time) {
+		if now.Sub(start) == time.Hour {
+			close(stop)
+		}
+	}
+
+	s := newSession(t, f, func(ctx context.Context, _ *cut) (*backup.WalkResult, error) {
+		for f.clock().Sub(start) < time.Hour {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Millisecond):
+			}
+		}
+
+		return nil, errors.New("the store is slow")
+	})
+
+	down := make(chan struct{})
+	close(down)
+	s.down = down
+
+	err := s.run(context.Background(), stop)
+	require.Error(t, err)
+	require.Less(t, f.clock().Sub(start), time.Minute, "the shutdown waited for the store")
+}
+
 func TestTheLastCommitHappensOnStop(t *testing.T) {
 	stop := make(chan struct{})
 	f := &fakeStream{script: []any{xlogData{start: 0, data: wal(0, 100)}}}
