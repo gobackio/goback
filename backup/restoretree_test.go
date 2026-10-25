@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/gobackio/goback/proto"
@@ -109,6 +110,12 @@ func TestRestoreTreeRefusesAnEntryNamedOutsideItsDirectory(t *testing.T) {
 		"slashed directory": {b.dir("a/..", 0o755, pwned("pwned"))},
 	}
 
+	if runtime.GOOS == "windows" {
+		cases["dots link"] = []*proto.TreeNode{b.link("...", outside), pwned("pwned")}
+		cases["spaced link"] = []*proto.TreeNode{b.link(". .", outside), pwned("pwned")}
+		cases["backslashed"] = []*proto.TreeNode{b.link("x", outside), pwned(`x\pwned`)}
+	}
+
 	for name, nodes := range cases {
 		t.Run(name, func(t *testing.T) {
 			base := t.TempDir()
@@ -212,6 +219,57 @@ func TestRestoredLinksLeadWhereTheyPoint(t *testing.T) {
 		content, err := os.ReadFile(filepath.Join(dst, file))
 		require.NoError(t, err)
 		require.Equal(t, "x", string(content))
+	}
+}
+
+func TestALinkFoldedOntoADirectoryOfTheRestoreDoesNotReplaceIt(t *testing.T) {
+	b := newTreeBuilder(t)
+	outside := t.TempDir()
+
+	dst := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dst, "probe")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	writeFile(t, filepath.Join(dst, "case"))
+	_, err := os.Lstat(filepath.Join(dst, "CASE"))
+	insensitive := err == nil
+
+	commit := b.commit(b.dir("A", 0o755, b.file("x", "pwned", 0o644)), b.link("a", outside))
+	err = (&Restorer{Store: b.store}).RestoreTree(context.Background(), commit, dst, TreeOptions{})
+
+	if insensitive {
+		require.Error(t, err)
+	} else {
+		require.NoError(t, err)
+	}
+
+	info, err := os.Lstat(filepath.Join(dst, "A"))
+	require.NoError(t, err)
+	require.True(t, info.IsDir(), "the directory is not replaced by the link")
+
+	entries, err := os.ReadDir(outside)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestADeleteKeepsWhatTheFilesystemStoresUnderAnotherSpelling(t *testing.T) {
+	b := newTreeBuilder(t)
+	dst := t.TempDir()
+
+	commit := b.commit(b.dir("Projects ", 0o755, b.file("plan", "p", 0o644)), b.file("notes.", "n", 0o644))
+	require.NoError(t, (&Restorer{Store: b.store}).RestoreTree(context.Background(), commit, dst, TreeOptions{Delete: true}))
+
+	entries, err := os.ReadDir(dst)
+	require.NoError(t, err)
+	require.Len(t, entries, 2, "both entries stay, under whatever spelling they are stored")
+
+	for _, e := range entries {
+		if e.IsDir() {
+			held, err := os.ReadDir(filepath.Join(dst, e.Name()))
+			require.NoError(t, err)
+			require.Len(t, held, 1)
+		}
 	}
 }
 

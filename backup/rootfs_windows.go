@@ -20,6 +20,19 @@ import (
 
 var _ MetadataWriteFS = (*rootedFS)(nil)
 
+// rootRel is rel with the trailing dots and spaces of each element
+// dropped, as Windows drops them from a path that a root does not hold.
+func rootRel(rel string) string {
+	parts := strings.Split(rel, `\`)
+	for i, part := range parts {
+		if trimmed := strings.TrimRight(part, ". "); trimmed != "" {
+			parts[i] = trimmed
+		}
+	}
+
+	return strings.Join(parts, `\`)
+}
+
 // parent opens the directory holding path through its root and returns it
 // with path's last element; dir is nil for a path under no root or a root
 // itself.

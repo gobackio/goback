@@ -360,9 +360,14 @@ func (l *treeList) entry(top, into, under string, stat *proto.FileInfo, ref *pro
 
 // checkName refuses the name of a tree entry that is no single name in a
 // directory, so it cannot reach outside the one it is listed in, and on
-// Windows a name the platform cannot hold.
+// Windows a name the platform cannot hold. Windows drops the trailing dots
+// and spaces of a name, so there a name of nothing else names the
+// directory it is in.
 func checkName(name string) error {
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") || (filepath.Separator == '\\' && strings.ContainsRune(name, '\\')) {
+	windows := filepath.Separator == '\\'
+
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") ||
+		(windows && (strings.ContainsRune(name, '\\') || strings.TrimRight(name, ". ") == "")) {
 		return fmt.Errorf("the tree holds an entry named %q, which is not a name", name)
 	}
 
@@ -402,6 +407,8 @@ func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts
 	var (
 		files   []FileToRestore
 		written []*atomic.Int64
+		// made holds the directories the restore made, by their parent
+		made = map[string][]os.FileInfo{}
 	)
 
 	for _, e := range entries {
@@ -422,12 +429,19 @@ func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts
 			if err := r.restoreDir(ctx, e.path, e.info.Mode()); err != nil {
 				return err
 			}
+
+			if info, err := r.fs().Lstat(ctx, e.path); err == nil {
+				parent, _ := r.fs().Split(e.path)
+				made[parent] = append(made[parent], info)
+			}
 		case e.stat.GetType() == proto.NodeType_NODE_SYMLINK:
 			if r.DryRun {
 				continue
 			}
 
-			err := r.restoreSymlink(ctx, e.path, e.stat)
+			parent, _ := r.fs().Split(e.path)
+
+			err := r.restoreSymlink(ctx, e.path, e.stat, made[parent])
 			if errors.Is(err, errors.ErrUnsupported) {
 				atomic.AddInt64(&r.stats.Unsupported, 1)
 				continue
@@ -487,13 +501,23 @@ func (r *Restorer) restoreDir(ctx context.Context, path string, mode os.FileMode
 
 // restoreSymlink recreates a link as recorded and never follows it. The
 // link is made beside path and renamed over it, so a tree that cannot hold
-// links loses nothing that is there.
-func (r *Restorer) restoreSymlink(ctx context.Context, path string, stat *proto.FileInfo) error {
+// links loses nothing that is there. It refuses to replace one of siblings,
+// the directories the restore made beside it, which a filesystem folding
+// names finds at path.
+func (r *Restorer) restoreSymlink(ctx context.Context, path string, stat *proto.FileInfo, siblings []os.FileInfo) error {
 	fsys := r.fs()
 	target := string(stat.GetLinkTarget())
 
 	if existing, err := fsys.Readlink(ctx, path); err == nil && existing == target {
 		return r.putOwner(ctx, fsys, path, stat)
+	}
+
+	if existing, err := fsys.Lstat(ctx, path); err == nil && existing.IsDir() {
+		for _, dir := range siblings {
+			if os.SameFile(existing, dir) {
+				return fmt.Errorf("the link %s and a directory beside it are one name here", path)
+			}
+		}
 	}
 
 	partial := r.partial(path)
@@ -525,43 +549,23 @@ func (r *Restorer) removeUnrestored(ctx context.Context, dir string, entries []t
 	fsys := r.fs()
 
 	keep := make(map[string]bool, 2*len(entries))
+	// written holds the paths the restore wrote, by their directory
+	written := map[string][]string{}
+
 	for _, e := range entries {
 		keep[e.path] = true
 		keep[r.partial(e.path)] = true
-	}
 
-	folded := make(map[string]string, len(keep))
-	for path := range keep {
-		folded[strings.ToLower(path)] = path
-	}
-
-	// kept reports whether the restore wrote path under any spelling the
-	// filesystem treats as the same name
-	kept := func(path string) bool {
-		if keep[path] {
-			return true
-		}
-
-		spelled, ok := folded[strings.ToLower(path)]
-		if !ok {
-			return false
-		}
-
-		found, err := fsys.Lstat(ctx, path)
-		if err != nil {
-			return false
-		}
-
-		written, err := fsys.Lstat(ctx, spelled)
-		if err != nil {
-			return false
-		}
-
-		return os.SameFile(found, written)
+		parent, _ := fsys.Split(e.path)
+		written[parent] = append(written[parent], e.path)
 	}
 
 	var stale []string
 
+	// walk lists d, spelled as the restore wrote it. A listed name the
+	// restore did not write may still be one it wrote under a spelling the
+	// filesystem stores otherwise, by case, Unicode form or trailing dots
+	// and spaces; it is the same entry as one written there but not listed.
 	var walk func(string) error
 	walk = func(d string) error {
 		list, err := fsys.ReadDir(ctx, d)
@@ -573,12 +577,59 @@ func (r *Restorer) removeUnrestored(ctx context.Context, dir string, entries []t
 			return err
 		}
 
+		listed := make(map[string]bool, len(list))
 		for _, entry := range list {
-			path := fsys.Join(d, entry.Name())
+			listed[fsys.Join(d, entry.Name())] = true
+		}
+
+		var (
+			aliases     map[string]os.FileInfo
+			aliasesRead bool
+		)
+
+		spelling := func(path string) (string, bool) {
+			if keep[path] {
+				return path, true
+			}
+
+			if !aliasesRead {
+				aliasesRead, aliases = true, map[string]os.FileInfo{}
+
+				for _, w := range written[d] {
+					if listed[w] {
+						continue
+					}
+
+					if info, err := fsys.Lstat(ctx, w); err == nil {
+						aliases[w] = info
+					}
+				}
+			}
+
+			if len(aliases) == 0 {
+				return "", false
+			}
+
+			found, err := fsys.Lstat(ctx, path)
+			if err != nil {
+				return "", false
+			}
+
+			for w, info := range aliases {
+				if os.SameFile(found, info) {
+					return w, true
+				}
+			}
+
+			return "", false
+		}
+
+		for _, entry := range list {
+			path, kept := spelling(fsys.Join(d, entry.Name()))
 
 			switch {
-			case !kept(path):
-				stale = append(stale, path)
+			case !kept:
+				stale = append(stale, fsys.Join(d, entry.Name()))
 			case entry.IsDir():
 				if err := walk(path); err != nil {
 					return err

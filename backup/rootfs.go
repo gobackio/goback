@@ -91,7 +91,7 @@ func (l *rootedFS) resolve(path string) (root *os.Root, rel string) {
 		return nil, ""
 	}
 
-	return deepest.root, rel
+	return deepest.root, rootRel(rel)
 }
 
 // named puts path back into the error a root returned for rel.

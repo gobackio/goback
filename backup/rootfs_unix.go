@@ -19,6 +19,8 @@ func (l *rootedFS) Lchown(ctx context.Context, path string, uid, gid int) error 
 	return named(root.Lchown(rel, uid, gid), path)
 }
 
+func rootRel(rel string) string { return rel }
+
 func symlinkIn(root *os.Root, target, rel, path string) error {
 	return named(root.Symlink(target, rel), path)
 }
