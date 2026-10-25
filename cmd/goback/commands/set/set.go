@@ -5,12 +5,17 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"text/tabwriter"
+	"time"
 
 	"github.com/gobackio/goback/admin"
 	"github.com/gobackio/goback/backup/retention"
+	"github.com/gobackio/goback/backup/schedule"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
 	"github.com/gobackio/goback/index"
+	"github.com/gobackio/goback/storage/maintenance"
 
 	"github.com/urfave/cli"
 )
@@ -18,8 +23,13 @@ import (
 // Command is the set command.
 var Command = cli.Command{
 	Name:  "set",
-	Usage: "Delete or undelete a set, or show and change its retention",
+	Usage: "List, delete or undelete sets, or show and change a set's retention",
 	Subcommands: []cli.Command{
+		{
+			Name:   "list",
+			Usage:  "List the sets with what their agents expect of them and whether they are late",
+			Action: listAction,
+		},
 		{
 			Name:      "delete",
 			Usage:     "Close a set and retire its commits; --erase skips the trash window",
@@ -178,6 +188,66 @@ func brackets(flags []string) []retention.Bracket {
 	}
 
 	return read
+}
+
+func listAction(c *cli.Context) {
+	repo := common.OpenRepo(c)
+	idx := repo.Index
+	defer idx.Close()
+
+	lister, ok := idx.(maintenance.SetLister)
+	if !ok {
+		common.Fatalf("Index %T keeps no sets", idx)
+	}
+
+	sets, err := lister.ListSets(common.Context(c))
+	if err != nil {
+		common.Fatal(err)
+	}
+
+	now := time.Now()
+	out := make([]views.SetView, len(sets))
+
+	for i, s := range sets {
+		out[i] = common.View.Set(s)
+		out[i].Late = s.Late(now)
+	}
+
+	common.Result(out, func() {
+		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(w, "SET\tSTATE\tEXPECTS\tNEWEST\tLATE")
+
+		for i, s := range sets {
+			newest := ""
+			if !s.NewestAt.IsZero() {
+				newest = s.NewestAt.Local().Format(time.DateTime)
+			}
+
+			late := ""
+			if out[i].Late {
+				late = "late"
+			}
+
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.State, expects(s.Schedule), newest, late)
+		}
+
+		_ = w.Flush()
+	})
+}
+
+// expects says what an agent reported it expects of a set, empty for
+// nothing.
+func expects(r *schedule.Reported) string {
+	switch {
+	case r == nil:
+		return ""
+	case r.Kind == schedule.Receiver:
+		return fmt.Sprintf("receiver every %s", r.CommitEvery)
+	case r.Jitter > 0:
+		return fmt.Sprintf("%s %s +%s", r.Kind, r.LongestGap, r.Jitter)
+	}
+
+	return fmt.Sprintf("%s %s", r.Kind, r.LongestGap)
 }
 
 func deleteAction(c *cli.Context) {

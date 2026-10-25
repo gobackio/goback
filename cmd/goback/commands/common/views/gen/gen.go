@@ -5,6 +5,7 @@ package gen
 import (
 	backup "github.com/gobackio/goback/backup"
 	retention "github.com/gobackio/goback/backup/retention"
+	schedule "github.com/gobackio/goback/backup/schedule"
 	views "github.com/gobackio/goback/cmd/goback/commands/common/views"
 	index "github.com/gobackio/goback/index"
 	proto "github.com/gobackio/goback/proto"
@@ -58,6 +59,22 @@ func (m MapperImpl) Compact(in *pack.CompactReport) views.CompactView {
 		Superseded:     in.Superseded,
 		ReclaimedBytes: in.ReclaimedBytes,
 		Seconds:        views.Seconds(in.Duration),
+	}
+}
+
+func (m MapperImpl) Expected(in *schedule.Reported) *views.ExpectedView {
+	if in == nil {
+		return nil
+	}
+
+	return &views.ExpectedView{
+		Kind:               in.Expectation.Kind,
+		LongestGapSeconds:  views.Seconds(in.Expectation.LongestGap),
+		JitterSeconds:      views.Seconds(in.Expectation.Jitter),
+		CommitEverySeconds: views.Seconds(in.Expectation.CommitEvery),
+		Agent:              in.Agent,
+		Since:              in.Since,
+		Reported:           in.At,
 	}
 }
 
@@ -238,6 +255,17 @@ func (m MapperImpl) Report(in *pack.CollectReport) views.ReportView {
 		SetExclusive:         in.SetExclusive,
 		SetDeduplicatedAlone: in.SetDeduplicatedAlone,
 		Unattributed:         in.Unattributed,
+	}
+}
+
+func (m MapperImpl) Set(in index.SetInfo) views.SetView {
+
+	return views.SetView{
+		Name:        in.Name,
+		State:       in.State,
+		LogicalSize: in.LogicalSize,
+		Newest:      views.Moment(in.NewestAt),
+		Expected:    m.Expected(in.Schedule),
 	}
 }
 

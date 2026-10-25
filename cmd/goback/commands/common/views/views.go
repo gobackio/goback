@@ -7,6 +7,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/retention"
+	"github.com/gobackio/goback/backup/schedule"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage/maintenance"
@@ -66,6 +67,18 @@ type Mapper interface {
 	Policy(in retention.Policy) PolicyView
 
 	Bracket(in retention.Bracket) BracketView
+
+	// field:Newest from:"NewestAt" using:"Moment"
+	// field:Expected from:"Schedule"
+	// field:Late from:"-"
+	Set(in index.SetInfo) SetView
+
+	// field:Kind from:"Expectation.Kind"
+	// field:LongestGapSeconds from:"Expectation.LongestGap" using:"Seconds"
+	// field:JitterSeconds from:"Expectation.Jitter" using:"Seconds"
+	// field:CommitEverySeconds from:"Expectation.CommitEvery" using:"Seconds"
+	// field:Reported from:"At"
+	Expected(in *schedule.Reported) *ExpectedView
 
 	// field:Pin from:"Ref" using:"Hex"
 	// field:Target using:"Hex"
@@ -134,6 +147,15 @@ func Kind(t proto.NodeType) string {
 	return "file"
 }
 
+// Moment is t, nil for the zero time.
+func Moment(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+
+	return &t
+}
+
 // Seconds is d in seconds.
 func Seconds(d time.Duration) float64 {
 	return d.Seconds()
@@ -150,6 +172,30 @@ func Within(d time.Duration) string {
 	}
 
 	return ""
+}
+
+// SetView is a set as JSON output shows it: its state, the size of its
+// newest live commit and when the store received that, what its agent
+// reported it expects of it, and whether it is late by that.
+type SetView struct {
+	Name        string        `json:"name"`
+	State       string        `json:"state"`
+	LogicalSize int64         `json:"logical_size"`
+	Newest      *time.Time    `json:"newest,omitempty"`
+	Expected    *ExpectedView `json:"expected,omitempty"`
+	Late        bool          `json:"late"`
+}
+
+// ExpectedView is what an agent reported it expects of a set, as JSON
+// output shows it.
+type ExpectedView struct {
+	Kind               string    `json:"kind"`
+	LongestGapSeconds  float64   `json:"longest_gap_seconds,omitempty"`
+	JitterSeconds      float64   `json:"jitter_seconds,omitempty"`
+	CommitEverySeconds float64   `json:"commit_every_seconds,omitempty"`
+	Agent              string    `json:"agent"`
+	Since              time.Time `json:"since"`
+	Reported           time.Time `json:"reported"`
 }
 
 // CommitView is a commit as JSON output shows it.
