@@ -20,6 +20,10 @@ import (
 
 var _ MetadataWriteFS = (*rootedFS)(nil)
 
+// linksRefused is what making a link fails with for a user who may not,
+// neither elevated nor in developer mode.
+var linksRefused error = windows.ERROR_PRIVILEGE_NOT_HELD
+
 // rootRel is rel with the trailing dots and spaces of each element
 // dropped, as Windows drops them from a path that a root does not hold.
 func rootRel(rel string) string {

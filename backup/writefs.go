@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -151,7 +152,18 @@ func (LocalFS) RemoveAll(_ context.Context, path string) error {
 
 // Symlink implements WriteFS.
 func (LocalFS) Symlink(_ context.Context, target, path string) error {
-	return os.Symlink(target, path)
+	return unsupportedLink(os.Symlink(target, path))
+}
+
+// unsupportedLink makes err, from making a link, match
+// errors.ErrUnsupported where it says the filesystem holds no links or the
+// user may not make them.
+func unsupportedLink(err error) error {
+	if errors.Is(err, linksRefused) {
+		return fmt.Errorf("%w: %w", errors.ErrUnsupported, err)
+	}
+
+	return err
 }
 
 // Chmod implements WriteFS.

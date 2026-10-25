@@ -5,6 +5,7 @@ package backup
 import (
 	"context"
 	"os"
+	"syscall"
 )
 
 var _ OwnerWriteFS = (*rootedFS)(nil)
@@ -18,6 +19,10 @@ func (l *rootedFS) Lchown(ctx context.Context, path string, uid, gid int) error 
 
 	return named(root.Lchown(rel, uid, gid), path)
 }
+
+// linksRefused is what symlink fails with on a filesystem without links,
+// as FAT is.
+var linksRefused error = syscall.EPERM
 
 func rootRel(rel string) string { return rel }
 

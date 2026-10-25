@@ -271,7 +271,7 @@ func (l *rootedFS) Symlink(ctx context.Context, target, path string) error {
 		return LocalFS{}.Symlink(ctx, target, path)
 	}
 
-	return symlinkIn(root, target, rel, path)
+	return unsupportedLink(symlinkIn(root, target, rel, path))
 }
 
 // Readlink implements WriteFS.

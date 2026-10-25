@@ -25,6 +25,11 @@ func (frontToBack) Symlink(context.Context, string, string) error {
 	return fmt.Errorf("no links here: %w", errors.ErrUnsupported)
 }
 
+func TestALinkTheFilesystemOrUserMayNotMakeIsUnsupported(t *testing.T) {
+	require.ErrorIs(t, unsupportedLink(&os.LinkError{Op: "symlink", Err: linksRefused}), errors.ErrUnsupported)
+	require.NotErrorIs(t, unsupportedLink(&os.LinkError{Op: "symlink", Err: os.ErrExist}), errors.ErrUnsupported)
+}
+
 // filesStore reads files in groups, as a store server does.
 type filesStore struct{ *memStore }
 
