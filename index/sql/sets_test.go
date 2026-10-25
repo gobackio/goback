@@ -130,6 +130,14 @@ func TestPresenceFollowsTheHead(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 3)
 
+	got, err = x.PresenceOf(ctx, "world", "logs", "missing")
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"world", "logs"}, sets(got))
+
+	got, err = x.PresenceOf(ctx)
+	require.NoError(t, err)
+	require.Empty(t, got)
+
 	// the new head replaces the old one, the other sets are untouched
 	require.NoError(t, storePresence(ctx, x, world, second, filterOf("world", "w2")))
 

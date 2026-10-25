@@ -64,6 +64,15 @@ func loadPresence(ctx context.Context, c *ent.Client, scope backup.PresenceScope
 		return nil, nil
 	}
 
+	return decodePresence(ctx, query)
+}
+
+// PresenceOf returns the stored filters of the named sets.
+func (x *Index) PresenceOf(ctx context.Context, sets ...string) ([]*proto.PresenceFilter, error) {
+	return decodePresence(ctx, x.client.CommitRow.Query().Where(commitrow.PresenceNotNil(), commitrow.HasSetWith(set.NameIn(sets...))))
+}
+
+func decodePresence(ctx context.Context, query *ent.CommitRowQuery) ([]*proto.PresenceFilter, error) {
 	rows, err := query.Select(commitrow.FieldPresence).All(ctx)
 	if err != nil {
 		return nil, err

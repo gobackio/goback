@@ -1777,19 +1777,24 @@ func (r *Server) ReportSchedule(ctx context.Context, request *proto.ReportSchedu
 // presencePiece is the largest data slice one GetPresence message carries.
 const presencePiece = 1 << 20
 
-// GetPresence streams the head filters of the caller's scope, each split
-// into pieces that share an index, after their digest; it answers with the
-// digest alone, as unchanged, when the caller holds the filters of that
-// digest.
+// GetPresence streams the head filters of the caller's scope as
+// SendPresence does.
 func (r *Server) GetPresence(request *proto.GetPresenceRequest, stream proto.Store_GetPresenceServer) error {
 	filters, err := r.store.Presence(stream.Context(), request.BackupSet)
 	if err != nil {
 		return ToStatus(err)
 	}
 
+	return SendPresence(stream, filters, request.GetDigest())
+}
+
+// SendPresence answers a GetPresence with filters, each split into pieces
+// that share an index, after their digest; it answers with the digest
+// alone, as unchanged, when held is that digest.
+func SendPresence(stream proto.Store_GetPresenceServer, filters []*proto.PresenceFilter, held []byte) error {
 	digest := presence.Digest(filters)
-	if bytes.Equal(digest, request.GetDigest()) || len(filters) == 0 {
-		return stream.Send(&proto.GetPresenceResponse{Digest: digest, Unchanged: bytes.Equal(digest, request.GetDigest())})
+	if bytes.Equal(digest, held) || len(filters) == 0 {
+		return stream.Send(&proto.GetPresenceResponse{Digest: digest, Unchanged: bytes.Equal(digest, held)})
 	}
 
 	for i, filter := range filters {
@@ -1814,8 +1819,7 @@ func (r *Server) GetPresence(request *proto.GetPresenceRequest, stream proto.Sto
 				resp.Digest = digest
 			}
 
-			err = stream.Send(resp)
-			if err != nil {
+			if err := stream.Send(resp); err != nil {
 				return err
 			}
 
