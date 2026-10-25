@@ -292,6 +292,45 @@ func TestACloudOnlyFileIsRecordedWithoutContentAndLeftOutOfARestore(t *testing.T
 	require.Equal(t, "only in the cloud", string(content))
 }
 
+func TestAFileThatBecomesCloudOnlyKeepsTheContentBackedUpBefore(t *testing.T) {
+	f := newWalkerFixture(t)
+	fsys := &cloudFS{cloud: map[string]bool{}}
+	f.walker.FS = fsys
+
+	f.write("synced.txt", []byte("backed up while it was here"))
+	first := f.run()
+	before := f.tree(first.Commit.Tree)["synced.txt"]
+
+	fsys.cloud["synced.txt"] = true
+	second := f.run()
+	require.Empty(t, fsys.opened)
+	require.EqualValues(t, 1, second.Placeholders)
+
+	node := f.tree(second.Commit.Tree)["synced.txt"]
+	require.True(t, cloudOnly(node.Stat))
+	require.True(t, node.Ref.Equal(before.Ref))
+
+	dst := t.TempDir()
+	restorer := &Restorer{Store: f.store}
+	require.NoError(t, restorer.RestoreTree(context.Background(), second.Commit, dst, TreeOptions{}))
+	content, err := os.ReadFile(filepath.Join(dst, "synced.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "backed up while it was here", string(content))
+	require.Zero(t, restorer.Stats().CloudOnly)
+
+	// changed in the cloud, it can no longer be told from what was read
+	f.write("synced.txt", []byte("changed in the cloud"))
+	third := f.run()
+	require.Empty(t, fsys.opened)
+	require.False(t, f.tree(third.Commit.Tree)["synced.txt"].Ref.Equal(before.Ref))
+
+	dst = t.TempDir()
+	restorer = &Restorer{Store: f.store}
+	require.NoError(t, restorer.RestoreTree(context.Background(), third.Commit, dst, TreeOptions{}))
+	require.NoFileExists(t, filepath.Join(dst, "synced.txt"))
+	require.EqualValues(t, 1, restorer.Stats().CloudOnly)
+}
+
 func TestDownloadPlaceholdersReadsACloudOnlyFile(t *testing.T) {
 	f := newWalkerFixture(t)
 	fsys := &cloudFS{cloud: map[string]bool{"cloud.txt": true}}

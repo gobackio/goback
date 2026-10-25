@@ -165,13 +165,19 @@ func (w *Walker) metadata(ctx context.Context, path, rel string, stat *proto.Fil
 }
 
 // placeholder records a cloud-only file without reading it, which would
-// download it: its stat and security descriptor, with the empty file as its
-// content.
+// download it: its stat and security descriptor, with the base node's
+// content when the base node has the same size and mtime, and the empty
+// file when there is no such content.
 func (w *Walker) placeholder(ctx context.Context, path, rel string, stat *proto.FileInfo, baseNode *proto.TreeNode) (*proto.TreeNode, error) {
 	atomic.AddInt64(&w.result.Placeholders, 1)
 
 	if err := w.metadata(ctx, path, rel, stat, baseNode); err != nil {
 		return nil, err
+	}
+
+	base := baseNode.GetStat()
+	if baseNode.GetRef() != nil && base.GetType() == proto.NodeType_NODE_FILE && !base.GetLost() && !w.lost(rel) && metaEqual(base, stat) {
+		return &proto.TreeNode{Stat: stat, Ref: baseNode.Ref}, nil
 	}
 
 	ref, err := w.emptyFile()

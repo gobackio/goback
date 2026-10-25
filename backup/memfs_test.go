@@ -39,6 +39,10 @@ func TestReadFileFailsForAFileLeftOut(t *testing.T) {
 	cloud := statFor(data)
 	cloud.Attributes = recallAttributes
 
-	_, err = (&Restorer{Store: store}).ReadFile(context.Background(), cloud, ref)
+	_, err = (&Restorer{Store: store}).ReadFile(context.Background(), cloud, putFile(t, store, nil, nil))
 	require.Error(t, err)
+
+	got, err := (&Restorer{Store: store}).ReadFile(context.Background(), cloud, ref)
+	require.NoError(t, err, "a placeholder carrying content read before")
+	require.Equal(t, data, got)
 }

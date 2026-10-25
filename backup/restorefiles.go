@@ -8,7 +8,6 @@ import (
 	"os"
 	"slices"
 	"sync"
-	"sync/atomic"
 
 	"github.com/gobackio/goback/proto"
 
@@ -90,17 +89,7 @@ func (r *Restorer) RestoreFiles(ctx context.Context, files []FileToRestore, done
 			continue
 		}
 
-		if cloudOnly(file.Stat) {
-			atomic.AddInt64(&r.stats.CloudOnly, 1)
-			if err := done(i, OutcomeCloudOnly, nil); err != nil {
-				_ = grp.Wait()
-				return err
-			}
-
-			continue
-		}
-
-		if !grouped || file.Stat.GetSize() >= smallFile {
+		if !grouped || file.Stat.GetSize() >= smallFile || cloudOnly(file.Stat) {
 			grp.Go(func() error { return r.restoreOne(gctx, i, file, done) })
 			continue
 		}

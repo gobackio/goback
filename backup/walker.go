@@ -134,7 +134,9 @@ type Walker struct {
 
 	// DownloadPlaceholders reads files a cloud sync client such as OneDrive
 	// keeps only in the cloud, which downloads them. Without it they are
-	// recorded with their stat and security descriptor and no content.
+	// recorded with their stat and security descriptor, and with the content
+	// the base commit holds for them while their size and mtime are what it
+	// recorded, or no content otherwise.
 	DownloadPlaceholders bool
 
 	Workers int
@@ -323,8 +325,8 @@ type WalkResult struct {
 	Torn       int64
 	Unreadable int64
 	Skipped    int64
-	// Placeholders counts the files recorded without content because it
-	// was only in the cloud; Files and Bytes leave them out.
+	// Placeholders counts the files recorded without reading them because
+	// their content was only in the cloud; Files and Bytes leave them out.
 	Placeholders int64
 	// Excluded counts the entries Include rejected, an excluded directory
 	// as one; ExcludedBytes is the listed size of the excluded files.

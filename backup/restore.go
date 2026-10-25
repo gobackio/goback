@@ -81,7 +81,7 @@ const (
 	// could not be read.
 	OutcomeSalvaged
 	// OutcomeCloudOnly means the file was left out: its content was only in
-	// a cloud sync service when it was backed up, and was not read.
+	// a cloud sync service whenever it was backed up, and was never read.
 	OutcomeCloudOnly
 	// OutcomeLost means the entry was left out: the store lost its content.
 	OutcomeLost
@@ -404,8 +404,8 @@ func (r *Restorer) groupBudget() (*semaphore.Weighted, int64) {
 // takes every part from it that still hashes to its ref. On a tree that
 // is no RandomWriteFS, the file is written front to back and neither the
 // destination nor a partial file is read. A file the store lost, or whose
-// content was only in the cloud, leaves path as it is, with OutcomeLost or
-// OutcomeCloudOnly.
+// content was only in the cloud and never backed up, leaves path as it is,
+// with OutcomeLost or OutcomeCloudOnly.
 func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.FileInfo, ref *proto.Ref) (Outcome, error) {
 	if err := r.check(); err != nil {
 		return 0, err
@@ -414,11 +414,6 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 	if stat.GetLost() {
 		r.countFile(ctx, OutcomeLost)
 		return OutcomeLost, nil
-	}
-
-	if cloudOnly(stat) {
-		atomic.AddInt64(&r.stats.CloudOnly, 1)
-		return OutcomeCloudOnly, nil
 	}
 
 	fsys := r.fs()
@@ -436,6 +431,12 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 	reader := newFileReader(ctx, r.Store, obj.GetFile(), r.Key)
 	if err := loadParts(ctx, reader); err != nil {
 		return 0, err
+	}
+
+	// a placeholder carries the content an earlier backup read, if any
+	if cloudOnly(stat) && reader.size() == 0 {
+		atomic.AddInt64(&r.stats.CloudOnly, 1)
+		return OutcomeCloudOnly, nil
 	}
 
 	existing, err := fsys.Lstat(ctx, path)
