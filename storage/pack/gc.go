@@ -440,7 +440,12 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 	if err != nil {
 		return nil, err
 	}
-	defer live.close()
+
+	// the checkpoints describe runs close deletes, so they go with them
+	defer func() {
+		live.close()
+		_ = os.RemoveAll(run.runDir)
+	}()
 
 	report.Resumed = run.resumed
 	markTook := time.Since(markStart)
