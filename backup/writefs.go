@@ -121,23 +121,29 @@ func (LocalFS) WriteFile(_ context.Context, path string, r io.Reader) (int64, er
 // Rename implements WriteFS. It makes the rename durable, and replaces a
 // read-only file, which Windows refuses to, by making it writable first.
 func (LocalFS) Rename(_ context.Context, from, to string) error {
-	err := os.Rename(from, to)
-	if err != nil {
-		info, statErr := os.Lstat(to)
-		if statErr != nil || info.Mode()&0o200 != 0 {
-			return err
-		}
-
-		if chmodErr := os.Chmod(to, info.Mode().Perm()|0o200); chmodErr != nil {
-			return err
-		}
-
-		if err = os.Rename(from, to); err != nil {
-			return err
-		}
+	if err := renameLocal(from, to); err != nil {
+		return err
 	}
 
 	return syncDir(filepath.Dir(to))
+}
+
+func renameLocal(from, to string) error {
+	err := os.Rename(from, to)
+	if err == nil {
+		return nil
+	}
+
+	info, statErr := os.Lstat(to)
+	if statErr != nil || info.Mode()&0o200 != 0 {
+		return err
+	}
+
+	if chmodErr := os.Chmod(to, info.Mode().Perm()|0o200); chmodErr != nil {
+		return err
+	}
+
+	return os.Rename(from, to)
 }
 
 // Remove implements WriteFS.

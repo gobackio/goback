@@ -192,35 +192,51 @@ func (l *rootedFS) WriteFile(ctx context.Context, path string, r io.Reader) (int
 
 // Rename implements WriteFS as LocalFS does; both paths are under the same
 // root or under none.
-func (l *rootedFS) Rename(ctx context.Context, from, to string) error {
+func (l *rootedFS) Rename(_ context.Context, from, to string) error {
+	if err := l.renameUnsynced(from, to); err != nil {
+		return err
+	}
+
+	return l.syncParent(to)
+}
+
+// renameUnsynced is Rename without making the rename durable, which
+// syncParent does.
+func (l *rootedFS) renameUnsynced(from, to string) error {
 	root, relFrom := l.resolve(from)
 	toRoot, relTo := l.resolve(to)
 
 	switch {
 	case root == nil && toRoot == nil:
-		return LocalFS{}.Rename(ctx, from, to)
+		return renameLocal(from, to)
 	case root != toRoot:
 		return fmt.Errorf("renaming %s to %s leaves the directory restored into", from, to)
 	}
 
-	if err := l.rename(root, relFrom, relTo, from, to); err != nil {
-		return err
+	return renameIn(root, relFrom, relTo, from, to)
+}
+
+// syncParent flushes the entries of the directory holding path.
+func (l *rootedFS) syncParent(path string) error {
+	root, rel := l.resolve(path)
+	if root == nil {
+		return syncDir(filepath.Dir(path))
 	}
 
 	if runtime.GOOS == "windows" {
 		return nil
 	}
 
-	d, err := root.Open(filepath.Dir(relTo))
+	d, err := root.Open(filepath.Dir(rel))
 	if err != nil {
-		return named(err, filepath.Dir(to))
+		return named(err, filepath.Dir(path))
 	}
 	defer d.Close()
 
 	return d.Sync()
 }
 
-func (l *rootedFS) rename(root *os.Root, relFrom, relTo, from, to string) error {
+func renameIn(root *os.Root, relFrom, relTo, from, to string) error {
 	err := root.Rename(relFrom, relTo)
 	if err == nil {
 		return nil

@@ -604,11 +604,15 @@ func (r *Restorer) settle(ctx context.Context, fsys RandomWriteFS, tmp RandomFil
 	}
 
 	if err == nil {
-		rename := func() error { return fsys.Rename(ctx, partial, path) }
-		if file != nil {
-			err = r.parts.move(file, path, rename)
+		if local, ok := fsys.(*rootedFS); ok && file != nil {
+			// the map is held while the file moves, not while that is
+			// made durable
+			err = r.parts.move(file, path, func() error { return local.renameUnsynced(partial, path) })
+			if err == nil {
+				err = local.syncParent(path)
+			}
 		} else {
-			err = rename()
+			err = fsys.Rename(ctx, partial, path)
 		}
 	}
 
