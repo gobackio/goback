@@ -145,6 +145,7 @@ func (w *Walker) backupGrowing(ctx context.Context, g Growing, prev *proto.TreeN
 	writer.parts = append(writer.parts, kept...)
 	writer.offset = offset
 	writer.sent = w.sent
+	writer.blobs = w.blobs
 	writer.source = file
 	writer.cache = w.BlobCache
 	writer.uploaded = &w.result.Uploaded

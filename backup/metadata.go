@@ -225,6 +225,7 @@ func (w *Walker) putContent(ctx context.Context, size int64, content io.Reader) 
 	writer.sent = w.sent
 	writer.cache = w.BlobCache
 	writer.uploaded = &w.result.Uploaded
+	writer.blobs = w.blobs
 
 	read := &readErr{r: content}
 	if _, err := io.Copy(writer, read); err != nil {

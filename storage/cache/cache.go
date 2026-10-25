@@ -76,6 +76,25 @@ func (s *Store) PutCommits(ctx context.Context, commits []*proto.Object) error {
 	return err
 }
 
+var _ backup.Batcher = (*Store)(nil)
+
+// Missing implements backup.Batcher through the wrapped store.
+func (s *Store) Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error) {
+	return backup.Missing(ctx, s.wrapped, refs)
+}
+
+// PutObjects implements backup.Batcher through the wrapped store.
+func (s *Store) PutObjects(ctx context.Context, objects []*proto.Object) error {
+	err := backup.PutObjects(ctx, s.wrapped, objects)
+	if err == nil {
+		for _, obj := range objects {
+			s.keep(obj)
+		}
+	}
+
+	return err
+}
+
 // Keep implements backup.Keeper.
 func (s *Store) Keep(ctx context.Context, obj *proto.Object) {
 	s.keep(obj)

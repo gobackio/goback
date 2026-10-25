@@ -111,6 +111,34 @@ func PutCommits(ctx context.Context, store ObjectStore, commits []*proto.Object)
 	return nil
 }
 
+// PutObjects puts objects in store, none of them a commit or pin, each
+// after the ones it references: in one call when it is a Batcher, and
+// otherwise, or when it answers ErrNotImplemented, one Put each.
+func PutObjects(ctx context.Context, store ObjectStore, objects []*proto.Object) error {
+	if batcher, ok := store.(Batcher); ok {
+		err := batcher.PutObjects(ctx, objects)
+		if !errors.Is(err, ErrNotImplemented) {
+			return err
+		}
+	}
+
+	for _, obj := range objects {
+		if err := store.Put(ctx, obj); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// batching reports whether store, under its caching wrappers, takes many
+// objects in one call.
+func batching(store ObjectStore) bool {
+	_, ok := unwrapStore(store).(Batcher)
+
+	return ok
+}
+
 // CommitChecker is a store that may check, as a session commits, that it
 // holds everything the session's objects reference, failing with a
 // MissingError otherwise. Writes in a session to a store that does are not

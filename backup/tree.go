@@ -142,34 +142,49 @@ func PutTree(ctx context.Context, store ObjectStore, nodes []*proto.TreeNode, ke
 	nodes = sealNodes(key, parent, nodes)
 
 	if len(nodes) <= treeFanout {
-		return putTreeObject(ctx, store, &proto.Tree{Nodes: nodes}, key)
+		return putTreeObjects(ctx, store, treeObject(&proto.Tree{Nodes: nodes}, key))
 	}
 
-	var splits []*proto.Ref
+	var (
+		objects []*proto.Object
+		splits  []*proto.Ref
+	)
+
 	for _, chunk := range splitNodes(nodes) {
-		ref, err := putTreeObject(ctx, store, &proto.Tree{Nodes: chunk}, key)
-		if err != nil {
-			return nil, err
-		}
-
-		splits = append(splits, ref)
+		obj := treeObject(&proto.Tree{Nodes: chunk}, key)
+		objects = append(objects, obj)
+		splits = append(splits, obj.Ref())
 	}
 
-	return putTreeObject(ctx, store, &proto.Tree{Splits: splits}, key)
+	objects = append(objects, treeObject(&proto.Tree{Splits: splits}, key))
+
+	// a refused batch is put again one by one, which names what a split
+	// lacks as Put does
+	if batching(store) && PutObjects(ctx, store, objects) == nil {
+		return objects[len(objects)-1].Ref(), nil
+	}
+
+	return putTreeObjects(ctx, store, objects...)
 }
 
-func putTreeObject(ctx context.Context, store ObjectStore, tree *proto.Tree, key *storekey.Key) (*proto.Ref, error) {
+func treeObject(tree *proto.Tree, key *storekey.Key) *proto.Object {
 	obj := proto.NewObject(tree)
 	if key != nil {
 		obj.KeyId = key.ID()
 	}
 
-	err := store.Put(ctx, obj)
-	if err != nil {
-		return nil, err
+	return obj
+}
+
+// putTreeObjects puts objects in order and returns the last one's ref.
+func putTreeObjects(ctx context.Context, store ObjectStore, objects ...*proto.Object) (*proto.Ref, error) {
+	for _, obj := range objects {
+		if err := store.Put(ctx, obj); err != nil {
+			return nil, err
+		}
 	}
 
-	return obj.Ref(), nil
+	return objects[len(objects)-1].Ref(), nil
 }
 
 // splitNodes cuts a sorted node list at name-defined boundaries.

@@ -221,6 +221,75 @@ func (c *countingStore) GetTree(ctx context.Context, ref *proto.Ref, maxDepth ui
 	return c.index.GetTree(ctx, ref, maxDepth)
 }
 
+// batchingStore is a countingStore that takes many objects in one call; it
+// counts those calls and the blobs and trees put one at a time.
+type batchingStore struct {
+	*countingStore
+	single, batches atomic.Int64
+}
+
+func (b *batchingStore) Put(ctx context.Context, obj *proto.Object) error {
+	if obj.Type() == proto.ObjectType_BLOB || obj.Type() == proto.ObjectType_TREE {
+		b.single.Add(1)
+	}
+
+	return b.countingStore.Put(ctx, obj)
+}
+
+func (b *batchingStore) Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error) {
+	return Missing(ctx, b.countingStore, refs)
+}
+
+func (b *batchingStore) PutObjects(ctx context.Context, objects []*proto.Object) error {
+	b.batches.Add(1)
+
+	// as long as a call to a store server takes
+	time.Sleep(5 * time.Millisecond)
+
+	for _, obj := range objects {
+		if err := b.countingStore.Put(ctx, obj); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func TestAWalkerPutsBlobsAndTreeSplitsInBatches(t *testing.T) {
+	f := newWalkerFixture(t)
+	store := &batchingStore{countingStore: f.objects}
+	f.walker.Objects = store
+	f.walker.Workers = 32
+
+	for i := 0; i < 300; i++ {
+		f.write(fmt.Sprintf("file-%03d", i), f.random(8<<10))
+	}
+
+	f.write("big.bin", f.random(4<<20))
+
+	result := f.run()
+	require.Zero(t, store.single.Load(), "every blob and tree split went up in a batch")
+	require.Less(t, store.batches.Load(), int64(100), "of more than 300 blobs")
+
+	ctx := context.Background()
+	nodes := f.tree(result.Commit.Tree)
+	require.Len(t, nodes, 301)
+
+	for name, node := range nodes {
+		obj, err := f.store.Get(ctx, node.Ref)
+		require.NoError(t, err, name)
+
+		parts, err := FileParts(ctx, f.store, obj.GetFile())
+		require.NoError(t, err, name)
+
+		for _, part := range parts {
+			has, err := f.store.Has(ctx, part.Ref)
+			require.NoError(t, err)
+			require.True(t, has, "%s lacks a part", name)
+		}
+	}
+}
+
 type walkerFixture struct {
 	t       *testing.T
 	root    string

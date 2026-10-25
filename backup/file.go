@@ -111,6 +111,9 @@ type fileWriter struct {
 	// uploaded, when set, counts the chunk bytes this file sends
 	uploaded *int64
 
+	// blobs, when set, puts the blobs in place of store
+	blobs *blobBatcher
+
 	pending int32
 }
 
@@ -271,7 +274,13 @@ func (bfw *fileWriter) upload(ref *proto.Ref, blob *proto.Object, length int) {
 		defer bfw.storageSemaphore.Done()
 		defer atomic.AddInt32(&bfw.pending, -1)
 
-		err := bfw.store.Put(bfw.ctx, blob)
+		var err error
+		if bfw.blobs != nil {
+			err = bfw.blobs.put(bfw.ctx, blob)
+		} else {
+			err = bfw.store.Put(bfw.ctx, blob)
+		}
+
 		bfw.sent.finish(ref, err)
 
 		if err == nil && bfw.uploaded != nil {

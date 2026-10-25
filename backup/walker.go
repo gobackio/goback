@@ -176,6 +176,7 @@ type Walker struct {
 
 	filters   presence.Set
 	confirmer Confirmer
+	blobs     *blobBatcher
 	// rescan and damaged come from the commit grant: what the store lost
 	// and needs read again rather than assumed unchanged
 	rescan    bool
@@ -600,6 +601,11 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 	defer stopProgress()
 
 	w.loadPresence(ctx)
+
+	w.blobs = nil
+	if batching(w.Objects) {
+		w.blobs = newBlobBatcher(w.Objects)
+	}
 
 	fetcher, _ := w.Objects.(TreeFetcher)
 	w.trees = &treeSource{getter: w.Objects, fetcher: fetcher, key: w.Key, depth: w.PrefetchDepth, objects: map[string]*proto.Object{}}
@@ -1493,6 +1499,7 @@ func (w *Walker) readFile(ctx context.Context, path, rel string, parent, listed 
 	writer.source, _ = file.(io.ReaderAt)
 	writer.cache = w.BlobCache
 	writer.uploaded = &w.result.Uploaded
+	writer.blobs = w.blobs
 
 	if forced != nil {
 		writer.known = known
