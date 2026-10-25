@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/gobackio/goback/admin"
 	"github.com/gobackio/goback/auth"
@@ -22,7 +23,23 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
+
+// serveStreams is how many calls one connection to a store server has
+// open at once; a client past it waits.
+const serveStreams = 1024
+
+// serveKeepalive closes connections without calls for a quarter hour, and
+// after an hour asks clients to dial again for their next calls, leaving
+// the calls running to finish however long they take. A client that stops
+// answering pings is cut off.
+var serveKeepalive = keepalive.ServerParameters{
+	MaxConnectionIdle: 15 * time.Minute,
+	MaxConnectionAge:  time.Hour,
+	Time:              2 * time.Minute,
+	Timeout:           20 * time.Second,
+}
 
 // ServeOptions say how Serve serves a store.
 type ServeOptions struct {
@@ -85,6 +102,8 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 
 	srv := grpc.NewServer(
 		grpc.Creds(creds),
+		grpc.MaxConcurrentStreams(serveStreams),
+		grpc.KeepaliveParams(serveKeepalive),
 		grpc.StatsHandler(otelgrpc.NewServerHandler(otelgrpc.WithPublicEndpoint())),
 		grpc.ChainUnaryInterceptor(health.Unary(auth.UnaryInterceptor(opts.Secret), remote.UnaryInterceptor())),
 		grpc.ChainStreamInterceptor(health.Stream(auth.StreamInterceptor(opts.Secret), remote.StreamInterceptor())),
