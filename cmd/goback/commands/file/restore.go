@@ -1,6 +1,7 @@
 package file
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -15,6 +16,13 @@ func (f *file) restore() error {
 	node, outcome, err := f.restorer.RestorePath(f.ctx, f.index, f.set, f.src, f.when, f.dst)
 	if err != nil {
 		return err
+	}
+
+	switch outcome {
+	case backup.OutcomeLost:
+		return fmt.Errorf("%s is not restored: the store lost it", f.dst)
+	case backup.OutcomeCloudOnly:
+		return fmt.Errorf("%s is not restored: its content was only in the cloud when it was backed up", f.dst)
 	}
 
 	info := node.Stat
@@ -33,14 +41,6 @@ func (f *file) restore() error {
 
 		if stats.SecurityLeftOut > 0 {
 			log.Print("the security descriptor was left out, which a restore on Windows as an elevated administrator sets")
-		}
-
-		if stats.CloudOnly > 0 {
-			log.Print("left out: its content was only in the cloud when it was backed up")
-		}
-
-		if stats.Lost > 0 {
-			log.Print("left out: the store lost it")
 		}
 
 		if stats.StreamsLeftOut > 0 {
