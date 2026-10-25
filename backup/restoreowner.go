@@ -269,8 +269,9 @@ func (r *Restorer) ownFile(ctx context.Context, fsys WriteFS, path string, stat 
 	}
 
 	mode := fileMode(stat)
-	if !owned {
+	if !owned && mode&(os.ModeSetuid|os.ModeSetgid) != 0 {
 		mode &^= os.ModeSetuid | os.ModeSetgid
+		atomic.AddInt64(&r.stats.SetIDLeftOut, 1)
 	}
 
 	return mode, nil

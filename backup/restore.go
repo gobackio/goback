@@ -155,6 +155,9 @@ type RestoreStats struct {
 	// Linked counts the files made hard links to another file the restore
 	// wrote.
 	Linked int64 `json:"linked"`
+	// SetIDLeftOut counts the files restored without their recorded
+	// setuid or setgid bits because they were not given their owner.
+	SetIDLeftOut int64 `json:"setid_left_out"`
 	// CloudOnly counts the files left out because their content was only
 	// in a cloud sync service when they were backed up.
 	CloudOnly int64 `json:"cloud_only"`
@@ -283,6 +286,7 @@ func (r *Restorer) Stats() RestoreStats {
 		XattrsLeftOut:        atomic.LoadInt64(&r.stats.XattrsLeftOut),
 		FlagsLeftOut:         atomic.LoadInt64(&r.stats.FlagsLeftOut),
 		Linked:               atomic.LoadInt64(&r.stats.Linked),
+		SetIDLeftOut:         atomic.LoadInt64(&r.stats.SetIDLeftOut),
 		CloudOnly:            atomic.LoadInt64(&r.stats.CloudOnly),
 		Lost:                 atomic.LoadInt64(&r.stats.Lost),
 		PartialDirs:          atomic.LoadInt64(&r.stats.PartialDirs),

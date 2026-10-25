@@ -246,6 +246,13 @@ func TestAFileKeepsSetuidAndSetgidOnlyWithItsOwner(t *testing.T) {
 		_, err := r.RestoreFile(context.Background(), path, stat, ref)
 		require.NoError(t, err)
 		require.Equal(t, c.want, fsys.modes[PartialPath(path)], name)
+
+		dropped := int64(0)
+		if c.want != setid {
+			dropped = 1
+		}
+
+		require.Equal(t, dropped, r.Stats().SetIDLeftOut, name)
 	}
 }
 

@@ -295,6 +295,10 @@ func logStats(stats backup.RestoreStats) {
 	if stats.FlagsLeftOut > 0 {
 		log.Printf("%d entries left without their file flags: the destination or the restoring user cannot set them", stats.FlagsLeftOut)
 	}
+
+	if stats.SetIDLeftOut > 0 {
+		log.Printf("%d files restored without their setuid or setgid bits: they were not given their owner", stats.SetIDLeftOut)
+	}
 }
 
 func restoreAction(c *cli.Context) {
