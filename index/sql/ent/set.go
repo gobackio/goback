@@ -5,6 +5,7 @@ package ent
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
@@ -44,6 +45,8 @@ type Set struct {
 	UniqueSize *int64 `json:"unique_size,omitempty"`
 	// SizesDigest holds the value of the "sizes_digest" field.
 	SizesDigest []byte `json:"sizes_digest,omitempty"`
+	// PrunePendingSince holds the value of the "prune_pending_since" field.
+	PrunePendingSince *time.Time `json:"prune_pending_since,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the SetQuery when eager-loading is set.
 	Edges        SetEdges `json:"edges"`
@@ -114,6 +117,8 @@ func (*Set) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullInt64)
 		case set.FieldName, set.FieldState, set.FieldRetentionPolicy:
 			values[i] = new(sql.NullString)
+		case set.FieldPrunePendingSince:
+			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
 		}
@@ -226,6 +231,13 @@ func (_m *Set) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field sizes_digest", values[i])
 			} else if value != nil {
 				_m.SizesDigest = *value
+			}
+		case set.FieldPrunePendingSince:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field prune_pending_since", values[i])
+			} else if value.Valid {
+				_m.PrunePendingSince = new(time.Time)
+				*_m.PrunePendingSince = value.Time
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
@@ -340,6 +352,11 @@ func (_m *Set) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("sizes_digest=")
 	builder.WriteString(fmt.Sprintf("%v", _m.SizesDigest))
+	builder.WriteString(", ")
+	if v := _m.PrunePendingSince; v != nil {
+		builder.WriteString("prune_pending_since=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
 	builder.WriteByte(')')
 	return builder.String()
 }

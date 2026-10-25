@@ -42,6 +42,8 @@ const (
 	FieldUniqueSize = "unique_size"
 	// FieldSizesDigest holds the string denoting the sizes_digest field in the database.
 	FieldSizesDigest = "sizes_digest"
+	// FieldPrunePendingSince holds the string denoting the prune_pending_since field in the database.
+	FieldPrunePendingSince = "prune_pending_since"
 	// EdgeFiles holds the string denoting the files edge name in mutations.
 	EdgeFiles = "files"
 	// EdgeTrees holds the string denoting the trees edge name in mutations.
@@ -99,6 +101,7 @@ var Columns = []string{
 	FieldLogicalSize,
 	FieldUniqueSize,
 	FieldSizesDigest,
+	FieldPrunePendingSince,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -218,6 +221,11 @@ func ByLogicalSize(opts ...sql.OrderTermOption) OrderOption {
 // ByUniqueSize orders the results by the unique_size field.
 func ByUniqueSize(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUniqueSize, opts...).ToFunc()
+}
+
+// ByPrunePendingSince orders the results by the prune_pending_since field.
+func ByPrunePendingSince(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPrunePendingSince, opts...).ToFunc()
 }
 
 // ByFilesCount orders the results by files count.

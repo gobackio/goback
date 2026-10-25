@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
@@ -322,6 +323,26 @@ func (_u *SetUpdate) ClearSizesDigest() *SetUpdate {
 	return _u
 }
 
+// SetPrunePendingSince sets the "prune_pending_since" field.
+func (_u *SetUpdate) SetPrunePendingSince(v time.Time) *SetUpdate {
+	_u.mutation.SetPrunePendingSince(v)
+	return _u
+}
+
+// SetNillablePrunePendingSince sets the "prune_pending_since" field if the given value is not nil.
+func (_u *SetUpdate) SetNillablePrunePendingSince(v *time.Time) *SetUpdate {
+	if v != nil {
+		_u.SetPrunePendingSince(*v)
+	}
+	return _u
+}
+
+// ClearPrunePendingSince clears the value of the "prune_pending_since" field.
+func (_u *SetUpdate) ClearPrunePendingSince() *SetUpdate {
+	_u.mutation.ClearPrunePendingSince()
+	return _u
+}
+
 // AddFileIDs adds the "files" edge to the File entity by IDs.
 func (_u *SetUpdate) AddFileIDs(ids ...int) *SetUpdate {
 	_u.mutation.AddFileIDs(ids...)
@@ -609,6 +630,12 @@ func (_u *SetUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.SizesDigestCleared() {
 		_spec.ClearField(set.FieldSizesDigest, field.TypeBytes)
+	}
+	if value, ok := _u.mutation.PrunePendingSince(); ok {
+		_spec.SetField(set.FieldPrunePendingSince, field.TypeTime, value)
+	}
+	if _u.mutation.PrunePendingSinceCleared() {
+		_spec.ClearField(set.FieldPrunePendingSince, field.TypeTime)
 	}
 	if _u.mutation.FilesCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1101,6 +1128,26 @@ func (_u *SetUpdateOne) ClearSizesDigest() *SetUpdateOne {
 	return _u
 }
 
+// SetPrunePendingSince sets the "prune_pending_since" field.
+func (_u *SetUpdateOne) SetPrunePendingSince(v time.Time) *SetUpdateOne {
+	_u.mutation.SetPrunePendingSince(v)
+	return _u
+}
+
+// SetNillablePrunePendingSince sets the "prune_pending_since" field if the given value is not nil.
+func (_u *SetUpdateOne) SetNillablePrunePendingSince(v *time.Time) *SetUpdateOne {
+	if v != nil {
+		_u.SetPrunePendingSince(*v)
+	}
+	return _u
+}
+
+// ClearPrunePendingSince clears the value of the "prune_pending_since" field.
+func (_u *SetUpdateOne) ClearPrunePendingSince() *SetUpdateOne {
+	_u.mutation.ClearPrunePendingSince()
+	return _u
+}
+
 // AddFileIDs adds the "files" edge to the File entity by IDs.
 func (_u *SetUpdateOne) AddFileIDs(ids ...int) *SetUpdateOne {
 	_u.mutation.AddFileIDs(ids...)
@@ -1418,6 +1465,12 @@ func (_u *SetUpdateOne) sqlSave(ctx context.Context) (_node *Set, err error) {
 	}
 	if _u.mutation.SizesDigestCleared() {
 		_spec.ClearField(set.FieldSizesDigest, field.TypeBytes)
+	}
+	if value, ok := _u.mutation.PrunePendingSince(); ok {
+		_spec.SetField(set.FieldPrunePendingSince, field.TypeTime, value)
+	}
+	if _u.mutation.PrunePendingSinceCleared() {
+		_spec.ClearField(set.FieldPrunePendingSince, field.TypeTime)
 	}
 	if _u.mutation.FilesCleared() {
 		edge := &sqlgraph.EdgeSpec{

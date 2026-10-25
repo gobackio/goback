@@ -794,7 +794,14 @@ func (x *Index) RetireCommits(ctx context.Context, now time.Time) ([]index.Retir
 
 	phases.done("mark")
 	phase.Finish()
-	phase = progress.Start(ctx, progress.OpRetire, progress.PhasePrune, int64(len(sets)), 0)
+
+	// the sets this run tombstoned in, and those a failed prune left
+	pending, err := x.client.Set.Query().Where(set.PrunePendingSinceNotNil(), set.StateNEQ(set.StateDeleted)).All(ctx)
+	if err != nil {
+		return retired, err
+	}
+
+	phase = progress.Start(ctx, progress.OpRetire, progress.PhasePrune, int64(len(pending)), 0)
 
 	// one set's failure leaves the others to prune
 	var (
@@ -805,18 +812,13 @@ func (x *Index) RetireCommits(ctx context.Context, now time.Time) ([]index.Retir
 
 	prunes.SetLimit(pruneWorkers)
 
-	for setID, refs := range sets {
+	for _, s := range pending {
 		prunes.Go(func() error {
 			defer phase.Add(1, 0)
 
-			err := x.pruneRefs(ctx, setID, refs)
-			if err == nil {
-				err = x.dropDeadRows(ctx, setID)
-			}
-
-			if err != nil {
+			if err := x.prunePending(ctx, s.ID, *s.PrunePendingSince); err != nil {
 				mu.Lock()
-				pruneErrs = append(pruneErrs, fmt.Errorf("pruning set %s: %w", names[setID], err))
+				pruneErrs = append(pruneErrs, fmt.Errorf("pruning set %s: %w", s.Name, err))
 				mu.Unlock()
 			}
 
@@ -1309,6 +1311,11 @@ func (x *Index) markTombstoned(ctx context.Context, setID int64, refs [][]byte, 
 			return err
 		}
 
+		err = tx.Set.Update().Where(set.ID(setID), set.PrunePendingSinceIsNil()).SetPrunePendingSince(now).Exec(ctx)
+		if err != nil {
+			return err
+		}
+
 		_, err = tx.SetRef.Delete().Where(setref.RefIn(marked...)).Exec(ctx)
 
 		return err
@@ -1338,6 +1345,59 @@ func recordDeleted(ctx context.Context, c *ent.Client, refs [][]byte, at time.Ti
 // isDeleted reports whether a tombstone names the ref.
 func isDeleted(ctx context.Context, c *ent.Client, ref []byte) (bool, error) {
 	return c.DeletedRef.Query().Where(deletedref.Ref(ref)).Exist(ctx)
+}
+
+// prunePending prunes the refs and rows of the set's commits tombstoned
+// since the prune pending since, then clears that, or moves it on to the
+// oldest commit tombstoned meanwhile that the prune did not cover.
+func (x *Index) prunePending(ctx context.Context, setID int64, since time.Time) error {
+	rows, err := x.client.CommitRow.Query().Where(commitrow.SetID(setID), commitrow.TombstonedAtGTE(since)).
+		Select(commitrow.FieldRef).All(ctx)
+	if err != nil {
+		return err
+	}
+
+	refs := make([][]byte, len(rows))
+	covered := make(map[string]bool, len(rows))
+
+	for i, row := range rows {
+		refs[i] = row.Ref
+		covered[string(row.Ref)] = true
+	}
+
+	if err := x.pruneRefs(ctx, setID, refs); err != nil {
+		return err
+	}
+
+	if err := x.dropDeadRows(ctx, setID); err != nil {
+		return err
+	}
+
+	return x.tx(ctx, func(tx *ent.Tx) error {
+		if _, err := x.lockSet(ctx, tx, setID); err != nil {
+			return err
+		}
+
+		rows, err := tx.CommitRow.Query().Where(commitrow.SetID(setID), commitrow.TombstonedAtGTE(since)).
+			Select(commitrow.FieldRef, commitrow.FieldTombstonedAt).All(ctx)
+		if err != nil {
+			return err
+		}
+
+		var next *time.Time
+
+		for _, row := range rows {
+			if !covered[string(row.Ref)] && (next == nil || row.TombstonedAt.Before(*next)) {
+				next = row.TombstonedAt
+			}
+		}
+
+		if next == nil {
+			return tx.Set.UpdateOneID(setID).ClearPrunePendingSince().Exec(ctx)
+		}
+
+		return tx.Set.UpdateOneID(setID).SetPrunePendingSince(*next).Exec(ctx)
+	})
 }
 
 // dropDeadRows deletes the set's files and trees rows whose validity range
@@ -1402,7 +1462,7 @@ func (x *Index) closeEmptySets(ctx context.Context) error {
 				return err
 			}
 
-			return tx.Set.UpdateOneID(id).SetState(set.StateDeleted).Exec(ctx)
+			return tx.Set.UpdateOneID(id).SetState(set.StateDeleted).ClearPrunePendingSince().Exec(ctx)
 		})
 		if err != nil {
 			return err

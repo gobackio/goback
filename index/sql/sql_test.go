@@ -56,6 +56,8 @@ type memStore struct {
 	read  map[string]int
 	// beforeGet runs once, before the first Get of its ref
 	beforeGet map[string]func()
+	// getErr fails the next Get of its ref once
+	getErr map[string]error
 }
 
 func newMemStore() *memStore {
@@ -96,6 +98,12 @@ func (m *memStore) Get(_ context.Context, ref *proto.Ref) (*proto.Object, error)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.read[string(ref.Hash)]++
+
+	if err := m.getErr[string(ref.Hash)]; err != nil {
+		delete(m.getErr, string(ref.Hash))
+		return nil, err
+	}
+
 	obj, ok := m.objects[string(ref.Hash)]
 	if !ok {
 		return nil, backup.ErrNotFound

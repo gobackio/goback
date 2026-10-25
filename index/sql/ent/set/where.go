@@ -3,6 +3,8 @@
 package set
 
 import (
+	"time"
+
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/gobackio/goback/index/sql/ent/predicate"
@@ -116,6 +118,11 @@ func UniqueSize(v int64) predicate.Set {
 // SizesDigest applies equality check predicate on the "sizes_digest" field. It's identical to SizesDigestEQ.
 func SizesDigest(v []byte) predicate.Set {
 	return predicate.Set(sql.FieldEQ(FieldSizesDigest, v))
+}
+
+// PrunePendingSince applies equality check predicate on the "prune_pending_since" field. It's identical to PrunePendingSinceEQ.
+func PrunePendingSince(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldEQ(FieldPrunePendingSince, v))
 }
 
 // NameEQ applies the EQ predicate on the "name" field.
@@ -706,6 +713,56 @@ func SizesDigestIsNil() predicate.Set {
 // SizesDigestNotNil applies the NotNil predicate on the "sizes_digest" field.
 func SizesDigestNotNil() predicate.Set {
 	return predicate.Set(sql.FieldNotNull(FieldSizesDigest))
+}
+
+// PrunePendingSinceEQ applies the EQ predicate on the "prune_pending_since" field.
+func PrunePendingSinceEQ(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldEQ(FieldPrunePendingSince, v))
+}
+
+// PrunePendingSinceNEQ applies the NEQ predicate on the "prune_pending_since" field.
+func PrunePendingSinceNEQ(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldNEQ(FieldPrunePendingSince, v))
+}
+
+// PrunePendingSinceIn applies the In predicate on the "prune_pending_since" field.
+func PrunePendingSinceIn(vs ...time.Time) predicate.Set {
+	return predicate.Set(sql.FieldIn(FieldPrunePendingSince, vs...))
+}
+
+// PrunePendingSinceNotIn applies the NotIn predicate on the "prune_pending_since" field.
+func PrunePendingSinceNotIn(vs ...time.Time) predicate.Set {
+	return predicate.Set(sql.FieldNotIn(FieldPrunePendingSince, vs...))
+}
+
+// PrunePendingSinceGT applies the GT predicate on the "prune_pending_since" field.
+func PrunePendingSinceGT(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldGT(FieldPrunePendingSince, v))
+}
+
+// PrunePendingSinceGTE applies the GTE predicate on the "prune_pending_since" field.
+func PrunePendingSinceGTE(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldGTE(FieldPrunePendingSince, v))
+}
+
+// PrunePendingSinceLT applies the LT predicate on the "prune_pending_since" field.
+func PrunePendingSinceLT(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldLT(FieldPrunePendingSince, v))
+}
+
+// PrunePendingSinceLTE applies the LTE predicate on the "prune_pending_since" field.
+func PrunePendingSinceLTE(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldLTE(FieldPrunePendingSince, v))
+}
+
+// PrunePendingSinceIsNil applies the IsNil predicate on the "prune_pending_since" field.
+func PrunePendingSinceIsNil() predicate.Set {
+	return predicate.Set(sql.FieldIsNull(FieldPrunePendingSince))
+}
+
+// PrunePendingSinceNotNil applies the NotNil predicate on the "prune_pending_since" field.
+func PrunePendingSinceNotNil() predicate.Set {
+	return predicate.Set(sql.FieldNotNull(FieldPrunePendingSince))
 }
 
 // HasFiles applies the HasEdge predicate on the "files" edge.

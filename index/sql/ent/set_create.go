@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
@@ -202,6 +203,20 @@ func (_c *SetCreate) SetNillableUniqueSize(v *int64) *SetCreate {
 // SetSizesDigest sets the "sizes_digest" field.
 func (_c *SetCreate) SetSizesDigest(v []byte) *SetCreate {
 	_c.mutation.SetSizesDigest(v)
+	return _c
+}
+
+// SetPrunePendingSince sets the "prune_pending_since" field.
+func (_c *SetCreate) SetPrunePendingSince(v time.Time) *SetCreate {
+	_c.mutation.SetPrunePendingSince(v)
+	return _c
+}
+
+// SetNillablePrunePendingSince sets the "prune_pending_since" field if the given value is not nil.
+func (_c *SetCreate) SetNillablePrunePendingSince(v *time.Time) *SetCreate {
+	if v != nil {
+		_c.SetPrunePendingSince(*v)
+	}
 	return _c
 }
 
@@ -434,6 +449,10 @@ func (_c *SetCreate) createSpec() (*Set, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.SizesDigest(); ok {
 		_spec.SetField(set.FieldSizesDigest, field.TypeBytes, value)
 		_node.SizesDigest = value
+	}
+	if value, ok := _c.mutation.PrunePendingSince(); ok {
+		_spec.SetField(set.FieldPrunePendingSince, field.TypeTime, value)
+		_node.PrunePendingSince = &value
 	}
 	if nodes := _c.mutation.FilesIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -815,6 +834,24 @@ func (u *SetUpsert) ClearSizesDigest() *SetUpsert {
 	return u
 }
 
+// SetPrunePendingSince sets the "prune_pending_since" field.
+func (u *SetUpsert) SetPrunePendingSince(v time.Time) *SetUpsert {
+	u.Set(set.FieldPrunePendingSince, v)
+	return u
+}
+
+// UpdatePrunePendingSince sets the "prune_pending_since" field to the value that was provided on create.
+func (u *SetUpsert) UpdatePrunePendingSince() *SetUpsert {
+	u.SetExcluded(set.FieldPrunePendingSince)
+	return u
+}
+
+// ClearPrunePendingSince clears the value of the "prune_pending_since" field.
+func (u *SetUpsert) ClearPrunePendingSince() *SetUpsert {
+	u.SetNull(set.FieldPrunePendingSince)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
 // Using this option is equivalent to using:
 //
@@ -1168,6 +1205,27 @@ func (u *SetUpsertOne) UpdateSizesDigest() *SetUpsertOne {
 func (u *SetUpsertOne) ClearSizesDigest() *SetUpsertOne {
 	return u.Update(func(s *SetUpsert) {
 		s.ClearSizesDigest()
+	})
+}
+
+// SetPrunePendingSince sets the "prune_pending_since" field.
+func (u *SetUpsertOne) SetPrunePendingSince(v time.Time) *SetUpsertOne {
+	return u.Update(func(s *SetUpsert) {
+		s.SetPrunePendingSince(v)
+	})
+}
+
+// UpdatePrunePendingSince sets the "prune_pending_since" field to the value that was provided on create.
+func (u *SetUpsertOne) UpdatePrunePendingSince() *SetUpsertOne {
+	return u.Update(func(s *SetUpsert) {
+		s.UpdatePrunePendingSince()
+	})
+}
+
+// ClearPrunePendingSince clears the value of the "prune_pending_since" field.
+func (u *SetUpsertOne) ClearPrunePendingSince() *SetUpsertOne {
+	return u.Update(func(s *SetUpsert) {
+		s.ClearPrunePendingSince()
 	})
 }
 
@@ -1690,6 +1748,27 @@ func (u *SetUpsertBulk) UpdateSizesDigest() *SetUpsertBulk {
 func (u *SetUpsertBulk) ClearSizesDigest() *SetUpsertBulk {
 	return u.Update(func(s *SetUpsert) {
 		s.ClearSizesDigest()
+	})
+}
+
+// SetPrunePendingSince sets the "prune_pending_since" field.
+func (u *SetUpsertBulk) SetPrunePendingSince(v time.Time) *SetUpsertBulk {
+	return u.Update(func(s *SetUpsert) {
+		s.SetPrunePendingSince(v)
+	})
+}
+
+// UpdatePrunePendingSince sets the "prune_pending_since" field to the value that was provided on create.
+func (u *SetUpsertBulk) UpdatePrunePendingSince() *SetUpsertBulk {
+	return u.Update(func(s *SetUpsert) {
+		s.UpdatePrunePendingSince()
+	})
+}
+
+// ClearPrunePendingSince clears the value of the "prune_pending_since" field.
+func (u *SetUpsertBulk) ClearPrunePendingSince() *SetUpsertBulk {
+	return u.Update(func(s *SetUpsert) {
+		s.ClearPrunePendingSince()
 	})
 }
 

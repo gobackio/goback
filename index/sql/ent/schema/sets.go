@@ -40,6 +40,9 @@ func (Set) Fields() []ent.Field {
 		field.Int64("logical_size").Optional().Nillable(),
 		field.Int64("unique_size").Optional().Nillable(),
 		field.Bytes("sizes_digest").Optional(),
+		// when the oldest tombstone whose refs and rows retirement has not
+		// pruned yet was marked
+		field.Time("prune_pending_since").Optional().Nillable(),
 	}
 }
 

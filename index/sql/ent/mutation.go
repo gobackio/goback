@@ -7660,6 +7660,7 @@ type SetMutation struct {
 	unique_size                *int64
 	addunique_size             *int64
 	sizes_digest               *[]byte
+	prune_pending_since        *time.Time
 	clearedFields              map[string]struct{}
 	files                      map[int]struct{}
 	removedfiles               map[int]struct{}
@@ -8550,6 +8551,55 @@ func (m *SetMutation) ResetSizesDigest() {
 	delete(m.clearedFields, set.FieldSizesDigest)
 }
 
+// SetPrunePendingSince sets the "prune_pending_since" field.
+func (m *SetMutation) SetPrunePendingSince(t time.Time) {
+	m.prune_pending_since = &t
+}
+
+// PrunePendingSince returns the value of the "prune_pending_since" field in the mutation.
+func (m *SetMutation) PrunePendingSince() (r time.Time, exists bool) {
+	v := m.prune_pending_since
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPrunePendingSince returns the old "prune_pending_since" field's value of the Set entity.
+// If the Set object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SetMutation) OldPrunePendingSince(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPrunePendingSince is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPrunePendingSince requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPrunePendingSince: %w", err)
+	}
+	return oldValue.PrunePendingSince, nil
+}
+
+// ClearPrunePendingSince clears the value of the "prune_pending_since" field.
+func (m *SetMutation) ClearPrunePendingSince() {
+	m.prune_pending_since = nil
+	m.clearedFields[set.FieldPrunePendingSince] = struct{}{}
+}
+
+// PrunePendingSinceCleared returns if the "prune_pending_since" field was cleared in this mutation.
+func (m *SetMutation) PrunePendingSinceCleared() bool {
+	_, ok := m.clearedFields[set.FieldPrunePendingSince]
+	return ok
+}
+
+// ResetPrunePendingSince resets all changes to the "prune_pending_since" field.
+func (m *SetMutation) ResetPrunePendingSince() {
+	m.prune_pending_since = nil
+	delete(m.clearedFields, set.FieldPrunePendingSince)
+}
+
 // AddFileIDs adds the "files" edge to the File entity by ids.
 func (m *SetMutation) AddFileIDs(ids ...int) {
 	if m.files == nil {
@@ -8800,7 +8850,7 @@ func (m *SetMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SetMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 15)
 	if m.name != nil {
 		fields = append(fields, set.FieldName)
 	}
@@ -8843,6 +8893,9 @@ func (m *SetMutation) Fields() []string {
 	if m.sizes_digest != nil {
 		fields = append(fields, set.FieldSizesDigest)
 	}
+	if m.prune_pending_since != nil {
+		fields = append(fields, set.FieldPrunePendingSince)
+	}
 	return fields
 }
 
@@ -8879,6 +8932,8 @@ func (m *SetMutation) Field(name string) (ent.Value, bool) {
 		return m.UniqueSize()
 	case set.FieldSizesDigest:
 		return m.SizesDigest()
+	case set.FieldPrunePendingSince:
+		return m.PrunePendingSince()
 	}
 	return nil, false
 }
@@ -8916,6 +8971,8 @@ func (m *SetMutation) OldField(ctx context.Context, name string) (ent.Value, err
 		return m.OldUniqueSize(ctx)
 	case set.FieldSizesDigest:
 		return m.OldSizesDigest(ctx)
+	case set.FieldPrunePendingSince:
+		return m.OldPrunePendingSince(ctx)
 	}
 	return nil, fmt.Errorf("unknown Set field %s", name)
 }
@@ -9022,6 +9079,13 @@ func (m *SetMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSizesDigest(v)
+		return nil
+	case set.FieldPrunePendingSince:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPrunePendingSince(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Set field %s", name)
@@ -9167,6 +9231,9 @@ func (m *SetMutation) ClearedFields() []string {
 	if m.FieldCleared(set.FieldSizesDigest) {
 		fields = append(fields, set.FieldSizesDigest)
 	}
+	if m.FieldCleared(set.FieldPrunePendingSince) {
+		fields = append(fields, set.FieldPrunePendingSince)
+	}
 	return fields
 }
 
@@ -9207,6 +9274,9 @@ func (m *SetMutation) ClearField(name string) error {
 		return nil
 	case set.FieldSizesDigest:
 		m.ClearSizesDigest()
+		return nil
+	case set.FieldPrunePendingSince:
+		m.ClearPrunePendingSince()
 		return nil
 	}
 	return fmt.Errorf("unknown Set nullable field %s", name)
@@ -9257,6 +9327,9 @@ func (m *SetMutation) ResetField(name string) error {
 		return nil
 	case set.FieldSizesDigest:
 		m.ResetSizesDigest()
+		return nil
+	case set.FieldPrunePendingSince:
+		m.ResetPrunePendingSince()
 		return nil
 	}
 	return fmt.Errorf("unknown Set field %s", name)

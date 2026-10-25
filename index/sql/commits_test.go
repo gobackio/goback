@@ -1151,6 +1151,35 @@ func TestRetiringCommitsThatShareADirectoryReadsItOnce(t *testing.T) {
 	require.True(t, held, "a file the live commit reaches stays")
 }
 
+func TestARetirementRetriesThePruneOfASetWhosePruneFailed(t *testing.T) {
+	f := newFixture(t)
+
+	gone := f.file("a.txt", "one")
+	a := f.commit("world", f.tree(gone), false)
+	require.NoError(t, f.x.SetPolicy(f.ctx, "world", &retention.Policy{KeepLast: 1}))
+	f.advance(time.Hour)
+	f.commit("world", f.tree(f.file("a.txt", "two")), false)
+
+	failed := errors.New("bucket unavailable")
+	f.store.getErr = map[string]error{string(a.Hash): failed}
+
+	n, err := f.x.Retire(f.ctx, f.clock)
+	require.ErrorIs(t, err, failed)
+	require.Equal(t, 1, n)
+
+	held, err := f.x.client.SetRef.Query().Where(setref.Ref(gone.Ref.Hash)).Exist(f.ctx)
+	require.NoError(t, err)
+	require.True(t, held, "the failed prune left it")
+
+	n, err = f.x.Retire(f.ctx, f.clock.Add(time.Hour))
+	require.NoError(t, err)
+	require.Zero(t, n)
+
+	held, err = f.x.client.SetRef.Query().Where(setref.Ref(gone.Ref.Hash)).Exist(f.ctx)
+	require.NoError(t, err)
+	require.False(t, held, "the next run pruned it though it tombstoned nothing")
+}
+
 // A pin or a longer window that arrives after Retire found its commits due
 // still holds the commit when its tombstone would be written.
 func TestATombstoneYieldsToWhatChangedAfterTheCommitFellDue(t *testing.T) {
