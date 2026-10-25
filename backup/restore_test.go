@@ -801,6 +801,27 @@ func TestSalvageWritesWhatItCanAndNamesTheHoles(t *testing.T) {
 	}
 }
 
+func TestASalvageOverAPartialLeavesZeroesInItsHoles(t *testing.T) {
+	ctx := context.Background()
+	store := newMemStore()
+
+	data := randomData(3*maxBlobSize+99, 12)
+	ref := putFile(t, store, nil, data)
+	parts := partsOf(t, store, ref)
+	require.NoError(t, store.Delete(ctx, parts[1].Ref))
+
+	path := filepath.Join(t.TempDir(), "vm.img")
+	require.NoError(t, os.WriteFile(PartialPath(path), bytes.Repeat([]byte{0xaa}, len(data)), 0o600))
+
+	outcome, err := (&Restorer{Store: store, Salvage: true}).RestoreFile(ctx, path, statFor(data), ref)
+	require.NoError(t, err)
+	require.Equal(t, OutcomeSalvaged, outcome)
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.True(t, bytes.Equal(zeroed(data, parts[1]), got), "the hole holds zeroes, not what the partial held")
+}
+
 func TestAMissingPartFailsTheFileWithoutSalvage(t *testing.T) {
 	ctx := context.Background()
 	store := newMemStore()

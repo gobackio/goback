@@ -481,6 +481,10 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 	dst := r.target(tmp, partial, empty)
 
 	missing, err := r.assemble(ctx, dst, source, reader, matched, held, local, ref)
+	if err == nil && !empty {
+		err = zeroHoles(tmp, reader, missing)
+	}
+
 	if err == nil {
 		err = r.settle(ctx, random, tmp, source, dst.file, partial, path, stat, reader, missing)
 	} else {
@@ -624,6 +628,19 @@ func (r *Restorer) dropPartial(ctx context.Context, path string) error {
 	}
 
 	return removeIfThere(ctx, r.fs(), r.partial(path))
+}
+
+// zeroHoles writes zeroes over the parts a salvage went without, in a
+// partial file that held something before.
+func zeroHoles(tmp io.WriterAt, reader *fileReader, missing []int) error {
+	for _, i := range missing {
+		part := reader.parts[i]
+		if _, err := tmp.WriteAt(make([]byte, part.Length), int64(part.Offset)); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // reportHoles counts the parts a salvaged file went without and hands each
