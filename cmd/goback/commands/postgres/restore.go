@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gobackio/goback"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/postgres"
 	"github.com/gobackio/goback/cmd/goback/commands/common"
@@ -193,28 +195,66 @@ var walGetCmd = cli.Command{
 	Action: walGetAction,
 }
 
+// walGetFatal is wal-get's status for every failure but a file the commit
+// does not hold: Postgres reads 1 as the end of the archive and promotes,
+// and stops recovery on a status above 125.
+const walGetFatal = 255
+
+// walGetRetries are the waits before each retry of a failed fetch.
+var walGetRetries = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
+
 func walGetAction(c *cli.Context) error {
 	hash, err := hex.DecodeString(c.String("commit"))
 	if c.NArg() != 2 || err != nil || len(hash) == 0 || c.String("wal-set") == "" {
-		return cli.NewExitError("--wal-set, --commit and the file's name and destination are required", 2)
+		return cli.NewExitError("--wal-set, --commit and the file's name and destination are required", walGetFatal)
 	}
 
-	repo := common.OpenRepo(c)
-	store := repo.Store
-	defer common.CloseRepo(repo)
-
+	ctx := common.Context(c)
 	ref := &proto.Ref{Hash: hash}
 
-	err = postgres.FetchWAL(common.Context(c), store, common.StoreKey(c, repo), ref, c.Args().Get(0), c.Args().Get(1))
-	if errors.Is(err, backup.ErrNotFound) {
-		return cli.NewExitError("", 1)
+	for attempt := 0; ; attempt++ {
+		err = fetchWAL(ctx, c, ref)
+		if err == nil || errors.Is(err, postgres.ErrNoWALFile) || attempt == len(walGetRetries) || ctx.Err() != nil {
+			break
+		}
+
+		wait := walGetRetries[attempt]
+		log.Printf("Fetching %s failed, retrying in %v: %v", c.Args().Get(0), wait, err)
+
+		select {
+		case <-ctx.Done():
+		case <-time.After(wait):
+		}
 	}
 
-	if err != nil {
-		return err
+	switch {
+	case errors.Is(err, postgres.ErrNoWALFile):
+		return cli.NewExitError("", 1)
+	case err != nil:
+		return cli.NewExitError(err.Error(), walGetFatal)
 	}
 
 	common.Result(common.Done{Action: "fetched", Name: c.Args().Get(0)}, func() {})
 
 	return nil
+}
+
+func fetchWAL(ctx context.Context, c *cli.Context, ref *proto.Ref) error {
+	settings, err := common.Settings(c)
+	if err != nil {
+		return err
+	}
+
+	repo, err := goback.Open(ctx, settings)
+	if err != nil {
+		return err
+	}
+	defer common.CloseRepo(repo)
+
+	key, err := repo.Key(ctx)
+	if err != nil {
+		return err
+	}
+
+	return postgres.FetchWAL(ctx, repo.Store, key, ref, c.Args().Get(0), c.Args().Get(1))
 }

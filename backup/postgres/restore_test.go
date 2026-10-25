@@ -214,7 +214,30 @@ func TestFetchWALWritesWhatTheCommitHolds(t *testing.T) {
 	require.Equal(t, want, got)
 
 	err = FetchWAL(f.ctx, f.index, nil, wal.Ref, "00000002.history", dst)
+	require.ErrorIs(t, err, ErrNoWALFile)
+}
+
+func TestFetchWALTellsAFileItCannotReadFromOneTheCommitLacks(t *testing.T) {
+	f := newWALFixture(t)
+
+	name := f.spoolSegment(7, 42)
+
+	key, err := storekey.Generate("s1")
+	require.NoError(t, err)
+
+	wal, err := f.runOver(f.index, key)
+	require.NoError(t, err)
+
+	dst := filepath.Join(t.TempDir(), "RECOVERYXLOG")
+	require.ErrorIs(t, FetchWAL(f.ctx, f.index, key, wal.Ref, walName(1, 8), dst), ErrNoWALFile)
+
+	err = FetchWAL(f.ctx, f.index, nil, wal.Ref, name, dst)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrNoWALFile)
+
+	err = FetchWAL(f.ctx, f.index, key, &proto.Ref{Hash: make([]byte, 32)}, name, dst)
 	require.ErrorIs(t, err, backup.ErrNotFound)
+	require.NotErrorIs(t, err, ErrNoWALFile)
 }
 
 func TestFetchWALRefusesARefThatIsNoCommit(t *testing.T) {

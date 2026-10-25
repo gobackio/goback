@@ -438,22 +438,30 @@ func confString(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
+// ErrNoWALFile is FetchWAL's error for a file the WAL commit does not hold.
+var ErrNoWALFile = fmt.Errorf("%w: the WAL commit holds no such file", backup.ErrNotFound)
+
 // FetchWAL writes the file name of the WAL commit at ref to dst, as
 // restore_command does with %f and %p. A segment the commit holds only as
 // the newest timeline's partial segment is written padded with zeros to
-// its full size. It returns backup.ErrNotFound for a file the commit does
-// not hold, which Postgres asks for as a matter of course, and for a
-// segment off the history of the commit's newest timeline, which recovery
-// follows: an older timeline's past where that history leaves it.
+// its full size. It returns ErrNoWALFile for a file the commit does not
+// hold, which Postgres asks for as a matter of course, and for a segment
+// off the history of the commit's newest timeline, which recovery follows:
+// an older timeline's past where that history leaves it. Every other error,
+// a missing commit among them, means the file could not be read.
 func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key, ref *proto.Ref, name, dst string) error {
 	obj, err := objects.Get(ctx, ref)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading the WAL commit %x: %w", ref.Hash, err)
 	}
 
 	commit := obj.GetCommit()
 	if commit == nil {
 		return fmt.Errorf("%x is not a commit", ref.Hash)
+	}
+
+	if key == nil && len(commit.KeyId) > 0 {
+		return fmt.Errorf("the WAL commit %x is sealed under store key %x, and no store key was given", ref.Hash, commit.KeyId)
 	}
 
 	ctx, end, err := backup.HoldRestore(ctx, objects, commit.GetBackupSet(), ref)
@@ -487,7 +495,7 @@ func FetchWAL(ctx context.Context, objects backup.ObjectStore, key *storekey.Key
 	}
 
 	if i < 0 {
-		return fmt.Errorf("%w: %s", backup.ErrNotFound, name)
+		return fmt.Errorf("%w: %s", ErrNoWALFile, name)
 	}
 
 	return tree.restoreWAL(ctx, backup.LocalFS{}, dst, i, pad)
