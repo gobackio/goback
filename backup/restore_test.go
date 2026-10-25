@@ -253,6 +253,54 @@ func TestRestoreFileInline(t *testing.T) {
 	}
 }
 
+// changingFS is the local disk whose files read back other bytes after
+// their first reads, as a file another process rewrites does.
+type changingFS struct {
+	LocalFS
+	honest int
+}
+
+func (c changingFS) Open(ctx context.Context, path string) (File, error) {
+	f, err := c.LocalFS.Open(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+
+	return &changingFile{File: f.(*os.File), honest: c.honest}, nil
+}
+
+type changingFile struct {
+	*os.File
+	honest, reads int
+}
+
+func (f *changingFile) ReadAt(b []byte, off int64) (int, error) {
+	n, err := f.File.ReadAt(b, off)
+
+	if f.reads++; f.reads > f.honest {
+		for i := range b[:n] {
+			b[i] ^= 0xff
+		}
+	}
+
+	return n, err
+}
+
+func TestADestinationPartThatChangesAfterItIsHashedIsNotCopied(t *testing.T) {
+	store := newMemStore()
+	data := randomData(3*maxBlobSize+7, 1)
+	ref := putFile(t, store, nil, data)
+	stat := statFor(data)
+
+	path := filepath.Join(t.TempDir(), "db")
+	require.NoError(t, os.WriteFile(path, append(bytes.Clone(data), "tail"...), 0o644))
+
+	r := &Restorer{Store: store, FS: changingFS{honest: fileParts(t, store, ref)}}
+	_, err := r.RestoreFile(context.Background(), path, stat, ref)
+	require.NoError(t, err)
+	requireRestored(t, path, data, stat)
+}
+
 func TestRestoreFileLeavesACloudOnlyFilesDestinationAlone(t *testing.T) {
 	store := newMemStore()
 	empty := putFile(t, store, nil, nil)

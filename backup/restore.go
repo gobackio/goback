@@ -761,7 +761,8 @@ func (r *Restorer) rechunked(path string, hasFile bool, matched []bool) *SeedMap
 }
 
 // assemble writes every part at its offset that dst does not already hold:
-// matched parts are copied from source, the rest come from the re-cut
+// matched parts are copied from source while they still hash to their
+// refs, the rest come from the re-cut
 // destination, the seeds, the files already restored, the cache or the
 // store. A part another file of the restore is fetching is waited for and
 // copied from that file once it lands. It returns the parts no source
@@ -791,17 +792,15 @@ func (r *Restorer) assemble(ctx context.Context, dst target, source io.ReaderAt,
 
 		if matched != nil && matched[i] {
 			buf := make([]byte, part.Length)
-			if _, err := source.ReadAt(buf, offset); err != nil {
-				return nil, errors.Wrapf(err, "rereading part %d of the destination", i)
+			if _, err := source.ReadAt(buf, offset); err == nil && r.matches(reader, i, buf) {
+				if err := r.put(dst, reader, i, buf); err != nil {
+					return nil, err
+				}
+
+				r.countBytes(ctx, &r.stats.BytesFromDestination, "destination", int64(part.Length))
+
+				continue
 			}
-
-			if err := r.put(dst, reader, i, buf); err != nil {
-				return nil, err
-			}
-
-			r.countBytes(ctx, &r.stats.BytesFromDestination, "destination", int64(part.Length))
-
-			continue
 		}
 
 		if data, counter, source, ok := r.localCopy(reader, i, local); ok {
