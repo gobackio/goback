@@ -662,6 +662,24 @@ func (x *Index) RetireCommits(ctx context.Context, now time.Time) ([]index.Retir
 
 	phase := progress.Start(ctx, progress.OpRetire, progress.PhaseDue, 0, 0)
 
+	settings, err := loadSettings(ctx, x.client)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := x.client.Settings.UpdateOneID(settingsID).SetRetiredAt(now).Exec(ctx); err != nil {
+		return nil, err
+	}
+
+	// a clock that jumped ahead would retire what the policies keep, so a
+	// run far past the last one trusts its now for nothing
+	if last := settings.RetiredAt; last != nil && now.Sub(*last) > retireRunGap {
+		x.logger().Warn("retirement skipped: now is implausibly far past the last run", "now", now, "last", *last)
+		phase.Finish()
+
+		return nil, nil
+	}
+
 	// commits age out of a policy without anything happening to their set,
 	// so a set that stopped committing is evaluated here or never
 	active, err := x.client.Set.Query().Where(set.StateEQ(set.StateActive), set.RetentionPaused(false)).IDs(ctx)
@@ -670,6 +688,17 @@ func (x *Index) RetireCommits(ctx context.Context, now time.Time) ([]index.Retir
 	}
 
 	for _, id := range active {
+		newest, err := newestCommit(ctx, x.client, id)
+		if err != nil {
+			return nil, err
+		}
+
+		if newest != nil && now.Sub(newest.ReceivedAt) > retireReceiptGap {
+			x.logger().Warn("retirement left a set unevaluated: now is implausibly far past its newest commit",
+				"set", id, "now", now, "newest", newest.ReceivedAt)
+			continue
+		}
+
 		if err := x.reevaluateSetAt(ctx, id, now); err != nil {
 			return nil, err
 		}
@@ -1387,3 +1416,11 @@ func (x *Index) closeEmptySets(ctx context.Context) error {
 
 // pruneWorkers is how many sets RetireCommits prunes at once.
 const pruneWorkers = 4
+
+// retireRunGap and retireReceiptGap are how far now may lie past the last
+// retirement run, and past a set's newest commit, before retirement takes
+// it for a clock that jumped and leaves the store, or the set, as it is.
+const (
+	retireRunGap     = 30 * 24 * time.Hour
+	retireReceiptGap = 400 * 24 * time.Hour
+)

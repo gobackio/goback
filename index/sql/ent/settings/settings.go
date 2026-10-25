@@ -23,6 +23,8 @@ const (
 	FieldTrashDays = "trash_days"
 	// FieldPolicySequence holds the string denoting the policy_sequence field in the database.
 	FieldPolicySequence = "policy_sequence"
+	// FieldRetiredAt holds the string denoting the retired_at field in the database.
+	FieldRetiredAt = "retired_at"
 	// Table holds the table name of the settings in the database.
 	Table = "settings"
 )
@@ -36,6 +38,7 @@ var Columns = []string{
 	FieldRetentionPolicy,
 	FieldTrashDays,
 	FieldPolicySequence,
+	FieldRetiredAt,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -93,4 +96,9 @@ func ByTrashDays(opts ...sql.OrderTermOption) OrderOption {
 // ByPolicySequence orders the results by the policy_sequence field.
 func ByPolicySequence(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPolicySequence, opts...).ToFunc()
+}
+
+// ByRetiredAt orders the results by the retired_at field.
+func ByRetiredAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRetiredAt, opts...).ToFunc()
 }

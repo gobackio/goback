@@ -9876,6 +9876,7 @@ type SettingsMutation struct {
 	addtrash_days       *int
 	policy_sequence     *uint64
 	addpolicy_sequence  *int64
+	retired_at          *time.Time
 	clearedFields       map[string]struct{}
 	done                bool
 	oldValue            func(context.Context) (*Settings, error)
@@ -10301,6 +10302,55 @@ func (m *SettingsMutation) ResetPolicySequence() {
 	m.addpolicy_sequence = nil
 }
 
+// SetRetiredAt sets the "retired_at" field.
+func (m *SettingsMutation) SetRetiredAt(t time.Time) {
+	m.retired_at = &t
+}
+
+// RetiredAt returns the value of the "retired_at" field in the mutation.
+func (m *SettingsMutation) RetiredAt() (r time.Time, exists bool) {
+	v := m.retired_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRetiredAt returns the old "retired_at" field's value of the Settings entity.
+// If the Settings object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SettingsMutation) OldRetiredAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRetiredAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRetiredAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRetiredAt: %w", err)
+	}
+	return oldValue.RetiredAt, nil
+}
+
+// ClearRetiredAt clears the value of the "retired_at" field.
+func (m *SettingsMutation) ClearRetiredAt() {
+	m.retired_at = nil
+	m.clearedFields[settings.FieldRetiredAt] = struct{}{}
+}
+
+// RetiredAtCleared returns if the "retired_at" field was cleared in this mutation.
+func (m *SettingsMutation) RetiredAtCleared() bool {
+	_, ok := m.clearedFields[settings.FieldRetiredAt]
+	return ok
+}
+
+// ResetRetiredAt resets all changes to the "retired_at" field.
+func (m *SettingsMutation) ResetRetiredAt() {
+	m.retired_at = nil
+	delete(m.clearedFields, settings.FieldRetiredAt)
+}
+
 // Where appends a list predicates to the SettingsMutation builder.
 func (m *SettingsMutation) Where(ps ...predicate.Settings) {
 	m.predicates = append(m.predicates, ps...)
@@ -10335,7 +10385,7 @@ func (m *SettingsMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SettingsMutation) Fields() []string {
-	fields := make([]string, 0, 6)
+	fields := make([]string, 0, 7)
 	if m.policy != nil {
 		fields = append(fields, settings.FieldPolicy)
 	}
@@ -10353,6 +10403,9 @@ func (m *SettingsMutation) Fields() []string {
 	}
 	if m.policy_sequence != nil {
 		fields = append(fields, settings.FieldPolicySequence)
+	}
+	if m.retired_at != nil {
+		fields = append(fields, settings.FieldRetiredAt)
 	}
 	return fields
 }
@@ -10374,6 +10427,8 @@ func (m *SettingsMutation) Field(name string) (ent.Value, bool) {
 		return m.TrashDays()
 	case settings.FieldPolicySequence:
 		return m.PolicySequence()
+	case settings.FieldRetiredAt:
+		return m.RetiredAt()
 	}
 	return nil, false
 }
@@ -10395,6 +10450,8 @@ func (m *SettingsMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldTrashDays(ctx)
 	case settings.FieldPolicySequence:
 		return m.OldPolicySequence(ctx)
+	case settings.FieldRetiredAt:
+		return m.OldRetiredAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown Settings field %s", name)
 }
@@ -10445,6 +10502,13 @@ func (m *SettingsMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetPolicySequence(v)
+		return nil
+	case settings.FieldRetiredAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRetiredAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Settings field %s", name)
@@ -10524,6 +10588,9 @@ func (m *SettingsMutation) ClearedFields() []string {
 	if m.FieldCleared(settings.FieldRetentionPolicy) {
 		fields = append(fields, settings.FieldRetentionPolicy)
 	}
+	if m.FieldCleared(settings.FieldRetiredAt) {
+		fields = append(fields, settings.FieldRetiredAt)
+	}
 	return fields
 }
 
@@ -10546,6 +10613,9 @@ func (m *SettingsMutation) ClearField(name string) error {
 		return nil
 	case settings.FieldRetentionPolicy:
 		m.ClearRetentionPolicy()
+		return nil
+	case settings.FieldRetiredAt:
+		m.ClearRetiredAt()
 		return nil
 	}
 	return fmt.Errorf("unknown Settings nullable field %s", name)
@@ -10572,6 +10642,9 @@ func (m *SettingsMutation) ResetField(name string) error {
 		return nil
 	case settings.FieldPolicySequence:
 		m.ResetPolicySequence()
+		return nil
+	case settings.FieldRetiredAt:
+		m.ResetRetiredAt()
 		return nil
 	}
 	return fmt.Errorf("unknown Settings field %s", name)

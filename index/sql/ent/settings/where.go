@@ -79,6 +79,11 @@ func PolicySequence(v uint64) predicate.Settings {
 	return predicate.Settings(sql.FieldEQ(FieldPolicySequence, v))
 }
 
+// RetiredAt applies equality check predicate on the "retired_at" field. It's identical to RetiredAtEQ.
+func RetiredAt(v time.Time) predicate.Settings {
+	return predicate.Settings(sql.FieldEQ(FieldRetiredAt, v))
+}
+
 // PolicyEQ applies the EQ predicate on the "policy" field.
 func PolicyEQ(v string) predicate.Settings {
 	return predicate.Settings(sql.FieldEQ(FieldPolicy, v))
@@ -397,6 +402,56 @@ func PolicySequenceLT(v uint64) predicate.Settings {
 // PolicySequenceLTE applies the LTE predicate on the "policy_sequence" field.
 func PolicySequenceLTE(v uint64) predicate.Settings {
 	return predicate.Settings(sql.FieldLTE(FieldPolicySequence, v))
+}
+
+// RetiredAtEQ applies the EQ predicate on the "retired_at" field.
+func RetiredAtEQ(v time.Time) predicate.Settings {
+	return predicate.Settings(sql.FieldEQ(FieldRetiredAt, v))
+}
+
+// RetiredAtNEQ applies the NEQ predicate on the "retired_at" field.
+func RetiredAtNEQ(v time.Time) predicate.Settings {
+	return predicate.Settings(sql.FieldNEQ(FieldRetiredAt, v))
+}
+
+// RetiredAtIn applies the In predicate on the "retired_at" field.
+func RetiredAtIn(vs ...time.Time) predicate.Settings {
+	return predicate.Settings(sql.FieldIn(FieldRetiredAt, vs...))
+}
+
+// RetiredAtNotIn applies the NotIn predicate on the "retired_at" field.
+func RetiredAtNotIn(vs ...time.Time) predicate.Settings {
+	return predicate.Settings(sql.FieldNotIn(FieldRetiredAt, vs...))
+}
+
+// RetiredAtGT applies the GT predicate on the "retired_at" field.
+func RetiredAtGT(v time.Time) predicate.Settings {
+	return predicate.Settings(sql.FieldGT(FieldRetiredAt, v))
+}
+
+// RetiredAtGTE applies the GTE predicate on the "retired_at" field.
+func RetiredAtGTE(v time.Time) predicate.Settings {
+	return predicate.Settings(sql.FieldGTE(FieldRetiredAt, v))
+}
+
+// RetiredAtLT applies the LT predicate on the "retired_at" field.
+func RetiredAtLT(v time.Time) predicate.Settings {
+	return predicate.Settings(sql.FieldLT(FieldRetiredAt, v))
+}
+
+// RetiredAtLTE applies the LTE predicate on the "retired_at" field.
+func RetiredAtLTE(v time.Time) predicate.Settings {
+	return predicate.Settings(sql.FieldLTE(FieldRetiredAt, v))
+}
+
+// RetiredAtIsNil applies the IsNil predicate on the "retired_at" field.
+func RetiredAtIsNil() predicate.Settings {
+	return predicate.Settings(sql.FieldIsNull(FieldRetiredAt))
+}
+
+// RetiredAtNotNil applies the NotNil predicate on the "retired_at" field.
+func RetiredAtNotNil() predicate.Settings {
+	return predicate.Settings(sql.FieldNotNull(FieldRetiredAt))
 }
 
 // And groups predicates with the AND operator between them.

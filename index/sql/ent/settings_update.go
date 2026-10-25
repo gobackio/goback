@@ -151,6 +151,26 @@ func (_u *SettingsUpdate) AddPolicySequence(v int64) *SettingsUpdate {
 	return _u
 }
 
+// SetRetiredAt sets the "retired_at" field.
+func (_u *SettingsUpdate) SetRetiredAt(v time.Time) *SettingsUpdate {
+	_u.mutation.SetRetiredAt(v)
+	return _u
+}
+
+// SetNillableRetiredAt sets the "retired_at" field if the given value is not nil.
+func (_u *SettingsUpdate) SetNillableRetiredAt(v *time.Time) *SettingsUpdate {
+	if v != nil {
+		_u.SetRetiredAt(*v)
+	}
+	return _u
+}
+
+// ClearRetiredAt clears the value of the "retired_at" field.
+func (_u *SettingsUpdate) ClearRetiredAt() *SettingsUpdate {
+	_u.mutation.ClearRetiredAt()
+	return _u
+}
+
 // Mutation returns the SettingsMutation object of the builder.
 func (_u *SettingsUpdate) Mutation() *SettingsMutation {
 	return _u.mutation
@@ -227,6 +247,12 @@ func (_u *SettingsUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedPolicySequence(); ok {
 		_spec.AddField(settings.FieldPolicySequence, field.TypeUint64, value)
+	}
+	if value, ok := _u.mutation.RetiredAt(); ok {
+		_spec.SetField(settings.FieldRetiredAt, field.TypeTime, value)
+	}
+	if _u.mutation.RetiredAtCleared() {
+		_spec.ClearField(settings.FieldRetiredAt, field.TypeTime)
 	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -371,6 +397,26 @@ func (_u *SettingsUpdateOne) AddPolicySequence(v int64) *SettingsUpdateOne {
 	return _u
 }
 
+// SetRetiredAt sets the "retired_at" field.
+func (_u *SettingsUpdateOne) SetRetiredAt(v time.Time) *SettingsUpdateOne {
+	_u.mutation.SetRetiredAt(v)
+	return _u
+}
+
+// SetNillableRetiredAt sets the "retired_at" field if the given value is not nil.
+func (_u *SettingsUpdateOne) SetNillableRetiredAt(v *time.Time) *SettingsUpdateOne {
+	if v != nil {
+		_u.SetRetiredAt(*v)
+	}
+	return _u
+}
+
+// ClearRetiredAt clears the value of the "retired_at" field.
+func (_u *SettingsUpdateOne) ClearRetiredAt() *SettingsUpdateOne {
+	_u.mutation.ClearRetiredAt()
+	return _u
+}
+
 // Mutation returns the SettingsMutation object of the builder.
 func (_u *SettingsUpdateOne) Mutation() *SettingsMutation {
 	return _u.mutation
@@ -477,6 +523,12 @@ func (_u *SettingsUpdateOne) sqlSave(ctx context.Context) (_node *Settings, err 
 	}
 	if value, ok := _u.mutation.AddedPolicySequence(); ok {
 		_spec.AddField(settings.FieldPolicySequence, field.TypeUint64, value)
+	}
+	if value, ok := _u.mutation.RetiredAt(); ok {
+		_spec.SetField(settings.FieldRetiredAt, field.TypeTime, value)
+	}
+	if _u.mutation.RetiredAtCleared() {
+		_spec.ClearField(settings.FieldRetiredAt, field.TypeTime)
 	}
 	_node = &Settings{config: _u.config}
 	_spec.Assign = _node.assignValues

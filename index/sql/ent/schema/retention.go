@@ -26,6 +26,8 @@ func (Settings) Fields() []ent.Field {
 		field.Int("trash_days").Default(14),
 		// the sequence of the last policy object the store wrote
 		field.Uint64("policy_sequence").Default(0),
+		// the now of the last retirement run
+		field.Time("retired_at").Optional().Nillable(),
 	}
 }
 

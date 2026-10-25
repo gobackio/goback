@@ -250,6 +250,43 @@ func TestRetireAgesOutASetThatStoppedCommitting(t *testing.T) {
 	require.Nil(t, f.commitRow(b).TombstonedAt, "keep-last holds the newest")
 }
 
+func TestARetirementFarPastTheLastRunRetiresNothing(t *testing.T) {
+	f := newFixture(t)
+
+	a := f.commit("world", f.tree(f.file("a.txt", "one")), false)
+	require.NoError(t, f.x.SetPolicy(f.ctx, "world", &retention.Policy{KeepLast: 1, Brackets: []retention.Bracket{{Period: retention.Daily, Count: 2}}}))
+	f.advance(24 * time.Hour)
+	f.commit("world", f.tree(f.file("a.txt", "two")), false)
+
+	n, err := f.x.Retire(f.ctx, f.clock)
+	require.NoError(t, err)
+	require.Zero(t, n)
+
+	ahead := f.clock.Add(40 * 24 * time.Hour)
+	n, err = f.x.Retire(f.ctx, ahead)
+	require.NoError(t, err)
+	require.Zero(t, n)
+	require.Nil(t, f.commitRow(a).TombstonedAt)
+
+	n, err = f.x.Retire(f.ctx, ahead.Add(time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "the next run goes on from the one before")
+}
+
+func TestARetirementFarPastASetsNewestCommitLeavesTheSetAsItIs(t *testing.T) {
+	f := newFixture(t)
+
+	a := f.commit("world", f.tree(f.file("a.txt", "one")), false)
+	require.NoError(t, f.x.SetPolicy(f.ctx, "world", &retention.Policy{KeepLast: 1, Brackets: []retention.Bracket{{Period: retention.Daily, Count: 2}}}))
+	f.advance(24 * time.Hour)
+	f.commit("world", f.tree(f.file("a.txt", "two")), false)
+
+	n, err := f.x.Retire(f.ctx, f.clock.Add(401*24*time.Hour))
+	require.NoError(t, err)
+	require.Zero(t, n)
+	require.Nil(t, f.commitRow(a).TombstonedAt)
+}
+
 func TestRetireMarksRowsOnlyAfterFlush(t *testing.T) {
 	f := newFixture(t)
 

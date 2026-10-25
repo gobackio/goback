@@ -106,6 +106,20 @@ func (_c *SettingsCreate) SetNillablePolicySequence(v *uint64) *SettingsCreate {
 	return _c
 }
 
+// SetRetiredAt sets the "retired_at" field.
+func (_c *SettingsCreate) SetRetiredAt(v time.Time) *SettingsCreate {
+	_c.mutation.SetRetiredAt(v)
+	return _c
+}
+
+// SetNillableRetiredAt sets the "retired_at" field if the given value is not nil.
+func (_c *SettingsCreate) SetNillableRetiredAt(v *time.Time) *SettingsCreate {
+	if v != nil {
+		_c.SetRetiredAt(*v)
+	}
+	return _c
+}
+
 // SetID sets the "id" field.
 func (_c *SettingsCreate) SetID(v int) *SettingsCreate {
 	_c.mutation.SetID(v)
@@ -228,6 +242,10 @@ func (_c *SettingsCreate) createSpec() (*Settings, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.PolicySequence(); ok {
 		_spec.SetField(settings.FieldPolicySequence, field.TypeUint64, value)
 		_node.PolicySequence = value
+	}
+	if value, ok := _c.mutation.RetiredAt(); ok {
+		_spec.SetField(settings.FieldRetiredAt, field.TypeTime, value)
+		_node.RetiredAt = &value
 	}
 	return _node, _spec
 }
@@ -386,6 +404,24 @@ func (u *SettingsUpsert) UpdatePolicySequence() *SettingsUpsert {
 // AddPolicySequence adds v to the "policy_sequence" field.
 func (u *SettingsUpsert) AddPolicySequence(v uint64) *SettingsUpsert {
 	u.Add(settings.FieldPolicySequence, v)
+	return u
+}
+
+// SetRetiredAt sets the "retired_at" field.
+func (u *SettingsUpsert) SetRetiredAt(v time.Time) *SettingsUpsert {
+	u.Set(settings.FieldRetiredAt, v)
+	return u
+}
+
+// UpdateRetiredAt sets the "retired_at" field to the value that was provided on create.
+func (u *SettingsUpsert) UpdateRetiredAt() *SettingsUpsert {
+	u.SetExcluded(settings.FieldRetiredAt)
+	return u
+}
+
+// ClearRetiredAt clears the value of the "retired_at" field.
+func (u *SettingsUpsert) ClearRetiredAt() *SettingsUpsert {
+	u.SetNull(settings.FieldRetiredAt)
 	return u
 }
 
@@ -560,6 +596,27 @@ func (u *SettingsUpsertOne) AddPolicySequence(v uint64) *SettingsUpsertOne {
 func (u *SettingsUpsertOne) UpdatePolicySequence() *SettingsUpsertOne {
 	return u.Update(func(s *SettingsUpsert) {
 		s.UpdatePolicySequence()
+	})
+}
+
+// SetRetiredAt sets the "retired_at" field.
+func (u *SettingsUpsertOne) SetRetiredAt(v time.Time) *SettingsUpsertOne {
+	return u.Update(func(s *SettingsUpsert) {
+		s.SetRetiredAt(v)
+	})
+}
+
+// UpdateRetiredAt sets the "retired_at" field to the value that was provided on create.
+func (u *SettingsUpsertOne) UpdateRetiredAt() *SettingsUpsertOne {
+	return u.Update(func(s *SettingsUpsert) {
+		s.UpdateRetiredAt()
+	})
+}
+
+// ClearRetiredAt clears the value of the "retired_at" field.
+func (u *SettingsUpsertOne) ClearRetiredAt() *SettingsUpsertOne {
+	return u.Update(func(s *SettingsUpsert) {
+		s.ClearRetiredAt()
 	})
 }
 
@@ -900,6 +957,27 @@ func (u *SettingsUpsertBulk) AddPolicySequence(v uint64) *SettingsUpsertBulk {
 func (u *SettingsUpsertBulk) UpdatePolicySequence() *SettingsUpsertBulk {
 	return u.Update(func(s *SettingsUpsert) {
 		s.UpdatePolicySequence()
+	})
+}
+
+// SetRetiredAt sets the "retired_at" field.
+func (u *SettingsUpsertBulk) SetRetiredAt(v time.Time) *SettingsUpsertBulk {
+	return u.Update(func(s *SettingsUpsert) {
+		s.SetRetiredAt(v)
+	})
+}
+
+// UpdateRetiredAt sets the "retired_at" field to the value that was provided on create.
+func (u *SettingsUpsertBulk) UpdateRetiredAt() *SettingsUpsertBulk {
+	return u.Update(func(s *SettingsUpsert) {
+		s.UpdateRetiredAt()
+	})
+}
+
+// ClearRetiredAt clears the value of the "retired_at" field.
+func (u *SettingsUpsertBulk) ClearRetiredAt() *SettingsUpsertBulk {
+	return u.Update(func(s *SettingsUpsert) {
+		s.ClearRetiredAt()
 	})
 }
 

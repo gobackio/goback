@@ -29,7 +29,9 @@ type Settings struct {
 	TrashDays int `json:"trash_days,omitempty"`
 	// PolicySequence holds the value of the "policy_sequence" field.
 	PolicySequence uint64 `json:"policy_sequence,omitempty"`
-	selectValues   sql.SelectValues
+	// RetiredAt holds the value of the "retired_at" field.
+	RetiredAt    *time.Time `json:"retired_at,omitempty"`
+	selectValues sql.SelectValues
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -41,7 +43,7 @@ func (*Settings) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullInt64)
 		case settings.FieldPolicy, settings.FieldRetentionPolicy:
 			values[i] = new(sql.NullString)
-		case settings.FieldKeyAcknowledgedAt:
+		case settings.FieldKeyAcknowledgedAt, settings.FieldRetiredAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -103,6 +105,13 @@ func (_m *Settings) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.PolicySequence = uint64(value.Int64)
 			}
+		case settings.FieldRetiredAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field retired_at", values[i])
+			} else if value.Valid {
+				_m.RetiredAt = new(time.Time)
+				*_m.RetiredAt = value.Time
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -162,6 +171,11 @@ func (_m *Settings) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("policy_sequence=")
 	builder.WriteString(fmt.Sprintf("%v", _m.PolicySequence))
+	builder.WriteString(", ")
+	if v := _m.RetiredAt; v != nil {
+		builder.WriteString("retired_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
 	builder.WriteByte(')')
 	return builder.String()
 }
