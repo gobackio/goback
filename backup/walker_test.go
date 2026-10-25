@@ -605,6 +605,34 @@ func TestWalkerCarriesWhatLeftTheDiskWhileCarryAllows(t *testing.T) {
 	require.True(t, after["2"].Ref.Equal(f.tree(first.Commit.Tree)["2"].Ref))
 }
 
+func TestACheckpointKeepsWhatCarryKeeps(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.write("a", []byte("archived"))
+	f.write("m/file.txt", []byte("m"))
+	f.write("z/file.txt", []byte("z"))
+	first := f.run()
+
+	require.NoError(t, os.Remove(filepath.Join(f.root, "a")))
+	f.write("m/file.txt", []byte("m, changed"))
+	f.write("z/file.txt", []byte("z, changed"))
+	f.walker.Carry = func(name string) bool { return name == "a" }
+	f.walker.CheckpointInterval = time.Nanosecond
+	f.index.afterCommit = func(*proto.Commit) { f.index.fail(errors.New("the index is gone")) }
+
+	_, err := f.walker.Run(context.Background())
+	require.Error(t, err)
+
+	latest, err := f.index.LatestCommit(context.Background(), "test")
+	require.NoError(t, err)
+	obj, err := f.store.Get(context.Background(), latest)
+	require.NoError(t, err)
+	require.True(t, obj.GetCommit().Partial)
+
+	nodes := f.tree(obj.GetCommit().Tree)
+	require.Contains(t, nodes, "a")
+	require.True(t, nodes["a"].Ref.Equal(f.tree(first.Commit.Tree)["a"].Ref))
+}
+
 func TestWalkerPutsRootInSubdirAndCarriesTheOtherEntries(t *testing.T) {
 	f := newWalkerFixture(t)
 	f.write("1", []byte("one"))

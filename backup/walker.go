@@ -833,6 +833,22 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, listed os.FileInf
 		baseByName[string(node.Stat.Name)] = node
 	}
 
+	// carried are the base's root entries gone from the disk that Carry keeps
+	var carried map[string]bool
+	if root && w.Carry != nil {
+		listed := make(map[string]bool, len(entries))
+		for _, entry := range entries {
+			listed[entry.name] = true
+		}
+
+		carried = map[string]bool{}
+		for _, node := range base {
+			if name := string(node.Stat.Name); !listed[name] && w.Carry(name) {
+				carried[name] = true
+			}
+		}
+	}
+
 	results := make([]*proto.TreeNode, len(entries))
 	changed := false
 	group, groupCtx, stop := newGroup(ctx)
@@ -1024,7 +1040,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, listed os.FileInf
 				return nil, false, err
 			}
 
-			err = w.checkpoint(ctx, results[:i+1], base, []byte(name))
+			err = w.checkpoint(ctx, results[:i+1], base, carried, []byte(name))
 			if err != nil {
 				return nil, false, err
 			}
@@ -1046,16 +1062,9 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, listed os.FileInf
 		}
 	}
 
-	if root && w.Carry != nil {
-		listed := make(map[string]bool, len(entries))
-		for _, entry := range entries {
-			listed[entry.name] = true
-		}
-
-		for _, node := range base {
-			if name := string(node.Stat.Name); !listed[name] && w.Carry(name) {
-				nodes = append(nodes, node)
-			}
+	for _, node := range base {
+		if carried[string(node.Stat.Name)] {
+			nodes = append(nodes, node)
 		}
 	}
 
@@ -1562,9 +1571,9 @@ func (w *Walker) checkpointDue() bool {
 }
 
 // checkpoint writes a partial commit from the finished root entries plus the
-// base's nodes for the rest. A commit ends its session, so with Sessions
-// the rest of the run goes on in a new one.
-func (w *Walker) checkpoint(ctx context.Context, done []*proto.TreeNode, base []*proto.TreeNode, lastName []byte) error {
+// base's nodes for the rest and those carried, by name. A commit ends its
+// session, so with Sessions the rest of the run goes on in a new one.
+func (w *Walker) checkpoint(ctx context.Context, done []*proto.TreeNode, base []*proto.TreeNode, carried map[string]bool, lastName []byte) error {
 	nodes := make([]*proto.TreeNode, 0, len(done)+len(base))
 	for _, node := range done {
 		if node != nil {
@@ -1573,7 +1582,7 @@ func (w *Walker) checkpoint(ctx context.Context, done []*proto.TreeNode, base []
 	}
 
 	for _, node := range base {
-		if bytes.Compare(node.Stat.Name, lastName) > 0 {
+		if bytes.Compare(node.Stat.Name, lastName) > 0 || carried[string(node.Stat.Name)] {
 			nodes = append(nodes, node)
 		}
 	}
