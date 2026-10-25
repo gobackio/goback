@@ -25,6 +25,18 @@ func isSparse(info os.FileInfo) bool {
 	return false
 }
 
+// markSparse marks file sparse when it is a local file, so the ranges a
+// restore leaves unwritten take no space.
+func markSparse(file any) {
+	local, ok := file.(interface{ Fd() uintptr })
+	if !ok {
+		return
+	}
+
+	var returned uint32
+	_ = windows.DeviceIoControl(windows.Handle(local.Fd()), windows.FSCTL_SET_SPARSE, nil, 0, nil, 0, &returned, nil)
+}
+
 // allocatedRange is a FILE_ALLOCATED_RANGE_BUFFER.
 type allocatedRange struct {
 	Offset int64

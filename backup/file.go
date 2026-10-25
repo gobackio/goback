@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -216,6 +217,31 @@ func (bfw *fileWriter) split(length int) {
 	bfw.upload(ref, blob, length)
 }
 
+// hole records the next n bytes of the file as a run of zeros it left
+// unallocated: a hole part, which ends the chunk before it. Parts count a
+// hole's length in Length as well, as every reader of them does.
+func (bfw *fileWriter) hole(n int64) {
+	if n <= 0 {
+		return
+	}
+
+	if bfw.blobSize > 0 {
+		bfw.split(bfw.blobSize)
+		bfw.blobSize = 0
+	}
+
+	bfw.chunker.Reset()
+
+	if last := len(bfw.parts) - 1; last >= 0 && bfw.parts[last].Hole > 0 {
+		bfw.parts[last].Length += uint64(n)
+		bfw.parts[last].Hole += uint64(n)
+	} else {
+		bfw.parts = append(bfw.parts, &proto.FilePart{Offset: uint64(bfw.offset), Length: uint64(n), Hole: uint64(n)})
+	}
+
+	bfw.offset += n
+}
+
 // seal turns a chunk into the blob object that is stored for it, plain or
 // sealed under the store key, and returns its ref.
 func (bfw *fileWriter) seal(chunk []byte) (*proto.Object, *proto.Ref) {
@@ -288,6 +314,10 @@ func (bfw *fileWriter) settle() error {
 func (bfw *fileWriter) assumedRefs(parts []*proto.FilePart) []*proto.Ref {
 	var refs []*proto.Ref
 	for _, part := range parts {
+		if part.Ref == nil {
+			continue
+		}
+
 		if _, ok := bfw.assumed[string(part.Ref.Hash)]; ok {
 			refs = append(refs, part.Ref)
 		}
@@ -493,7 +523,9 @@ func PutParts(ctx context.Context, store ObjectStore, key *storekey.Key, parts [
 // putParts stores the file object over the parts, as a tree of sub-file
 // objects when there are too many.
 func (bfw *fileWriter) putParts() error {
-	if uint64(len(bfw.parts)) <= splitMax {
+	// a file with a hole is always split: a reader that does not know
+	// holes finds its parts fall short of the split lengths and refuses it
+	if uint64(len(bfw.parts)) <= splitMax && !holed(bfw.parts) {
 		file := bfw.object(&proto.File{Parts: bfw.parts})
 		bfw.ref = file.Ref()
 
@@ -559,7 +591,7 @@ var (
 func rebased(parts []*proto.FilePart, delta int64) []*proto.FilePart {
 	out := make([]*proto.FilePart, len(parts))
 	for i, part := range parts {
-		out[i] = &proto.FilePart{Offset: uint64(int64(part.Offset) + delta), Length: part.Length, Ref: part.Ref}
+		out[i] = &proto.FilePart{Offset: uint64(int64(part.Offset) + delta), Length: part.Size(), Ref: part.Ref, Hole: part.Hole}
 	}
 
 	return out
@@ -617,11 +649,26 @@ func splitBoundary(ref *proto.Ref) bool {
 
 var _ io.WriteCloser = new(fileWriter)
 
-// FileParts returns a file's parts with its splits flattened, in order;
-// an inline file has none.
+// holed reports whether parts hold a hole.
+func holed(parts []*proto.FilePart) bool {
+	return slices.ContainsFunc(parts, func(part *proto.FilePart) bool { return part.GetHole() > 0 })
+}
+
+// counted is parts with each hole's length in Length too, as readers count
+// parts; parts without a hole are returned as they are.
+func counted(parts []*proto.FilePart) []*proto.FilePart {
+	if !holed(parts) {
+		return parts
+	}
+
+	return rebased(parts, 0)
+}
+
+// FileParts returns a file's parts with its splits flattened, in order,
+// each hole's length counted in Length; an inline file has none.
 func FileParts(ctx context.Context, store Getter, file *proto.File) ([]*proto.FilePart, error) {
 	if len(file.GetSplits()) == 0 {
-		return file.GetParts(), nil
+		return counted(file.GetParts()), nil
 	}
 
 	subFiles, err := loadSplits(ctx, store, file.GetSplits())
@@ -873,8 +920,13 @@ func (bfr *fileReader) fileRef() []byte {
 }
 
 // getPart fetches one part's blob and fails on a missing or mistyped object.
-// Inline content is a single part without a ref.
+// Inline content is a single part without a ref; a hole has no
+// blob.
 func (bfr *fileReader) getPart(ctx context.Context, index int, part *proto.FilePart) (*proto.Blob, error) {
+	if part.Hole > 0 {
+		return nil, nil
+	}
+
 	if part.Ref == nil {
 		return &proto.Blob{Data: bfr.inline}, nil
 	}
@@ -969,7 +1021,7 @@ func contiguous(parts []*proto.FilePart) (uint64, bool) {
 			return end, false
 		}
 
-		end += part.GetLength()
+		end += part.Size()
 	}
 
 	return end, true
@@ -1007,7 +1059,7 @@ func (bfr *fileReader) loadParts(ctx context.Context) ([]*proto.FilePart, error)
 	case len(bfr.file.Splits) > 0:
 		return FileParts(ctx, bfr.store, bfr.file)
 	case bfr.file.Parts != nil:
-		return bfr.file.Parts, nil
+		return counted(bfr.file.Parts), nil
 	default:
 		return []*proto.FilePart{}, nil
 	}
@@ -1050,11 +1102,34 @@ func (bfr *fileReader) WriteTo(writer io.Writer) (int64, error) {
 			return written, err
 		}
 
-		data := got.blob.Data[bfr.offset-int64(fileParts[i].Offset):]
+		var n int64
 
-		n, err := writer.Write(data)
-		written += int64(n)
-		bfr.offset += int64(n)
+		if part := fileParts[i]; part.Hole > 0 {
+			n, err = writeZeros(writer, int64(part.Offset+part.Length)-bfr.offset)
+		} else {
+			var m int
+			m, err = writer.Write(got.blob.Data[bfr.offset-int64(part.Offset):])
+			n = int64(m)
+		}
+
+		written += n
+		bfr.offset += n
+
+		if err != nil {
+			return written, err
+		}
+	}
+
+	return written, nil
+}
+
+// writeZeros writes n zero bytes to w, a buffer at a time.
+func writeZeros(w io.Writer, n int64) (int64, error) {
+	var written int64
+
+	for written < n {
+		m, err := w.Write(zeroes[:min(int64(len(zeroes)), n-written)])
+		written += int64(m)
 
 		if err != nil {
 			return written, err
@@ -1094,16 +1169,20 @@ func (bfr *fileReader) Read(b []byte) (n int, err error) {
 		n = int(bytesRemaining)
 	}
 
-	if bfr.blob == nil {
-		blob, err := bfr.getPart(bfr.ctx, bfr.partIndex, part)
-		if err != nil {
-			return 0, err
+	if part.Hole > 0 {
+		clear(b[:n])
+	} else {
+		if bfr.blob == nil {
+			blob, err := bfr.getPart(bfr.ctx, bfr.partIndex, part)
+			if err != nil {
+				return 0, err
+			}
+
+			bfr.blob = proto.NewObject(blob)
 		}
 
-		bfr.blob = proto.NewObject(blob)
+		copy(b, bfr.blob.GetBlob().Data[relativeOffset:relativeOffset+int64(n)])
 	}
-
-	copy(b, bfr.blob.GetBlob().Data[relativeOffset:relativeOffset+int64(n)])
 
 	if relativeOffset+int64(n) == int64(part.Length) {
 		bfr.blob = nil

@@ -513,10 +513,17 @@ func (x *File) GetSplitDepth() uint32 {
 }
 
 type FilePart struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Offset        uint64                 `protobuf:"varint,1,opt,name=offset,proto3" json:"offset,omitempty"`
-	Length        uint64                 `protobuf:"varint,2,opt,name=length,proto3" json:"length,omitempty"`
-	Ref           *Ref                   `protobuf:"bytes,3,opt,name=ref,proto3" json:"ref,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Offset uint64                 `protobuf:"varint,1,opt,name=offset,proto3" json:"offset,omitempty"`
+	// absent in a hole
+	Length uint64 `protobuf:"varint,2,opt,name=length,proto3" json:"length,omitempty"`
+	// absent in a hole
+	Ref *Ref `protobuf:"bytes,3,opt,name=ref,proto3" json:"ref,omitempty"`
+	// a hole: this many zero bytes the file left unallocated, stored
+	// without data, which a restore leaves a hole. A file holding one is
+	// stored split, so its lengths do not add up for a reader that does not
+	// know holes, and it refuses the file.
+	Hole          uint64 `protobuf:"varint,4,opt,name=hole,proto3" json:"hole,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -572,6 +579,13 @@ func (x *FilePart) GetRef() *Ref {
 	return nil
 }
 
+func (x *FilePart) GetHole() uint64 {
+	if x != nil {
+		return x.Hole
+	}
+	return 0
+}
+
 var File_file_proto protoreflect.FileDescriptor
 
 const file_file_proto_rawDesc = "" +
@@ -621,12 +635,13 @@ const file_file_proto_rawDesc = "" +
 	"\x11inline_encryption\x18\x06 \x01(\x0e2\x11.proto.EncryptionR\x10inlineEncryption\x12#\n" +
 	"\rsplit_lengths\x18\a \x03(\x04R\fsplitLengths\x12\x1f\n" +
 	"\vsplit_depth\x18\b \x01(\rR\n" +
-	"splitDepthJ\x04\b\x05\x10\x06R\x04keys\"X\n" +
+	"splitDepthJ\x04\b\x05\x10\x06R\x04keys\"l\n" +
 	"\bFilePart\x12\x16\n" +
 	"\x06offset\x18\x01 \x01(\x04R\x06offset\x12\x16\n" +
 	"\x06length\x18\x02 \x01(\x04R\x06length\x12\x1c\n" +
 	"\x03ref\x18\x03 \x01(\v2\n" +
-	".proto.RefR\x03ref*?\n" +
+	".proto.RefR\x03ref\x12\x12\n" +
+	"\x04hole\x18\x04 \x01(\x04R\x04hole*?\n" +
 	"\bNodeType\x12\r\n" +
 	"\tNODE_FILE\x10\x00\x12\x12\n" +
 	"\x0eNODE_DIRECTORY\x10\x01\x12\x10\n" +

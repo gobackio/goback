@@ -299,6 +299,14 @@ func (r *Restorer) countBytes(ctx context.Context, counter *int64, source string
 	}
 }
 
+// countSparse hands the length of a hole, which no source sends, to
+// what WithWritten set.
+func (r *Restorer) countSparse(ctx context.Context, n int64) {
+	if written, ok := ctx.Value(writtenKey{}).(func(int64)); ok {
+		written(n)
+	}
+}
+
 type writtenKey struct{}
 
 // WithWritten makes a RestoreFile called with the returned context hand
@@ -504,6 +512,10 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 	tmp, err := openPartial(ctx, random, partial)
 	if err != nil {
 		return 0, err
+	}
+
+	if holed(reader.parts) {
+		markSparse(tmp)
 	}
 
 	held := make([]bool, len(reader.parts))
@@ -797,6 +809,11 @@ func (r *Restorer) verifyParts(file io.ReaderAt, size int64, reader *fileReader)
 			continue
 		}
 
+		if part.Hole > 0 {
+			matched[i] = zeroAt(file, int64(part.Offset), int64(part.Length))
+			continue
+		}
+
 		buf := make([]byte, part.Length)
 
 		_, err := file.ReadAt(buf, int64(part.Offset))
@@ -823,6 +840,14 @@ func (r *Restorer) verifyWritten(file io.ReaderAt, reader *fileReader, missing [
 			continue
 		}
 
+		if part.Hole > 0 {
+			if !zeroAt(file, int64(part.Offset), int64(part.Length)) {
+				return errors.Errorf("hole %d at offset %d is not all zeros after writing", i, part.Offset)
+			}
+
+			continue
+		}
+
 		buf := make([]byte, part.Length)
 
 		if _, err := file.ReadAt(buf, int64(part.Offset)); err != nil {
@@ -843,6 +868,10 @@ func (r *Restorer) matches(reader *fileReader, i int, chunk []byte) bool {
 	part := reader.parts[i]
 	if uint64(len(chunk)) != part.Length {
 		return false
+	}
+
+	if part.Hole > 0 {
+		return allZero(chunk)
 	}
 
 	if part.Ref == nil {
@@ -884,6 +913,19 @@ func (r *Restorer) assemble(ctx context.Context, dst target, source io.ReaderAt,
 
 	for i, part := range reader.parts {
 		offset := int64(part.Offset)
+
+		if part.Hole > 0 {
+			if !held[i] && !dst.empty {
+				partial, _ := dst.WriterAt.(io.ReaderAt)
+				if err := zeroRange(dst, partial, offset, int64(part.Length)); err != nil {
+					return nil, err
+				}
+			}
+
+			r.countSparse(ctx, int64(part.Length))
+
+			continue
+		}
 
 		if part.Ref == nil {
 			if err := r.put(dst, reader, i, reader.inline); err != nil {

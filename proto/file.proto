@@ -123,6 +123,13 @@ message File {
 
 message FilePart {
 	uint64 offset = 1;
+	// absent in a hole
 	uint64 length = 2;
+	// absent in a hole
 	Ref ref = 3;
+	// a hole: this many zero bytes the file left unallocated, stored
+	// without data, which a restore leaves a hole. A file holding one is
+	// stored split, so its lengths do not add up for a reader that does not
+	// know holes, and it refuses the file.
+	uint64 hole = 4;
 }

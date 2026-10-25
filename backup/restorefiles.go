@@ -155,6 +155,8 @@ type member struct {
 	fresh bool
 }
 
+// landed is n bytes of a file counted under counter, from source; a
+// hole's have no counter.
 type landed struct {
 	counter *int64
 	source  string
@@ -337,6 +339,8 @@ func (g *group) plan(writes *errgroup.Group, m *member, obj *proto.Object) error
 
 	for i, part := range reader.parts {
 		switch {
+		case part.Hole > 0:
+			m.landed = append(m.landed, landed{n: int64(part.Length)})
 		case part.Ref == nil:
 			copy(m.buf, reader.inline)
 			m.landed = append(m.landed, landed{&r.stats.BytesFromStore, "store", int64(len(reader.inline))})
@@ -480,6 +484,11 @@ func (g *group) finish(m *member, outcome Outcome, err error) error {
 
 	if err == nil {
 		for _, l := range counted {
+			if l.counter == nil {
+				g.r.countSparse(m.ctx, l.n)
+				continue
+			}
+
 			g.r.countBytes(m.ctx, l.counter, l.source, l.n)
 		}
 
@@ -532,6 +541,10 @@ func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.File
 		return err
 	}
 
+	if holed(reader.parts) {
+		markSparse(tmp)
+	}
+
 	if err := writeSparse(tmp, reader, buf); err != nil {
 		_ = tmp.Close()
 		return err
@@ -549,7 +562,7 @@ func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.File
 // writeSparse writes buf into tmp, leaving a hole for each part that is
 // all zeroes when tmp is empty.
 func writeSparse(tmp RandomFile, reader *fileReader, buf []byte) error {
-	if info, err := tmp.Stat(); err != nil || info.Size() > 0 || len(reader.parts) == 0 || reader.parts[0].Ref == nil {
+	if info, err := tmp.Stat(); err != nil || info.Size() > 0 || len(reader.parts) == 0 || len(reader.inline) > 0 {
 		_, err := tmp.WriteAt(buf, 0)
 		return err
 	}

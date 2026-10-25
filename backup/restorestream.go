@@ -76,12 +76,16 @@ type partStream struct {
 	ctx     context.Context
 	ahead   *prefetch[streamed]
 	pending []byte
+	// zeros is how many zero bytes come before pending
+	zeros int64
 
 	mtx     sync.Mutex
 	missing []int
 }
 
 type streamed struct {
+	// zeros is the length of a hole, which has no data
+	zeros   int64
 	data    []byte
 	counter *int64
 	source  string
@@ -98,6 +102,10 @@ func (r *Restorer) newPartStream(ctx context.Context, reader *fileReader) *partS
 func (s *partStream) fetch(ctx context.Context, i int) streamed {
 	r, reader := s.r, s.reader
 	part := reader.parts[i]
+
+	if part.Hole > 0 {
+		return streamed{zeros: int64(part.Length)}
+	}
 
 	if part.Ref == nil {
 		return streamed{data: reader.inline, counter: &r.stats.BytesFromStore, source: "store"}
@@ -132,33 +140,45 @@ func (s *partStream) fetch(ctx context.Context, i int) streamed {
 	return streamed{data: data, counter: &r.stats.BytesFromStore, source: "store"}
 }
 
-// take waits for the next part and counts it as landed.
-func (s *partStream) take() ([]byte, error) {
+// take waits for the next part, counts it as landed and makes it what
+// the stream hands over next.
+func (s *partStream) take() error {
 	got, err := s.ahead.take()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if got.err != nil {
-		return nil, got.err
+		return got.err
 	}
 
 	if got.counter != nil {
 		s.r.countBytes(s.ctx, got.counter, got.source, int64(len(got.data)))
 	}
 
-	return got.data, nil
+	if got.zeros > 0 {
+		s.r.countSparse(s.ctx, got.zeros)
+	}
+
+	s.zeros, s.pending = got.zeros, got.data
+
+	return nil
 }
 
 // Read implements io.Reader.
 func (s *partStream) Read(b []byte) (int, error) {
-	for len(s.pending) == 0 {
-		data, err := s.take()
-		if err != nil {
+	for s.zeros == 0 && len(s.pending) == 0 {
+		if err := s.take(); err != nil {
 			return 0, err
 		}
+	}
 
-		s.pending = data
+	if s.zeros > 0 {
+		n := int(min(int64(len(b)), s.zeros))
+		clear(b[:n])
+		s.zeros -= int64(n)
+
+		return n, nil
 	}
 
 	n := copy(b, s.pending)
@@ -172,13 +192,8 @@ func (s *partStream) WriteTo(w io.Writer) (int64, error) {
 	var written int64
 
 	for {
-		data := s.pending
-		s.pending = nil
-
-		if len(data) == 0 {
-			var err error
-
-			data, err = s.take()
+		if s.zeros == 0 && len(s.pending) == 0 {
+			err := s.take()
 			if err == io.EOF {
 				return written, nil
 			}
@@ -188,8 +203,16 @@ func (s *partStream) WriteTo(w io.Writer) (int64, error) {
 			}
 		}
 
-		n, err := w.Write(data)
-		written += int64(n)
+		n, err := writeZeros(w, s.zeros)
+		written += n
+		s.zeros -= n
+
+		if err == nil {
+			var m int
+			m, err = w.Write(s.pending)
+			written += int64(m)
+			s.pending = s.pending[m:]
+		}
 
 		if err != nil {
 			return written, err

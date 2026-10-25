@@ -1491,7 +1491,7 @@ func (w *Walker) readFile(ctx context.Context, path, rel string, parent, listed 
 		writer.window = w.window
 	}
 
-	read := &readErr{r: contentReader(file, info)}
+	read := &readErr{r: contentReader(file, info, writer.hole)}
 	_, err = io.Copy(writer, read)
 	if err != nil {
 		if read.err != nil {
@@ -1813,7 +1813,7 @@ func HashFileFS(ctx context.Context, fsys FS, path string, key *storekey.Key) (*
 func hashOpened(ctx context.Context, file File, info os.FileInfo, key *storekey.Key) (*proto.Ref, error) {
 	writer := newFileWriter(ctx, discardStore{}, key, info.Size())
 
-	if _, err := io.Copy(writer, contentReader(file, info)); err != nil {
+	if _, err := io.Copy(writer, contentReader(file, info, writer.hole)); err != nil {
 		return nil, err
 	}
 

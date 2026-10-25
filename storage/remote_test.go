@@ -400,6 +400,41 @@ func TestRemoteReadFileStreamsParts(t *testing.T) {
 	require.ErrorIs(t, err, backup.ErrNotImplemented)
 }
 
+func TestAHoleIsStoredAndRestoredWithoutData(t *testing.T) {
+	_, dial := startServer(t)
+	ctx := context.Background()
+	client := dial("node-1")
+
+	blob := proto.NewObject(&proto.Blob{Data: []byte("data")})
+	require.NoError(t, client.Put(ctx, blob))
+
+	const hole = 1 << 40
+	file := proto.NewObject(&proto.File{Parts: []*proto.FilePart{
+		{Offset: 0, Length: 4, Ref: blob.Ref()},
+		{Offset: 4, Hole: hole},
+		{Offset: 4 + hole, Length: 4, Ref: blob.Ref()},
+	}})
+	require.NoError(t, client.Put(ctx, file))
+
+	var got []int
+	require.NoError(t, client.ReadParts(ctx, file.Ref(), nil, func(i int, _ *proto.Object) error {
+		got = append(got, i)
+		return nil
+	}))
+	require.Equal(t, []int{0, 2}, got)
+
+	split, err := backup.PutParts(ctx, client, nil, []*proto.FilePart{
+		{Offset: 0, Length: 4, Ref: blob.Ref()},
+		{Offset: 4, Hole: 100},
+	})
+	require.NoError(t, err)
+
+	stat := &proto.FileInfo{Size: 104, Mode: 0o644}
+	content, err := (&backup.Restorer{Store: client}).ReadFile(ctx, stat, split)
+	require.NoError(t, err)
+	require.Equal(t, append([]byte("data"), make([]byte, 100)...), content)
+}
+
 func TestRemoteReadFilesStreamsObjectsThenParts(t *testing.T) {
 	index, dial := startServer(t)
 	ctx := context.Background()

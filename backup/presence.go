@@ -186,7 +186,9 @@ func CollectPresence(ctx context.Context, store ObjectStore, tree *proto.Ref) (*
 	refs := map[string]struct{}{}
 	add := func(parts []*proto.FilePart) {
 		for _, part := range parts {
-			refs[string(part.GetRef().GetHash())] = struct{}{}
+			if part.GetRef() != nil {
+				refs[string(part.Ref.Hash)] = struct{}{}
+			}
 		}
 	}
 

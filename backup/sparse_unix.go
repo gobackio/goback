@@ -19,6 +19,9 @@ func isSparse(info os.FileInfo) bool {
 	return ok && int64(stat.Blocks)*512 < info.Size()
 }
 
+// markSparse does nothing: a range left unwritten is a hole already.
+func markSparse(any) {}
+
 // nextExtent reports whether the file holds a hole or data at off and
 // where that extent ends; data to math.MaxInt64 when the file system
 // cannot say.

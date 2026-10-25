@@ -406,7 +406,7 @@ func (x *Index) lostOf(ctx context.Context, refs [][]byte) ([]*proto.Ref, error)
 
 		var parts []*proto.Ref
 		for _, part := range obj.GetFile().GetParts() {
-			if claim(part.GetRef()) {
+			if part.GetRef() != nil && claim(part.GetRef()) {
 				parts = append(parts, part.GetRef())
 			}
 		}

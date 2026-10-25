@@ -824,6 +824,16 @@ func canonicalTree(t *Tree) ([]byte, error) {
 // InlineLimit is the largest file stored inline in its File object.
 const InlineLimit = 4 << 10
 
+// Size is how many bytes of the file the part covers: the hole's length
+// for a hole, the part's length otherwise.
+func (p *FilePart) Size() uint64 {
+	if p.GetHole() > 0 {
+		return p.Hole
+	}
+
+	return p.GetLength()
+}
+
 func canonicalFile(f *File) ([]byte, error) {
 	if err := noUnknown(f); err != nil {
 		return nil, err
@@ -875,13 +885,23 @@ func canonicalFile(f *File) ([]byte, error) {
 			return nil, invalid("file part %d starts at %d, want %d", i, part.Offset, next)
 		}
 
-		if part.Length == 0 {
+		if part.Size() == 0 {
 			return nil, invalid("file part %d is empty", i)
 		}
 
-		next += part.Length
+		next += part.Size()
 
 		body := appendVarint(nil, 1, part.Offset)
+
+		if part.Hole > 0 {
+			if part.Ref != nil || part.Length != 0 && part.Length != part.Hole {
+				return nil, invalid("file part %d is a hole and has a ref or another length", i)
+			}
+
+			b = appendMessage(b, 1, appendVarint(body, 4, part.Hole))
+			continue
+		}
+
 		body = appendVarint(body, 2, part.Length)
 
 		body, err := appendRef(body, 3, part.Ref)

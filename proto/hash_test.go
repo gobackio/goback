@@ -159,6 +159,9 @@ func TestCanonicalRejects(t *testing.T) {
 		"gap in parts":       NewObject(&File{Parts: []*FilePart{{Offset: 0, Length: 5, Ref: good}, {Offset: 6, Length: 1, Ref: good}}}),
 		"gap in a split":     NewObject(&File{Parts: []*FilePart{{Offset: 100, Length: 5, Ref: good}, {Offset: 106, Length: 1, Ref: good}}}),
 		"empty part":         NewObject(&File{Parts: []*FilePart{{Offset: 0, Length: 0, Ref: good}}}),
+		"hole with a ref":    NewObject(&File{Parts: []*FilePart{{Hole: 5, Ref: good}}}),
+		"hole with a length": NewObject(&File{Parts: []*FilePart{{Hole: 5, Length: 4}}}),
+		"gap after a hole":   NewObject(&File{Parts: []*FilePart{{Hole: 5}, {Offset: 6, Length: 1, Ref: good}}}),
 		"parts and splits":   NewObject(&File{Parts: []*FilePart{{Length: 1, Ref: good}}, Splits: []*Ref{good}}),
 		"inline and parts":   NewObject(&File{Parts: []*FilePart{{Length: 1, Ref: good}}, Inline: []byte("x")}),
 		"inline too large":   NewObject(&File{Inline: make([]byte, InlineLimit+1)}),
@@ -184,6 +187,22 @@ func TestASplitHoldsARunOfItsFilesParts(t *testing.T) {
 
 	split := NewObject(&File{Parts: []*FilePart{{Offset: 100, Length: 5, Ref: good}, {Offset: 105, Length: 1, Ref: good}}})
 	require.NoError(t, split.Validate())
+}
+
+func TestAHoleIsStoredWithoutALengthOrRef(t *testing.T) {
+	good := refOf("good")
+
+	stored := NewObject(&File{Parts: []*FilePart{{Length: 5, Ref: good}, {Offset: 5, Hole: 1 << 44}, {Offset: 5 + 1<<44, Length: 1, Ref: good}}})
+	counted := NewObject(&File{Parts: []*FilePart{{Length: 5, Ref: good}, {Offset: 5, Length: 1 << 44, Hole: 1 << 44}, {Offset: 5 + 1<<44, Length: 1, Ref: good}}})
+	require.NoError(t, stored.Validate())
+	require.True(t, counted.Ref().Equal(stored.Ref()))
+
+	payload, err := counted.Canonical()
+	require.NoError(t, err)
+
+	decoded, err := NewObjectFromPayload(payload, ObjectType_FILE)
+	require.NoError(t, err)
+	require.True(t, pb.Equal(stored, decoded))
 }
 
 func TestCanonicalRejectsUnknownFields(t *testing.T) {

@@ -163,7 +163,9 @@ func References(obj *proto.Object) []*proto.Ref {
 		file := t.File
 		refs := make([]*proto.Ref, 0, len(file.Parts)+len(file.Splits))
 		for _, part := range file.Parts {
-			refs = append(refs, part.Ref)
+			if part.Ref != nil {
+				refs = append(refs, part.Ref)
+			}
 		}
 		return append(refs, file.Splits...)
 	}
