@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
@@ -30,7 +31,15 @@ const (
 	recordRef   = 36
 )
 
-// Cache is a badger-backed backup.StatCache.
+// TTL is how long an entry lasts after it was last stored or matched.
+const TTL = 30 * 24 * time.Hour
+
+// renewAfter is how much of an entry's TTL a match lets pass before it
+// renews it, so a file reused on every run is rewritten at most daily.
+const renewAfter = 24 * time.Hour
+
+// Cache is a badger-backed backup.StatCache. An entry neither stored nor
+// matched within TTL expires.
 type Cache struct {
 	db *badger.DB
 }
@@ -95,6 +104,8 @@ func key(path string) []byte {
 
 // Lookup implements backup.StatCache.
 func (c *Cache) Lookup(path string, info os.FileInfo, ref *proto.Ref) (present bool, matched bool) {
+	var renew bool
+
 	_ = c.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(key(path))
 		if err != nil {
@@ -102,6 +113,7 @@ func (c *Cache) Lookup(path string, info os.FileInfo, ref *proto.Ref) (present b
 		}
 
 		present = true
+		renew = time.Unix(int64(item.ExpiresAt()), 0).Before(time.Now().Add(TTL - renewAfter))
 
 		return item.Value(func(val []byte) error {
 			matched = matches(val, info, ref)
@@ -109,12 +121,16 @@ func (c *Cache) Lookup(path string, info os.FileInfo, ref *proto.Ref) (present b
 		})
 	})
 
+	if matched && renew {
+		_ = c.Store(path, info, ref)
+	}
+
 	return present, matched
 }
 
 // Store implements backup.StatCache.
 func (c *Cache) Store(path string, info os.FileInfo, ref *proto.Ref) error {
 	return c.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(key(path), encode(info, ref))
+		return txn.SetEntry(badger.NewEntry(key(path), encode(info, ref)).WithTTL(TTL))
 	})
 }
