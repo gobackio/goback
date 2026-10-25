@@ -20,8 +20,9 @@ import (
 // OwnerWriteFS, which on the local disk means Unix and root.
 type Owner struct {
 	// Recorded gives each entry the user and group its backup recorded,
-	// looked up by name here. An entry whose user or group has no account
-	// here keeps the restoring user's.
+	// looked up by name here. An entry whose user or group has no name, or
+	// no account here, takes its recorded uid or gid instead, and keeps the
+	// restoring user's where the backup recorded none or 0.
 	Recorded bool
 	// User, unless Recorded, gives every entry to this account and to
 	// Group, or to the user's primary group when Group is empty.
@@ -144,8 +145,9 @@ func newOwners(o Owner, a accounts) (*owners, error) {
 	return res, nil
 }
 
-// of is the uid and gid stat's entry is given; ok is false when its
-// recorded user or group is empty or has no account here.
+// of is the uid and gid stat's entry is given: a recorded name's account
+// here, else the recorded id. ok is false when a name is empty or has no
+// account here and no id but 0 was recorded.
 func (o *owners) of(stat *proto.FileInfo) (uid, gid int, ok bool, err error) {
 	if !o.recorded {
 		return o.uid, o.gid, true, nil
@@ -165,6 +167,15 @@ func (o *owners) of(stat *proto.FileInfo) (uid, gid int, ok bool, err error) {
 	gid, err = o.id(o.groups, string(stat.GetGroup()), o.accounts.lookupGroup)
 	if err != nil {
 		return 0, 0, false, err
+	}
+
+	// a recorded id of 0 is root's or none at all, so it stands in for no name
+	if uid < 0 && stat.GetUid() != 0 {
+		uid = int(stat.GetUid())
+	}
+
+	if gid < 0 && stat.GetGid() != 0 {
+		gid = int(stat.GetGid())
 	}
 
 	return uid, gid, uid >= 0 && gid >= 0, nil

@@ -96,6 +96,15 @@ func OwnerNames(info os.FileInfo) (string, string) {
 	return userName, groupName
 }
 
+func ownerIDs(info os.FileInfo) (uint32, uint32) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0
+	}
+
+	return stat.Uid, stat.Gid
+}
+
 // FileIdentity returns the change time and inode, the signals the stat
 // cache adds on top of mtime and size.
 func FileIdentity(info os.FileInfo) (ctimeNs int64, inode uint64) {

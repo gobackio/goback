@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -106,6 +107,40 @@ func TestARecordedOwnerIsGivenByNameBeforeTheRename(t *testing.T) {
 	require.Len(t, fsys.calls, 1, "a name with no account here is never guessed")
 	require.EqualValues(t, 1, r.Stats().Owned)
 	require.EqualValues(t, 3, r.Stats().OwnersLeftOut)
+}
+
+func TestARecordedOwnerWithoutAnAccountHereTakesItsRecordedIDs(t *testing.T) {
+	store := newMemStore()
+	data := randomData(100, 1)
+	ref := putFile(t, store, nil, data)
+	dir := t.TempDir()
+
+	fsys := &chownFS{}
+	r := &Restorer{Store: store, FS: fsys, Owner: Owner{Recorded: true}, accounts: testAccounts}
+
+	for name, owner := range map[string]struct {
+		user, group string
+		uid, gid    uint32
+	}{
+		"unnamed": {uid: 999, gid: 70},
+		"ghost":   {user: "ghost", group: "staff", uid: 999, gid: 70},
+		"nogroup": {user: "alice", group: "ghosts", uid: 999, gid: 70},
+		"root":    {uid: 0, gid: 70},
+	} {
+		stat := statFor(data)
+		stat.User, stat.Group, stat.Uid, stat.Gid = []byte(owner.user), []byte(owner.group), owner.uid, owner.gid
+
+		_, err := r.RestoreFile(context.Background(), filepath.Join(dir, name), stat, ref)
+		require.NoError(t, err)
+	}
+
+	slices.SortFunc(fsys.calls, func(a, b chowned) int { return strings.Compare(a.path, b.path) })
+	require.Equal(t, []chowned{
+		{PartialPath(filepath.Join(dir, "ghost")), 999, 50},
+		{PartialPath(filepath.Join(dir, "nogroup")), 1001, 70},
+		{PartialPath(filepath.Join(dir, "unnamed")), 999, 70},
+	}, fsys.calls)
+	require.EqualValues(t, 1, r.Stats().OwnersLeftOut, "an id of 0 is no owner without a name")
 }
 
 func TestAnAccountOwnerIsLookedUpOnceUpFront(t *testing.T) {

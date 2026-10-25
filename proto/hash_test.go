@@ -96,6 +96,13 @@ func TestCanonicalGoldenVectors(t *testing.T) {
 			}}),
 			payload: "0ab6010a8f010a016110a4033005400158026003682072220a20dc9c5edb8b2d479e697b4b0b8ab874f32b325138598ce9e7b759eb82921106227a290a017812220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed118047a270a017912220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed180019a8080800912220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed1",
 		},
+		{
+			name: "tree with unix owner ids",
+			object: NewObject(&Tree{Nodes: []*TreeNode{
+				{Stat: &FileInfo{Name: []byte("a"), Mode: 0644, Size: 5, MtimeNs: 1, User: []byte("u"), Uid: 999, Gid: 70}, Ref: part},
+			}}),
+			payload: "0a3a0a140a016110a4031a0175300540019001e70798014612220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed1",
+		},
 	}
 
 	for _, tc := range cases {

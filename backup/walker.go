@@ -1690,6 +1690,9 @@ func (w *Walker) stat(info os.FileInfo, linkTarget string) *proto.FileInfo {
 	user, group := w.fs().Owners(info)
 
 	stat := proto.GetFileInfo(proto.WithDetails(info, user, group, linkTarget))
+	if ids, ok := w.fs().(OwnerIDFS); ok {
+		stat.Uid, stat.Gid = ids.OwnerIDs(info)
+	}
 	recordPlatform(stat, info)
 
 	return stat
@@ -1715,6 +1718,7 @@ func nodeEqual(node, base *proto.TreeNode) bool {
 		bytes.Equal(a.GetName(), b.GetName()) &&
 		bytes.Equal(a.GetUser(), b.GetUser()) &&
 		bytes.Equal(a.GetGroup(), b.GetGroup()) &&
+		a.GetUid() == b.GetUid() && a.GetGid() == b.GetGid() &&
 		bytes.Equal(a.GetLinkTarget(), b.GetLinkTarget()) &&
 		a.GetCtimeNs() == b.GetCtimeNs() &&
 		a.GetBirthtimeNs() == b.GetBirthtimeNs() &&

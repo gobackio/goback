@@ -69,6 +69,10 @@ func OwnerNames(os.FileInfo) (string, string) {
 	return "", ""
 }
 
+func ownerIDs(os.FileInfo) (uint32, uint32) {
+	return 0, 0
+}
+
 // FileIdentity returns the change time and file ID of a file LocalFS
 // listed, the signals the stat cache adds on top of mtime and size; it is
 // 0, 0 for any other FileInfo.

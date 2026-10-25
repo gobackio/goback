@@ -149,7 +149,11 @@ type FileInfo struct {
 	ReparseTag uint32 `protobuf:"varint,16,opt,name=reparse_tag,json=reparseTag,proto3" json:"reparse_tag,omitempty"`
 	// the entry's content, or a directory's listing, is gone from the store;
 	// its refs are cleared and a restore leaves it out
-	Lost          bool `protobuf:"varint,17,opt,name=lost,proto3" json:"lost,omitempty"`
+	Lost bool `protobuf:"varint,17,opt,name=lost,proto3" json:"lost,omitempty"`
+	// the numeric owner on Unix, which a restore falls back to where user or
+	// group names no account; 0 for root and on Windows
+	Uid           uint32 `protobuf:"varint,18,opt,name=uid,proto3" json:"uid,omitempty"`
+	Gid           uint32 `protobuf:"varint,19,opt,name=gid,proto3" json:"gid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -287,6 +291,20 @@ func (x *FileInfo) GetLost() bool {
 		return x.Lost
 	}
 	return false
+}
+
+func (x *FileInfo) GetUid() uint32 {
+	if x != nil {
+		return x.Uid
+	}
+	return 0
+}
+
+func (x *FileInfo) GetGid() uint32 {
+	if x != nil {
+		return x.Gid
+	}
+	return 0
 }
 
 // Stream is one alternate data stream of a file or directory.
@@ -521,7 +539,7 @@ var File_file_proto protoreflect.FileDescriptor
 const file_file_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"file.proto\x12\x05proto\x1a\tref.proto\x1a\x10encryption.proto\"\xd2\x03\n" +
+	"file.proto\x12\x05proto\x1a\tref.proto\x1a\x10encryption.proto\"\xf6\x03\n" +
 	"\bFileInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\fR\x04name\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\rR\x04mode\x12\x12\n" +
@@ -543,7 +561,9 @@ const file_file_proto_rawDesc = "" +
 	"\astreams\x18\x0f \x03(\v2\r.proto.StreamR\astreams\x12\x1f\n" +
 	"\vreparse_tag\x18\x10 \x01(\rR\n" +
 	"reparseTag\x12\x12\n" +
-	"\x04lost\x18\x11 \x01(\bR\x04lostJ\x04\b\x05\x10\x06J\x04\b\a\x10\bR\ttimestampR\x04tree\"N\n" +
+	"\x04lost\x18\x11 \x01(\bR\x04lost\x12\x10\n" +
+	"\x03uid\x18\x12 \x01(\rR\x03uid\x12\x10\n" +
+	"\x03gid\x18\x13 \x01(\rR\x03gidJ\x04\b\x05\x10\x06J\x04\b\a\x10\bR\ttimestampR\x04tree\"N\n" +
 	"\x06Stream\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\fR\x04name\x12\x1c\n" +
 	"\x03ref\x18\x02 \x01(\v2\n" +

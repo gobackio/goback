@@ -139,7 +139,7 @@ type RestoreStats struct {
 	StreamsLeftOut  int64 `json:"streams_left_out"`
 	// Owned counts the entries given the owner Owner says, and
 	// OwnersLeftOut those that kept the restoring user's because their
-	// recorded user or group has no account here.
+	// recorded user or group has no account here and no id stands in.
 	Owned         int64 `json:"owned"`
 	OwnersLeftOut int64 `json:"owners_left_out"`
 	// CloudOnly counts the files left out because their content was only

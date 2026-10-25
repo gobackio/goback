@@ -43,6 +43,8 @@ type Mapper interface {
 	// field:Streams from:"-"
 	// field:ReparseTag from:"-"
 	// field:Lost from:"-"
+	// field:Uid from:"-"
+	// field:Gid from:"-"
 	FileInfo(in *ent.File) *proto.FileInfo
 
 	// field:Ref using:"Ref"

@@ -30,6 +30,13 @@ type FS interface {
 	Traits() Traits
 }
 
+// OwnerIDFS is an FS that knows the numeric owner of its entries, which a
+// walk records beside the names. LocalFS is one.
+type OwnerIDFS interface {
+	// OwnerIDs returns a file's uid and gid; 0, 0 where there are none.
+	OwnerIDs(info os.FileInfo) (uid, gid uint32)
+}
+
 // MetadataFS is an FS whose entries carry a security descriptor and
 // alternate data streams, which a walk records with the entry. LocalFS is
 // one on Windows.
@@ -76,7 +83,10 @@ type Traits struct {
 // Paths are the operating system's.
 type LocalFS struct{}
 
-var _ FS = LocalFS{}
+var (
+	_ FS        = LocalFS{}
+	_ OwnerIDFS = LocalFS{}
+)
 
 // ReadDir implements FS.
 func (LocalFS) ReadDir(_ context.Context, dir string) ([]fs.DirEntry, error) {
@@ -116,6 +126,11 @@ func (LocalFS) Join(dir, name string) string {
 // Owners implements FS.
 func (LocalFS) Owners(info os.FileInfo) (string, string) {
 	return OwnerNames(info)
+}
+
+// OwnerIDs implements OwnerIDFS.
+func (LocalFS) OwnerIDs(info os.FileInfo) (uint32, uint32) {
+	return ownerIDs(info)
 }
 
 // Traits implements FS.

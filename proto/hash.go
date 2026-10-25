@@ -721,7 +721,10 @@ func canonicalFileInfo(info *FileInfo) ([]byte, error) {
 
 	b = appendVarint(b, 16, uint64(info.ReparseTag))
 
-	return appendBool(b, 17, info.Lost), nil
+	b = appendBool(b, 17, info.Lost)
+	b = appendVarint(b, 18, uint64(info.Uid))
+
+	return appendVarint(b, 19, uint64(info.Gid)), nil
 }
 
 // SortStreams puts streams in the order a FileInfo records them, by name.

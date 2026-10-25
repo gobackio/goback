@@ -55,6 +55,11 @@ message FileInfo {
 	// the entry's content, or a directory's listing, is gone from the store;
 	// its refs are cleared and a restore leaves it out
 	bool lost = 17;
+
+	// the numeric owner on Unix, which a restore falls back to where user or
+	// group names no account; 0 for root and on Windows
+	uint32 uid = 18;
+	uint32 gid = 19;
 }
 
 // Stream is one alternate data stream of a file or directory.

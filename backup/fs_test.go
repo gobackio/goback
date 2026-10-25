@@ -292,6 +292,43 @@ func TestAWalkOverAnFSCommitsItsTree(t *testing.T) {
 	require.True(t, second.Commit.Tree.Equal(first.Commit.Tree))
 }
 
+// idFS is a memFS that knows numeric owners.
+type idFS struct {
+	*memFS
+	uid, gid uint32
+}
+
+func (f *idFS) OwnerIDs(os.FileInfo) (uint32, uint32) {
+	return f.uid, f.gid
+}
+
+func TestOwnerIDsAreRecordedWithoutReadingAnUnchangedFileAgain(t *testing.T) {
+	f, fsys, now := newMemFSFixture(t, Traits{})
+	at := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	fsys.write("/data/pg_control", "control", at)
+
+	*now = at.Add(time.Minute)
+	first := f.run()
+	require.Zero(t, f.tree(first.Commit.Tree)["data"].Stat.Uid)
+
+	f.walker.FS = &idFS{memFS: fsys, uid: 999, gid: 70}
+	opens := fsys.openCount()
+
+	*now = at.Add(2 * time.Minute)
+	second := f.run()
+	require.EqualValues(t, 1, second.Reused)
+	require.Equal(t, opens, fsys.openCount())
+	require.False(t, second.Commit.Tree.Equal(first.Commit.Tree))
+
+	data := f.tree(second.Commit.Tree)["data"]
+	require.EqualValues(t, 999, data.Stat.Uid)
+	require.EqualValues(t, 70, data.Stat.Gid)
+
+	file := f.tree(data.Ref)["pg_control"]
+	require.EqualValues(t, 999, file.Stat.Uid)
+	require.True(t, file.Ref.Equal(f.tree(f.tree(first.Commit.Tree)["data"].Ref)["pg_control"].Ref))
+}
+
 func TestAWalkOverAnFSPutsItsRootInSubdir(t *testing.T) {
 	f, fsys, now := newMemFSFixture(t, Traits{})
 	at := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
