@@ -1023,8 +1023,11 @@ func (r *gcRun) readHeaders(ctx context.Context, records []placed, missingOK boo
 			for i, p := range run {
 				record := buf[int64(p.rec.Offset)-from:][:p.rec.Length]
 				hdrSize, consumed := proto.DecodeVarint(record)
+				if consumed <= 0 || uint64(len(record)) < uint64(consumed)+hdrSize {
+					return errors.Errorf("the header of %x in %s is truncated", p.rec.Sum, a.name)
+				}
 
-				hdr, err := proto.NewObjectHeaderFromBytes(record[consumed : consumed+int(hdrSize)])
+				hdr, err := proto.NewObjectHeaderFromBytes(record[consumed : uint64(consumed)+hdrSize])
 				if err != nil {
 					return errors.Wrapf(err, "reading the header of %x in %s", p.rec.Sum, a.name)
 				}
