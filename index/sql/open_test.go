@@ -284,6 +284,8 @@ func TestPostgres(t *testing.T) {
 		"ClaimIndex":                       TestClaimIndex,
 		"ArchiveIndexCounts":               TestArchiveIndexCountsAndRestoreSessions,
 		"PastTheBindLimit":                 TestASetWithMoreCommitsThanOneStatementBindsKeepsWorking,
+		"CommitAfterATombstonedNewest":     TestACommitAfterATombstonedNewestOneHoldsOnlyWhatItHolds,
+		"CommitPlannedAsNewestTombstoned":  TestACommitPlannedWhileItsSetsNewestIsTombstonedKeepsWhatTheyShare,
 	} {
 		t.Run(name, test)
 	}

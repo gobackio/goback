@@ -1202,6 +1202,69 @@ func TestACommitPlannedBeforeAnotherOfItsSetLandedWritesNothingStale(t *testing.
 	require.False(t, exists)
 }
 
+// trashNewest commits two versions of a set, the second with b.txt
+// changed in d, then deletes the second and lets its trash window pass.
+func trashNewest(t *testing.T, f *fixture) *proto.TreeNode {
+	t.Helper()
+
+	f.commit("world", f.tree(f.file("a.txt", "one"), f.dir("d", f.file("a.txt", "one"), f.file("b.txt", "one"))), false)
+	f.advance(time.Hour)
+	changed := f.dir("d", f.file("a.txt", "one"), f.file("b.txt", "two"))
+	newest := f.commit("world", f.tree(f.file("a.txt", "one"), changed), false)
+	require.NoError(t, f.x.DeleteCommit(f.ctx, newest))
+	f.advance(15 * 24 * time.Hour)
+
+	return changed
+}
+
+func TestACommitAfterATombstonedNewestOneHoldsOnlyWhatItHolds(t *testing.T) {
+	f := newFixture(t)
+	trashNewest(t, f)
+
+	n, err := f.x.Retire(f.ctx, f.clock)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	f.advance(time.Hour)
+	last := f.commit("world", f.tree(f.file("e.txt", "e")), false)
+
+	entries, err := f.x.ReadDir(f.ctx, "world", "d", f.clock)
+	require.NoError(t, err)
+	require.Empty(t, entries, "d went with the commit after the tombstoned one")
+	require.EqualValues(t, 1, *f.commitRow(last).FileCount)
+}
+
+func TestACommitPlannedWhileItsSetsNewestIsTombstonedKeepsWhatTheyShare(t *testing.T) {
+	f := newFixture(t)
+	changed := trashNewest(t, f)
+
+	var retired int
+	var retireErr error
+
+	fresh := f.dir("new", f.file("c.txt", "c"))
+	f.store.beforeGet = map[string]func(){string(fresh.Ref.Hash): func() {
+		retired, retireErr = f.x.Retire(f.ctx, f.clock)
+	}}
+
+	last := f.commit("world", f.tree(f.file("a.txt", "one"), changed, fresh), false)
+	require.NoError(t, retireErr)
+	require.Equal(t, 1, retired, "the newest commit was tombstoned while the next was planned")
+
+	for dir, want := range map[string]int{"": 3, "d": 2, "new": 1} {
+		entries, err := f.x.ReadDir(f.ctx, "world", dir, f.clock)
+		require.NoError(t, err)
+		require.Len(t, entries, want, dir)
+	}
+
+	require.EqualValues(t, 4, *f.commitRow(last).FileCount)
+
+	for _, ref := range []*proto.Ref{changed.Ref, f.file("b.txt", "two").Ref} {
+		readable, err := f.x.References(f.ctx, ref)
+		require.NoError(t, err)
+		require.True(t, readable)
+	}
+}
+
 func TestRetiringKeepsTheRefsOfACommitThatLandsWhileItWalks(t *testing.T) {
 	f := newFixture(t)
 

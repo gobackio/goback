@@ -329,12 +329,14 @@ const receiptGrain = time.Microsecond
 
 // commitPlan is what planCommit decided for a commit: the writes that
 // index it, when it goes on the set's timeline and the set's newest
-// commit the writes assume, 0 for none.
+// commit the writes assume, 0 for none, and whether that one was
+// tombstoned.
 type commitPlan struct {
-	diff      *treeDiff
-	placement placement
-	at        time.Time
-	newest    int
+	diff       *treeDiff
+	placement  placement
+	at         time.Time
+	newest     int
+	newestGone bool
 }
 
 // planAttempts bounds how often a commit is planned again because another
@@ -385,7 +387,8 @@ func (x *Index) planCommit(ctx context.Context, commit *proto.Commit, ref *proto
 	}
 
 	at := plan.at
-	diff := &treeDiff{read: c, store: x.reads(), setID: setID, at: at, tolerant: !strict}
+	plan.newestGone = newest != nil && newest.TombstonedAt != nil
+	diff := &treeDiff{read: c, store: x.reads(), setID: setID, at: at, tolerant: !strict, full: plan.newestGone}
 
 	root := &proto.Tree{}
 	if treeObj == nil {
@@ -515,7 +518,7 @@ func (x *Index) applyCommit(ctx context.Context, commit *proto.Commit, ref *prot
 			return err
 		}
 
-		if (newest == nil && newestID != 0) || (newest != nil && newest.ID != newestID) {
+		if (newest == nil && newestID != 0) || (newest != nil && (newest.ID != newestID || (newest.TombstonedAt != nil) != plan.newestGone)) {
 			return errSetMoved
 		}
 
@@ -621,6 +624,11 @@ type treeDiff struct {
 	tolerant bool
 	holes    []string
 	gaps     []string
+
+	// full plans the commit against no open rows and closes every open row
+	// of the set, for a set whose newest commit is tombstoned: its open
+	// rows describe no commit once the rows only that one held are dropped
+	full bool
 }
 
 // treeRow and fileRow are versions a commit opens.
@@ -673,6 +681,16 @@ func (d *treeDiff) missing(err error) bool {
 // matches every open row of its path or directory, which must not take
 // in the rows the commit opens.
 func (d *treeDiff) apply(ctx context.Context, c *ent.Client) error {
+	if d.full {
+		if err := c.Tree.Update().Where(tree.SetID(d.setID), tree.ValidUntilIsNil()).SetValidUntil(d.at).Exec(ctx); err != nil {
+			return err
+		}
+
+		if err := c.File.Update().Where(file.SetID(d.setID), file.ValidUntilIsNil()).SetValidUntil(d.at).Exec(ctx); err != nil {
+			return err
+		}
+	}
+
 	err := inBatches(d.closeTrees, func(paths []string) error {
 		return c.Tree.Update().Where(tree.SetID(d.setID), tree.PathIn(paths...), tree.ValidUntilIsNil()).SetValidUntil(d.at).Exec(ctx)
 	})
@@ -918,6 +936,23 @@ func (d *treeDiff) openFiles(ctx context.Context, dirs []string) (map[string]map
 	return open, err
 }
 
+// openRows returns the open trees and files rows of the directories the
+// commit is planned against, by directory and path.
+func (d *treeDiff) openRows(ctx context.Context, dirs []string) (map[string]map[string][]byte, map[string]map[string]*ent.File, error) {
+	if d.full {
+		return nil, nil, nil
+	}
+
+	trees, err := d.openTrees(ctx, dirs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	files, err := d.openFiles(ctx, dirs)
+
+	return trees, files, err
+}
+
 // closeSubtrees plans closing every open row below the directories.
 func (d *treeDiff) closeSubtrees(ctx context.Context, dirs []string) error {
 	for len(dirs) > 0 {
@@ -959,12 +994,7 @@ func (d *treeDiff) walk(ctx context.Context, rootRef *proto.Ref, root *proto.Tre
 			dirs[i] = l.dir
 		}
 
-		trees, err := d.openTrees(ctx, dirs)
-		if err != nil {
-			return err
-		}
-
-		files, err := d.openFiles(ctx, dirs)
+		trees, files, err := d.openRows(ctx, dirs)
 		if err != nil {
 			return err
 		}

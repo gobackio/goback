@@ -1284,20 +1284,27 @@ func isDeleted(ctx context.Context, c *ent.Client, ref []byte) (bool, error) {
 }
 
 // dropDeadRows deletes the set's files and trees rows whose validity range
-// holds no commit without a tombstone.
+// holds no commit without a tombstone, under the set's lock, so that no
+// unretirement reads them in between.
 func (x *Index) dropDeadRows(ctx context.Context, setID int64) error {
 	untombstoned := func(c *entsql.SelectTable) *entsql.Predicate {
 		return entsql.IsNull(c.C(commitrow.FieldTombstonedAt))
 	}
 
-	_, err := x.client.File.Delete().Where(file.SetID(setID), predicate.File(entsql.NotPredicates(heldByCommit(untombstoned)))).Exec(ctx)
-	if err != nil {
+	return x.tx(ctx, func(tx *ent.Tx) error {
+		if _, err := x.lockSet(ctx, tx, setID); err != nil {
+			return err
+		}
+
+		_, err := tx.File.Delete().Where(file.SetID(setID), predicate.File(entsql.NotPredicates(heldByCommit(untombstoned)))).Exec(ctx)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Tree.Delete().Where(tree.SetID(setID), predicate.Tree(entsql.NotPredicates(heldByCommit(untombstoned)))).Exec(ctx)
+
 		return err
-	}
-
-	_, err = x.client.Tree.Delete().Where(tree.SetID(setID), predicate.Tree(entsql.NotPredicates(heldByCommit(untombstoned)))).Exec(ctx)
-
-	return err
+	})
 }
 
 func (x *Index) closeEmptySets(ctx context.Context) error {
