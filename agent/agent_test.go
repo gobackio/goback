@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
+	"github.com/gobackio/goback/backup/mysql"
 	"github.com/gobackio/goback/backup/postgres"
 	"github.com/gobackio/goback/proto"
 
@@ -653,6 +655,22 @@ func TestTheStatusFileReportsEachJob(t *testing.T) {
 
 		h.stop()
 	})
+}
+
+func TestABinlogTaskIsUnhealthyWhileTheBinaryLogIsOff(t *testing.T) {
+	stop := make(chan struct{})
+
+	var reports []bool
+
+	c := &Control{stop: stop, report: func(_ any, healthy bool) {
+		reports = append(reports, healthy)
+		close(stop)
+	}}
+
+	require.NoError(t, receiveWhileBinlogOn(context.Background(), c, func() error {
+		return fmt.Errorf("checking the server: %w", mysql.ErrNoBinlog)
+	}))
+	require.Equal(t, []bool{false}, reports)
 }
 
 func TestProblems(t *testing.T) {

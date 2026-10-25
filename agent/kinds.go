@@ -405,6 +405,28 @@ func (m *MySQLBackup) serverID(b *Backup) uint32 {
 // server whose binary log is off.
 const noBinlogWait = time.Minute
 
+// receiveWhileBinlogOn runs receive, and while it finds the server's binary
+// log off, reports the task unhealthy, since no point in time between
+// dumps can be restored, and runs it again after noBinlogWait.
+func receiveWhileBinlogOn(ctx context.Context, c *Control, receive func() error) error {
+	for {
+		err := receive()
+		if !errors.Is(err, mysql.ErrNoBinlog) {
+			return err
+		}
+
+		c.Report(map[string]any{"log_bin": false}, false)
+
+		select {
+		case <-c.Stop():
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(noBinlogWait):
+		}
+	}
+}
+
 func (m *MySQLBackup) tasks(b *Backup) []*Task {
 	dump, binlog := b.Name+"/dump", b.Name+"/binlog"
 
@@ -460,23 +482,9 @@ func (m *MySQLBackup) tasks(b *Backup) []*Task {
 				s.Spool = filepath.Join(c.StateDir(), "spool", binlog)
 			}
 
-			for {
-				err := job.MySQLReceive(ctx, env, s, c.Stop(), c.Committed, func(st mysql.ReceiverStatus) { c.Report(st, st.Healthy) })
-				if !errors.Is(err, mysql.ErrNoBinlog) {
-					return err
-				}
-
-				// log capture runs only while log_bin is on
-				c.Report(map[string]any{"log_bin": false}, true)
-
-				select {
-				case <-c.Stop():
-					return nil
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(noBinlogWait):
-				}
-			}
+			return receiveWhileBinlogOn(ctx, c, func() error {
+				return job.MySQLReceive(ctx, env, s, c.Stop(), c.Committed, func(st mysql.ReceiverStatus) { c.Report(st, st.Healthy) })
+			})
 		},
 	})
 }
