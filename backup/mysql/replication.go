@@ -114,6 +114,9 @@ func (o *Options) tlsConfig() (*tls.Config, error) {
 	return cfg, nil
 }
 
+// queryTimeout bounds each read and write of a serverConn.
+const queryTimeout = 30 * time.Second
+
 // serverConn is a normal connection to the server, opened again after it
 // failed.
 type serverConn struct {
@@ -121,6 +124,9 @@ type serverConn struct {
 
 	mu   sync.Mutex
 	conn *client.Conn
+	// raw is conn's network connection, which unlike conn may be closed
+	// while conn is in use.
+	raw net.Conn
 }
 
 func newServerConn(opts *Options) *serverConn {
@@ -140,15 +146,26 @@ func (c *serverConn) connect(ctx context.Context) (*client.Conn, error) {
 	network, addr := c.opts.network()
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 
-	conn, err := client.ConnectWithDialer(ctx, network, addr, c.opts.User, c.opts.Password, "", dialer.DialContext, func(conn *client.Conn) error {
+	var raw net.Conn
+
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := dialer.DialContext(ctx, network, addr)
+		raw = conn
+
+		return conn, err
+	}
+
+	conn, err := client.ConnectWithDialer(ctx, network, addr, c.opts.User, c.opts.Password, "", dial, func(conn *client.Conn) error {
 		conn.SetTLSConfig(cfg)
+		conn.ReadTimeout, conn.WriteTimeout = queryTimeout, queryTimeout
+
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connecting to %s: %w", addr, plainError(err))
 	}
 
-	c.conn = conn
+	c.conn, c.raw = conn, raw
 
 	return conn, nil
 }
@@ -163,7 +180,18 @@ func (c *serverConn) Query(ctx context.Context, sql string) ([][]string, error) 
 		return nil, err
 	}
 
+	raw := c.raw
+	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
 	result, err := conn.Execute(sql)
+
+	if !stop() {
+		if err == nil {
+			result.Close()
+		}
+
+		err = ctx.Err()
+	}
+
 	if err != nil {
 		var server *gomysql.MyError
 		if !errors.As(err, &server) {
