@@ -20,6 +20,10 @@ import (
 func agentAt(t *testing.T, home, backups string) *setup {
 	t.Helper()
 
+	for _, dir := range []string{"store", "index"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(home, dir), 0o700))
+	}
+
 	path := writeConfig(t, home, `
 store:
   storage: `+filepath.ToSlash(filepath.Join(home, "store"))+`

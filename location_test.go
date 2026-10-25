@@ -54,6 +54,30 @@ func TestABucketURLsPathIsThePrefixItsKeysGoUnder(t *testing.T) {
 	require.Error(t, err, "a path and a prefix parameter both")
 }
 
+func TestAMissingStoreDirectoryIsMadeOnlyWhenAskedFor(t *testing.T) {
+	ctx := context.Background()
+	unmounted := filepath.Join(t.TempDir(), "usb")
+	store, index := filepath.Join(unmounted, "store"), filepath.Join(unmounted, "index")
+
+	_, err := Open(ctx, Settings{Storage: store, Index: index})
+	require.ErrorContains(t, err, store)
+	require.NoDirExists(t, unmounted)
+
+	require.NoError(t, os.MkdirAll(store, 0o700))
+	_, err = Open(ctx, Settings{Storage: store, Index: index})
+	require.ErrorContains(t, err, index, "nor a local index")
+	require.NoDirExists(t, index)
+
+	repo, err := Open(ctx, Settings{Storage: store, Index: index, Create: true})
+	require.NoError(t, err)
+	require.NoError(t, repo.Close())
+	require.DirExists(t, index)
+
+	repo, err = Open(ctx, Settings{Storage: store, Index: index})
+	require.NoError(t, err, "once made, it opens")
+	require.NoError(t, repo.Close())
+}
+
 func TestADrivePathIsAPath(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("only Windows paths start with a volume")

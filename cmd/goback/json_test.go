@@ -120,6 +120,7 @@ func TestJSONErrorNamesTheCodeOfAStoreServerRefusingTheKey(t *testing.T) {
 
 	home := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(home, "store"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(home, "index"), 0o755))
 	bin := buildCLI(t)
 
 	server := exec.Command(bin, "--storage", "store", "--index", "index", "server",

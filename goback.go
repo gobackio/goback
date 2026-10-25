@@ -40,6 +40,10 @@ type Settings struct {
 	// directory for SQLite, or a postgres:// URL. A store server brings
 	// its own.
 	Index string
+	// Create makes a directory store's directory and a local index's when
+	// they are missing. Without it opening one that does not exist fails,
+	// so a backup disk that is not mounted is not taken for a new store.
+	Create bool
 	// AgentID is who commits and who a store server is told is calling;
 	// empty means the hostname.
 	AgentID string

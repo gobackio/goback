@@ -36,6 +36,7 @@ func ExampleOpen() {
 	repo, err := goback.Open(ctx, goback.Settings{
 		Storage: filepath.Join(dir, "store"),
 		Index:   filepath.Join(dir, "index"),
+		Create:  true,
 	})
 	if err != nil {
 		log.Fatal(err)

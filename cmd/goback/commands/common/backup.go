@@ -34,10 +34,22 @@ func Settings(c *cli.Context) (goback.Settings, error) {
 // OpenRepo opens the store the global flags name, or exits. Close it with
 // CloseRepo.
 func OpenRepo(c *cli.Context) *goback.Repo {
+	return openRepo(c, false)
+}
+
+// CreateRepo is OpenRepo for a command that backs up, which makes a
+// directory store and a local index that do not exist yet.
+func CreateRepo(c *cli.Context) *goback.Repo {
+	return openRepo(c, true)
+}
+
+func openRepo(c *cli.Context, create bool) *goback.Repo {
 	settings, err := Settings(c)
 	if err != nil {
 		Fatal(err)
 	}
+
+	settings.Create = create
 
 	if settings.Storage == "" {
 		Fatal(errors.New("--storage is required: where the objects live"))

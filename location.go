@@ -107,18 +107,33 @@ func hasScheme(raw string) bool {
 }
 
 // localDir is the absolute directory a location without a scheme names,
-// created when missing.
-func localDir(u *url.URL) (string, error) {
+// the store's or the index's as what says: made when missing if create is
+// set, and refused with its path otherwise.
+func localDir(u *url.URL, what string, create bool) (string, error) {
 	abs, err := filepath.Abs(u.Host + u.Path)
 	if err != nil {
 		return "", err
 	}
 
-	return abs, os.MkdirAll(abs, 0o700)
+	if create {
+		return abs, os.MkdirAll(abs, 0o700)
+	}
+
+	info, err := os.Stat(abs)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return "", fmt.Errorf("the %s directory %s does not exist; create it, or back up into it with commit new, which does", what, abs)
+	case err != nil:
+		return "", err
+	case !info.IsDir():
+		return "", fmt.Errorf("the %s location %s is not a directory", what, abs)
+	}
+
+	return abs, nil
 }
 
 func openDirectory(_ context.Context, u *url.URL, s Settings) (backup.ObjectStore, backup.Index, error) {
-	dir, err := localDir(u)
+	dir, err := localDir(u, "store", s.Create)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -329,7 +344,7 @@ func (s Settings) withIndex(build func(*sql.Index) (*pack.PackStorage, error)) (
 
 	switch u.Scheme {
 	case "", "file", "sqlite":
-		if location, err = localDir(u); err != nil {
+		if location, err = localDir(u, "index", s.Create); err != nil {
 			return nil, nil, err
 		}
 	}

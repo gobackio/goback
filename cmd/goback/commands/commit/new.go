@@ -38,7 +38,7 @@ func runNew(c *cli.Context) error {
 	}
 
 	initial := common.InitialRetention(c)
-	repo := common.OpenRepo(c)
+	repo := common.CreateRepo(c)
 	env := common.Env(c, repo, goback.Caches{Stats: true, Objects: true, Blobs: c.GlobalBoolT("blob-cache-on-backup")})
 
 	defer func() {
