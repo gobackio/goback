@@ -183,6 +183,35 @@ func TestRestoreTreeWritesNothingThroughADirectorySwappedForALink(t *testing.T) 
 	require.Equal(t, before.Mode(), after.Mode())
 }
 
+func TestACancelledRestoreFails(t *testing.T) {
+	b := newTreeBuilder(t)
+
+	var nodes []*proto.TreeNode
+	for _, name := range []string{"a", "b", "c", "d", "e", "f"} {
+		nodes = append(nodes, b.file(name, name, 0o644))
+	}
+
+	commit := b.commit(nodes...)
+	dst := t.TempDir()
+	writeFile(t, filepath.Join(dst, "stale"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := (&Restorer{Store: b.store, Workers: 1}).RestoreTree(ctx, commit, dst, TreeOptions{
+		Delete: true,
+		Done: func(RestoredFile) error {
+			cancel()
+			return nil
+		},
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.FileExists(t, filepath.Join(dst, "stale"), "a cancelled restore deletes nothing")
+
+	err = (&Restorer{Store: b.store}).RestoreFiles(ctx, []FileToRestore{{Path: filepath.Join(dst, "a"), Stat: nodes[0].Stat, Ref: nodes[0].Ref}}, func(int, Outcome, error) error { return nil })
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestRestoredLinksLeadWhereTheyPoint(t *testing.T) {
 	b := newTreeBuilder(t)
 

@@ -40,7 +40,8 @@ type FileToRestore struct {
 // asking a store that is a FilesReader for the small ones in groups and
 // restoring a group it fails file by file. done is called once for every
 // file with its outcome or error, possibly from several goroutines at
-// once; an error it returns stops the restore.
+// once; an error it returns stops the restore. A restore whose ctx ends
+// fails with ctx's error, whatever done made of the files it cut short.
 func (r *Restorer) RestoreFiles(ctx context.Context, files []FileToRestore, done func(i int, outcome Outcome, err error) error) error {
 	if err := r.check(); err != nil {
 		return err
@@ -106,7 +107,11 @@ func (r *Restorer) RestoreFiles(ctx context.Context, files []FileToRestore, done
 		flush()
 	}
 
-	return grp.Wait()
+	if err := grp.Wait(); err != nil {
+		return err
+	}
+
+	return ctx.Err()
 }
 
 func (r *Restorer) restoreOne(ctx context.Context, i int, file FileToRestore, done func(int, Outcome, error) error) error {

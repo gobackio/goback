@@ -174,8 +174,9 @@ func (c *commit) restore() error {
 				}
 
 				// a salvage restores what it can and reports the rest, but
-				// past the quota every other file would fail the same way
-				if !c.restorer.Salvage || errors.Is(err, backup.ErrQuotaExceeded) {
+				// past the quota every other file would fail the same way,
+				// and a restore cut short is no salvage
+				if !c.restorer.Salvage || errors.Is(err, backup.ErrQuotaExceeded) || c.ctx.Err() != nil {
 					return err
 				}
 

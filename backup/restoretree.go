@@ -154,6 +154,10 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 		return err
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	if opts.Delete {
 		if err := r.removeUnrestored(ctx, dir, l.entries, opts.Removing); err != nil {
 			return err
@@ -652,6 +656,10 @@ func (r *Restorer) removeUnrestored(ctx context.Context, dir string, entries []t
 	}
 
 	for _, path := range stale {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		if removing != nil {
 			removing(path)
 		}
