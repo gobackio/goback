@@ -51,7 +51,8 @@ func ParseSeedMode(name string) (SeedMode, error) {
 }
 
 // AddSeed adds the seed at path: a directory as mode says, a file always
-// read up front.
+// read up front. What under a directory cannot be listed or read is passed
+// over.
 func (s *SeedMap) AddSeed(path string, mode SeedMode) error {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -65,17 +66,16 @@ func (s *SeedMap) AddSeed(path string, mode SeedMode) error {
 	var listed []seedStat
 
 	err = filepath.WalkDir(path, func(file string, d fs.DirEntry, err error) error {
-		if err != nil {
+		switch {
+		case file == path && err != nil:
 			return err
-		}
-
-		if !d.Type().IsRegular() {
+		case err != nil || !d.Type().IsRegular():
 			return nil
 		}
 
 		info, err := d.Info()
 		if err != nil {
-			return err
+			return nil
 		}
 
 		rel, err := filepath.Rel(path, file)

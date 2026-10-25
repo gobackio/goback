@@ -2,6 +2,7 @@ package backup
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -66,27 +67,58 @@ func (s *SeedMap) Len() int {
 }
 
 // Add indexes path, or every regular file under it, cut with the chunker
-// the backup uses.
+// the backup uses. What under path cannot be listed or read is passed
+// over.
 func (s *SeedMap) Add(path string) error {
-	return filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
+	root := path
 
-		if !d.Type().IsRegular() {
+	return filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
+		switch {
+		case path == root && err != nil:
+			return err
+		case err != nil:
+			return nil
+		case !d.Type().IsRegular():
 			return nil
 		}
 
-		return s.addFile(path)
+		if err := s.addFile(path); err != nil && path == root {
+			return err
+		}
+
+		return nil
 	})
 }
 
+// openSeed opens the regular file at path to read and returns its size,
+// refusing whatever else is there.
+func openSeed(path string) (*os.File, int64, error) {
+	file, err := openShared(path)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	info, err := file.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = fmt.Errorf("%s is no regular file", path)
+	}
+
+	if err != nil {
+		_ = file.Close()
+		return nil, 0, err
+	}
+
+	return file, info.Size(), nil
+}
+
 func (s *SeedMap) addFile(path string) error {
-	file, err := os.Open(path)
+	opened, size, err := openSeed(path)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer opened.Close()
+
+	file := io.LimitReader(opened, size)
 
 	seed := &seedFile{path: path}
 
@@ -194,7 +226,7 @@ func (s *SeedMap) read(part *proto.FilePart) ([]byte, bool, bool) {
 }
 
 func readAt(path string, offset, length int64) ([]byte, error) {
-	file, err := openShared(path)
+	file, _, err := openSeed(path)
 	if err != nil {
 		return nil, err
 	}

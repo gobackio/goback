@@ -226,7 +226,8 @@ func openIn(root *os.Root, rel, full string, parent os.FileInfo) (File, error) {
 // on Unix is nothing yet.
 func recordPlatform(*proto.FileInfo, os.FileInfo) {}
 
-// openShared opens path to read.
+// openShared opens path to read, without following a symlink there or
+// waiting on a FIFO.
 func openShared(path string) (*os.File, error) {
-	return os.Open(path)
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 }
