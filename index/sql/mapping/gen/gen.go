@@ -4,6 +4,7 @@ package gen
 
 import (
 	backup "github.com/gobackio/goback/backup"
+	schedule "github.com/gobackio/goback/backup/schedule"
 	index "github.com/gobackio/goback/index"
 	ent "github.com/gobackio/goback/index/sql/ent"
 	mapping "github.com/gobackio/goback/index/sql/mapping"
@@ -87,6 +88,20 @@ func (m MapperImpl) CommitSize(in *ent.CommitRow) *proto.CommitSize {
 	}
 }
 
+func (m MapperImpl) Expectation(in *ent.Schedule) schedule.Expectation {
+	if in == nil {
+		return schedule.Expectation{}
+	}
+
+	return schedule.Expectation{
+		Set:         in.ID,
+		Kind:        in.Kind,
+		LongestGap:  in.LongestGap,
+		Jitter:      in.Jitter,
+		CommitEvery: in.CommitEvery,
+	}
+}
+
 func (m MapperImpl) FileInfo(in *ent.File) *proto.FileInfo {
 	if in == nil {
 		return nil
@@ -154,6 +169,19 @@ func (m MapperImpl) Record(in *ent.Object) pack.IndexRecord {
 		Type:          in.Type,
 		CarriedTime:   in.CarriedTime,
 		CarriedOffset: in.CarriedOffset,
+	}
+}
+
+func (m MapperImpl) Reported(in *ent.Schedule) schedule.Reported {
+	if in == nil {
+		return schedule.Reported{}
+	}
+
+	return schedule.Reported{
+		Expectation: m.Expectation(in),
+		Agent:       in.AgentID,
+		Since:       in.Since,
+		At:          in.ReportedAt,
 	}
 }
 

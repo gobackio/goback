@@ -20,6 +20,7 @@ import (
 	"github.com/gobackio/goback/index/sql/ent/object"
 	"github.com/gobackio/goback/index/sql/ent/pin"
 	"github.com/gobackio/goback/index/sql/ent/reindex"
+	"github.com/gobackio/goback/index/sql/ent/schedule"
 	"github.com/gobackio/goback/index/sql/ent/session"
 	"github.com/gobackio/goback/index/sql/ent/set"
 	"github.com/gobackio/goback/index/sql/ent/setref"
@@ -94,6 +95,7 @@ func checkColumn(t, c string) error {
 			object.Table:        object.ValidColumn,
 			pin.Table:           pin.ValidColumn,
 			reindex.Table:       reindex.ValidColumn,
+			schedule.Table:      schedule.ValidColumn,
 			session.Table:       session.ValidColumn,
 			set.Table:           set.ValidColumn,
 			setref.Table:        setref.ValidColumn,

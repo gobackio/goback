@@ -30,6 +30,9 @@ type Pin func(*sql.Selector)
 // Reindex is the predicate function for reindex builders.
 type Reindex func(*sql.Selector)
 
+// Schedule is the predicate function for schedule builders.
+type Schedule func(*sql.Selector)
+
 // Session is the predicate function for session builders.
 type Session func(*sql.Selector)
 

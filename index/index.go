@@ -13,6 +13,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/retention"
+	"github.com/gobackio/goback/backup/schedule"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
 )
@@ -49,6 +50,18 @@ type SetInfo struct {
 	AloneSize, ExclusiveSize int64
 	// DeduplicatedAloneSize is DeduplicatedSize were the set the only set.
 	DeduplicatedAloneSize int64
+	// Schedule is what an agent last reported it expects of the set; nil
+	// when none did within schedule.StaleAfter.
+	Schedule *schedule.Reported
+	// NewestAt is when the store received the set's newest live commit;
+	// zero for none.
+	NewestAt time.Time
+}
+
+// Late reports whether the set, being active, is late at now by its
+// Schedule, as schedule.Reported.Late tells.
+func (s SetInfo) Late(now time.Time) bool {
+	return s.State == SetActive && s.Schedule != nil && s.Schedule.Late(s.NewestAt, now)
 }
 
 // SetQuery picks and orders a page of sets. The zero SetQuery lists

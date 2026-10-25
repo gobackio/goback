@@ -338,6 +338,35 @@ var (
 		Columns:    ReindexesColumns,
 		PrimaryKey: []*schema.Column{ReindexesColumns[0]},
 	}
+	// SchedulesColumns holds the columns for the "schedules" table.
+	SchedulesColumns = []*schema.Column{
+		{Name: "set_name", Type: field.TypeString},
+		{Name: "agent_id", Type: field.TypeString},
+		{Name: "kind", Type: field.TypeString},
+		{Name: "longest_gap", Type: field.TypeInt64},
+		{Name: "jitter", Type: field.TypeInt64},
+		{Name: "commit_every", Type: field.TypeInt64},
+		{Name: "since", Type: field.TypeTime},
+		{Name: "reported_at", Type: field.TypeTime},
+	}
+	// SchedulesTable holds the schema information for the "schedules" table.
+	SchedulesTable = &schema.Table{
+		Name:       "schedules",
+		Columns:    SchedulesColumns,
+		PrimaryKey: []*schema.Column{SchedulesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "schedule_agent_id",
+				Unique:  false,
+				Columns: []*schema.Column{SchedulesColumns[1]},
+			},
+			{
+				Name:    "schedule_reported_at",
+				Unique:  false,
+				Columns: []*schema.Column{SchedulesColumns[7]},
+			},
+		},
+	}
 	// SessionsColumns holds the columns for the "sessions" table.
 	SessionsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString},
@@ -513,6 +542,7 @@ var (
 		ObjectsTable,
 		PinsTable,
 		ReindexesTable,
+		SchedulesTable,
 		SessionsTable,
 		SetsTable,
 		SetRefsTable,
@@ -554,6 +584,9 @@ func init() {
 	}
 	ReindexesTable.Annotation = &entsql.Annotation{
 		Table: "reindexes",
+	}
+	SchedulesTable.Annotation = &entsql.Annotation{
+		Table: "schedules",
 	}
 	SetRefsTable.ForeignKeys[0].RefTable = SetsTable
 	SetRefsTable.Annotation = &entsql.Annotation{}

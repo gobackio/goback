@@ -202,7 +202,8 @@ func (x *Index) BeginCommit(ctx context.Context, name string) (*backup.CommitGra
 }
 
 // ListSets returns every set by name, with the sizes MeasureSets and the
-// last garbage collection stored for it.
+// last garbage collection stored for it, what an agent reported it expects
+// of it and when it received its newest live commit.
 func (x *Index) ListSets(ctx context.Context) ([]index.SetInfo, error) {
 	return x.QuerySets(ctx, index.SetQuery{})
 }
@@ -220,7 +221,12 @@ func (x *Index) GetSet(ctx context.Context, name string) (index.SetInfo, error) 
 		return index.SetInfo{}, err
 	}
 
-	return m.Set(row), nil
+	sets := []index.SetInfo{m.Set(row)}
+	if err := x.scheduled(ctx, sets); err != nil {
+		return index.SetInfo{}, err
+	}
+
+	return sets[0], nil
 }
 
 // QuerySets returns a page of the sets q picks, described as ListSets
@@ -251,7 +257,12 @@ func (x *Index) QuerySets(ctx context.Context, q index.SetQuery) ([]index.SetInf
 		return nil, err
 	}
 
-	return mapAll(rows, m.Set), nil
+	sets := mapAll(rows, m.Set)
+	if err := x.scheduled(ctx, sets); err != nil {
+		return nil, err
+	}
+
+	return sets, nil
 }
 
 // CountSets counts the sets in one of the states, every set when none is

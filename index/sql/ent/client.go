@@ -23,6 +23,7 @@ import (
 	"github.com/gobackio/goback/index/sql/ent/object"
 	"github.com/gobackio/goback/index/sql/ent/pin"
 	"github.com/gobackio/goback/index/sql/ent/reindex"
+	"github.com/gobackio/goback/index/sql/ent/schedule"
 	"github.com/gobackio/goback/index/sql/ent/session"
 	"github.com/gobackio/goback/index/sql/ent/set"
 	"github.com/gobackio/goback/index/sql/ent/setref"
@@ -54,6 +55,8 @@ type Client struct {
 	Pin *PinClient
 	// Reindex is the client for interacting with the Reindex builders.
 	Reindex *ReindexClient
+	// Schedule is the client for interacting with the Schedule builders.
+	Schedule *ScheduleClient
 	// Session is the client for interacting with the Session builders.
 	Session *SessionClient
 	// Set is the client for interacting with the Set builders.
@@ -85,6 +88,7 @@ func (c *Client) init() {
 	c.Object = NewObjectClient(c.config)
 	c.Pin = NewPinClient(c.config)
 	c.Reindex = NewReindexClient(c.config)
+	c.Schedule = NewScheduleClient(c.config)
 	c.Session = NewSessionClient(c.config)
 	c.Set = NewSetClient(c.config)
 	c.SetRef = NewSetRefClient(c.config)
@@ -191,6 +195,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		Object:        NewObjectClient(cfg),
 		Pin:           NewPinClient(cfg),
 		Reindex:       NewReindexClient(cfg),
+		Schedule:      NewScheduleClient(cfg),
 		Session:       NewSessionClient(cfg),
 		Set:           NewSetClient(cfg),
 		SetRef:        NewSetRefClient(cfg),
@@ -224,6 +229,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		Object:        NewObjectClient(cfg),
 		Pin:           NewPinClient(cfg),
 		Reindex:       NewReindexClient(cfg),
+		Schedule:      NewScheduleClient(cfg),
 		Session:       NewSessionClient(cfg),
 		Set:           NewSetClient(cfg),
 		SetRef:        NewSetRefClient(cfg),
@@ -260,7 +266,8 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.Archive, c.CommitRow, c.DamagedPath, c.DeletedRef, c.File, c.Object, c.Pin,
-		c.Reindex, c.Session, c.Set, c.SetRef, c.Settings, c.Tree, c.WalkedArchive,
+		c.Reindex, c.Schedule, c.Session, c.Set, c.SetRef, c.Settings, c.Tree,
+		c.WalkedArchive,
 	} {
 		n.Use(hooks...)
 	}
@@ -271,7 +278,8 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.Archive, c.CommitRow, c.DamagedPath, c.DeletedRef, c.File, c.Object, c.Pin,
-		c.Reindex, c.Session, c.Set, c.SetRef, c.Settings, c.Tree, c.WalkedArchive,
+		c.Reindex, c.Schedule, c.Session, c.Set, c.SetRef, c.Settings, c.Tree,
+		c.WalkedArchive,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -296,6 +304,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Pin.mutate(ctx, m)
 	case *ReindexMutation:
 		return c.Reindex.mutate(ctx, m)
+	case *ScheduleMutation:
+		return c.Schedule.mutate(ctx, m)
 	case *SessionMutation:
 		return c.Session.mutate(ctx, m)
 	case *SetMutation:
@@ -1473,6 +1483,139 @@ func (c *ReindexClient) mutate(ctx context.Context, m *ReindexMutation) (Value, 
 	}
 }
 
+// ScheduleClient is a client for the Schedule schema.
+type ScheduleClient struct {
+	config
+}
+
+// NewScheduleClient returns a client for the Schedule from the given config.
+func NewScheduleClient(c config) *ScheduleClient {
+	return &ScheduleClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `schedule.Hooks(f(g(h())))`.
+func (c *ScheduleClient) Use(hooks ...Hook) {
+	c.hooks.Schedule = append(c.hooks.Schedule, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `schedule.Intercept(f(g(h())))`.
+func (c *ScheduleClient) Intercept(interceptors ...Interceptor) {
+	c.inters.Schedule = append(c.inters.Schedule, interceptors...)
+}
+
+// Create returns a builder for creating a Schedule entity.
+func (c *ScheduleClient) Create() *ScheduleCreate {
+	mutation := newScheduleMutation(c.config, OpCreate)
+	return &ScheduleCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of Schedule entities.
+func (c *ScheduleClient) CreateBulk(builders ...*ScheduleCreate) *ScheduleCreateBulk {
+	return &ScheduleCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ScheduleClient) MapCreateBulk(slice any, setFunc func(*ScheduleCreate, int)) *ScheduleCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ScheduleCreateBulk{err: fmt.Errorf("calling to ScheduleClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ScheduleCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ScheduleCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for Schedule.
+func (c *ScheduleClient) Update() *ScheduleUpdate {
+	mutation := newScheduleMutation(c.config, OpUpdate)
+	return &ScheduleUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ScheduleClient) UpdateOne(_m *Schedule) *ScheduleUpdateOne {
+	mutation := newScheduleMutation(c.config, OpUpdateOne, withSchedule(_m))
+	return &ScheduleUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ScheduleClient) UpdateOneID(id string) *ScheduleUpdateOne {
+	mutation := newScheduleMutation(c.config, OpUpdateOne, withScheduleID(id))
+	return &ScheduleUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for Schedule.
+func (c *ScheduleClient) Delete() *ScheduleDelete {
+	mutation := newScheduleMutation(c.config, OpDelete)
+	return &ScheduleDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ScheduleClient) DeleteOne(_m *Schedule) *ScheduleDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ScheduleClient) DeleteOneID(id string) *ScheduleDeleteOne {
+	builder := c.Delete().Where(schedule.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ScheduleDeleteOne{builder}
+}
+
+// Query returns a query builder for Schedule.
+func (c *ScheduleClient) Query() *ScheduleQuery {
+	return &ScheduleQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSchedule},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a Schedule entity by its id.
+func (c *ScheduleClient) Get(ctx context.Context, id string) (*Schedule, error) {
+	return c.Query().Where(schedule.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ScheduleClient) GetX(ctx context.Context, id string) *Schedule {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *ScheduleClient) Hooks() []Hook {
+	return c.hooks.Schedule
+}
+
+// Interceptors returns the client interceptors.
+func (c *ScheduleClient) Interceptors() []Interceptor {
+	return c.inters.Schedule
+}
+
+func (c *ScheduleClient) mutate(ctx context.Context, m *ScheduleMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ScheduleCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ScheduleUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ScheduleUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ScheduleDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown Schedule mutation op: %q", m.Op())
+	}
+}
+
 // SessionClient is a client for the Session schema.
 type SessionClient struct {
 	config
@@ -2387,11 +2530,11 @@ func (c *WalkedArchiveClient) mutate(ctx context.Context, m *WalkedArchiveMutati
 type (
 	hooks struct {
 		Archive, CommitRow, DamagedPath, DeletedRef, File, Object, Pin, Reindex,
-		Session, Set, SetRef, Settings, Tree, WalkedArchive []ent.Hook
+		Schedule, Session, Set, SetRef, Settings, Tree, WalkedArchive []ent.Hook
 	}
 	inters struct {
 		Archive, CommitRow, DamagedPath, DeletedRef, File, Object, Pin, Reindex,
-		Session, Set, SetRef, Settings, Tree, WalkedArchive []ent.Interceptor
+		Schedule, Session, Set, SetRef, Settings, Tree, WalkedArchive []ent.Interceptor
 	}
 )
 

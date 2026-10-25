@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/schedule"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/index/sql/ent"
 	"github.com/gobackio/goback/index/sql/ent/set"
@@ -49,6 +50,7 @@ type Mapper interface {
 	// field:LinuxFlags from:"-"
 	// field:DarwinFlags from:"-"
 	// field:HardLink from:"-"
+	// field:MetadataLost from:"-"
 	FileInfo(in *ent.File) *proto.FileInfo
 
 	// field:Ref using:"Ref"
@@ -74,7 +76,17 @@ type Mapper interface {
 	// field:Offset from:"Start"
 	Record(in *ent.Object) pack.IndexRecord
 
+	// field:Schedule from:"-"
+	// field:NewestAt from:"-"
 	Set(in *ent.Set) index.SetInfo
+
+	// field:Expectation from:"."
+	// field:Agent from:"AgentID"
+	// field:At from:"ReportedAt"
+	Reported(in *ent.Schedule) schedule.Reported
+
+	// field:Set from:"ID"
+	Expectation(in *ent.Schedule) schedule.Expectation
 
 	// field:Commit from:"."
 	// field:Ref using:"Ref"

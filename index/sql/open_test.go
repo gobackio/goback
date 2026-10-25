@@ -293,6 +293,11 @@ func TestPostgres(t *testing.T) {
 		"RetiringLikeItsNeighbours":        TestRetiringACommitLikeItsNeighboursReadsNoTree,
 		"RetiringKeepsWhatOthersShare":     TestRetiringACommitKeepsWhatACommitFurtherAwayShares,
 		"RetiringDropsRowsBetween":         TestRetiringCommitsBetweenOthersDropsEveryRowOnlyTheyHeld,
+		"ReportRecordsExpectations":        TestAReportRecordsWhatTheAgentExpectsOfEachSet,
+		"ReportKeepsSince":                 TestAReportAgainKeepsSinceWhenItsAgentFirstReportedTheSet,
+		"ReportDropsUnlistedSets":          TestAReportDropsTheSetsItsAgentNoLongerLists,
+		"StaleReportsExpectNothing":        TestASetNoAgentReportedForThirtyDaysExpectsNothing,
+		"LateByReportAndNewestCommit":      TestASetIsLateByItsReportedScheduleAndNewestCommit,
 	} {
 		t.Run(name, test)
 	}
