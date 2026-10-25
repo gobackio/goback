@@ -774,7 +774,7 @@ func (run *receiveRun) flush(ctx context.Context) error {
 		return err
 	}
 
-	result, err := run.commit(ctx, c)
+	result, err := run.commit(c).Run(ctx)
 	d := commitDone{cut: c, result: result, err: err}
 
 	if err := run.done(d); err != nil {
@@ -859,9 +859,11 @@ func (run *receiveRun) tick(ctx context.Context, now time.Time) error {
 
 		run.lastCommit = now
 
+		sc := run.commit(c)
 		ch := make(chan commitDone, 1)
+
 		go func() {
-			result, err := run.commit(ctx, c)
+			result, err := sc.Run(ctx)
 			ch <- commitDone{cut: c, result: result, err: err}
 		}()
 
@@ -914,10 +916,12 @@ func (run *receiveRun) cut() (*cut, error) {
 	return c, nil
 }
 
-func (run *receiveRun) commit(ctx context.Context, c *cut) (*backup.WalkResult, error) {
+// commit is the commit of c, as the run stands now; run it on any
+// goroutine.
+func (run *receiveRun) commit(c *cut) *spoolCommit {
 	r := run.r
 
-	sc := &spoolCommit{
+	return &spoolCommit{
 		Walker:  r.Walker(),
 		Spool:   r.Spool,
 		DumpSet: r.DumpSet,
@@ -929,8 +933,6 @@ func (run *receiveRun) commit(ctx context.Context, c *cut) (*backup.WalkResult, 
 		Files:   c.files,
 		Open:    c.open,
 	}
-
-	return sc.Run(ctx)
 }
 
 // collect takes in the commit in flight once it is done; with wait, it
