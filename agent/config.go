@@ -18,6 +18,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 	"github.com/gobackio/goback"
+	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/retention"
 	"go.yaml.in/yaml/v3"
 )
@@ -188,8 +189,9 @@ func validName(name string) bool {
 	return true
 }
 
-// checkSets refuses two backups writing one set, and a set named under a
-// WAL or binlog set, whose spool directory would hold the other's.
+// checkSets refuses a set name the index refuses, two backups writing one
+// set, and a set named under a WAL or binlog set, whose spool directory
+// would hold the other's.
 func (c *Config) checkSets() []error {
 	var errs []error
 
@@ -197,6 +199,10 @@ func (c *Config) checkSets() []error {
 	by := map[string]*Task{}
 
 	for _, t := range tasks {
+		if _, ok := backup.SetID(t.Set); ok {
+			errs = append(errs, fmt.Errorf("backup %s: the set %s is all digits, which name a set by its id", t.Backup, t.Set))
+		}
+
 		if o, ok := by[t.Set]; ok {
 			errs = append(errs, fmt.Errorf("backups %s and %s both write the set %s", o.Backup, t.Backup, t.Set))
 		}

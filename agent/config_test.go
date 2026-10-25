@@ -150,6 +150,8 @@ backups: [{name: srv1//db, every: 1h, path: {dir: /w}}]`,
 backups: [{name: srv1/../db, every: 1h, path: {dir: /w}}]`,
 		"a backslash": `
 backups: [{name: 'srv1\db', every: 1h, path: {dir: /w}}]`,
+		"a path backup named all in digits": `
+backups: [{name: "2024", every: 1h, path: {dir: /w}}]`,
 		"a path backup writing a database backup's set": `
 backups:
   - {name: srv1/db, postgres: {}}
