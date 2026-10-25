@@ -33,8 +33,9 @@ type Restore struct {
 	DumpSet string
 	// BinlogSet, when empty, restores the dump alone.
 	BinlogSet string
-	// At, when set, is the moment the restore stops at; zero replays to the
-	// end of the binlog set.
+	// At, when set, is the moment the restore stops at, which fails with
+	// ErrNoDump, saying where they end, when the binlogs end before it;
+	// zero replays to the end of the binlog set.
 	At     time.Time
 	Client Client
 	// WorkDir is where the binlogs are fetched to before the replay.
@@ -214,7 +215,10 @@ func (r *Restore) unusable(dump *proto.Commit, binlogs *binlogCommit) ([]*proto.
 
 	i := slices.IndexFunc(files, func(n *proto.TreeNode) bool { return compareBinlogs(string(n.Stat.Name), start) >= 0 })
 	if i < 0 {
-		// the binlog set holds nothing written after the dump yet
+		if !r.At.IsZero() {
+			return nil, fmt.Sprintf("the binlog set holds nothing from its start file %s on, so it ends with the dump, before the moment asked for", start)
+		}
+
 		return nil, ""
 	}
 
@@ -251,8 +255,14 @@ func (r *Restore) unusable(dump *proto.Commit, binlogs *binlogCommit) ([]*proto.
 		}
 	}
 
-	if !reached && chain != binlogs.chain {
-		return nil, fmt.Sprintf("its chain %d ended before the moment asked for", chain)
+	if !reached {
+		// a binlog's mtime is when its last event was written
+		end := time.Unix(0, replay[len(replay)-1].Stat.GetMtimeNs()).UTC().Format(time.RFC3339)
+		if chain != binlogs.chain {
+			return nil, fmt.Sprintf("its chain %d ended at %s, before the moment asked for", chain, end)
+		}
+
+		return nil, fmt.Sprintf("its binlogs end at %s, before the moment asked for", end)
 	}
 
 	return replay, ""

@@ -139,6 +139,32 @@ func TestRestoreRefusesADumpWhoseStartFileClosedBeforeIt(t *testing.T) {
 	require.Contains(t, reason, "closed before the dump began")
 }
 
+func TestRestoreRefusesAMomentPastTheEndOfTheBinlogs(t *testing.T) {
+	end := time.Date(2026, 10, 23, 18, 0, 0, 0, time.UTC)
+	held := &binlogCommit{chain: 1, chains: map[int][]*proto.TreeNode{1: {
+		{Stat: &proto.FileInfo{Name: []byte("binlog.000001"), MtimeNs: end.Add(-time.Hour).UnixNano()}},
+		{Stat: &proto.FileInfo{Name: []byte("binlog.000002"), MtimeNs: end.UnixNano()}},
+	}}}
+
+	dump := func(start string) *proto.Commit {
+		return &proto.Commit{ScanStartNs: end.Add(-2 * time.Hour).UnixNano(), Timestamp: end.Add(-2 * time.Hour).Unix(),
+			Metadata: map[string]string{MetaBinlogFile: start, MetaBinlogPos: "4", MetaServerID: "1", MetaChain: "1"}}
+	}
+
+	files, reason := (&Restore{At: end.Add(-time.Minute)}).unusable(dump("binlog.000001"), held)
+	require.Empty(t, reason)
+	require.Len(t, files, 2)
+
+	_, reason = (&Restore{At: end.Add(time.Minute)}).unusable(dump("binlog.000001"), held)
+	require.Contains(t, reason, end.Format(time.RFC3339))
+
+	_, reason = (&Restore{At: end.Add(time.Minute)}).unusable(dump("binlog.000003"), held)
+	require.NotEmpty(t, reason, "nothing after the dump reaches the moment")
+
+	_, reason = (&Restore{}).unusable(dump("binlog.000003"), held)
+	require.Empty(t, reason, "without a moment the dump is restored alone")
+}
+
 func TestRestoreRefusesATargetThatHoldsDatabases(t *testing.T) {
 	f := newFixture(t)
 	f.mustDump()
