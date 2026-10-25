@@ -342,6 +342,7 @@ func (p *PostgresBackup) tasks(b *Backup) []*Task {
 		Kind:             "postgres-receive",
 		Log:              true,
 		StaleAfter:       3 * p.CommitEvery,
+		CommitEvery:      p.CommitEvery,
 		InitialRetention: settings.InitialRetention,
 		Serve: func(ctx context.Context, env *job.Env, c *Control) error {
 			s := settings
@@ -525,6 +526,7 @@ func (m *MySQLBackup) tasks(b *Backup) []*Task {
 		Log:              true,
 		After:            dump,
 		StaleAfter:       3 * m.CommitEvery,
+		CommitEvery:      m.CommitEvery,
 		InitialRetention: settings.InitialRetention,
 		Serve: func(ctx context.Context, env *job.Env, c *Control) error {
 			s := settings

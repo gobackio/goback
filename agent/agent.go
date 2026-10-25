@@ -19,6 +19,7 @@ import (
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/postgres"
+	"github.com/gobackio/goback/backup/schedule"
 	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/watch"
 )
@@ -59,6 +60,11 @@ type Agent struct {
 	// WatchPoll is how often watched directories are read for changes;
 	// zero is every 10 seconds.
 	WatchPoll time.Duration
+	// Reporter takes the agent's schedule, which it reports once the store
+	// is open, after every Reload and daily; nil reports it through the
+	// store's index when that is a schedule.Reporter. A failed report is
+	// logged and sent again next time.
+	Reporter schedule.Reporter
 
 	once      sync.Once
 	repo      *goback.Repo
@@ -255,6 +261,7 @@ func (a *Agent) Run(ctx context.Context, tasks []*Task) error {
 		events:  make(chan commitEvent),
 		opens:   make(chan openResult),
 		plans:   make(chan []planResult),
+		reports: make(chan error),
 		quit:    make(chan struct{}),
 	}
 
@@ -442,6 +449,12 @@ type loop struct {
 	openBackoff time.Duration
 	openErr     error
 
+	reporting bool
+	// reportDue is when the schedule is reported next; zero is at once
+	reportDue time.Time
+	// unreported is set once the agent said the store takes no reports
+	unreported bool
+
 	entries []*entry
 	// retired are entries a reload removed while they ran.
 	retired []*entry
@@ -459,10 +472,11 @@ type loop struct {
 	cancelLook context.CancelFunc
 	afterMu    sync.Mutex
 
-	done   chan finished
-	events chan commitEvent
-	opens  chan openResult
-	plans  chan []planResult
+	done    chan finished
+	events  chan commitEvent
+	opens   chan openResult
+	plans   chan []planResult
+	reports chan error
 	// quit is closed once the loop returned, for the reads still under way.
 	quit chan struct{}
 
@@ -517,6 +531,7 @@ func (l *loop) run(ctx context.Context) error {
 		if !l.stopping {
 			l.connect(now)
 			l.plan(now)
+			l.report(now)
 			l.start(now)
 		}
 
@@ -541,6 +556,8 @@ func (l *loop) run(ctx context.Context) error {
 			l.opened(o)
 		case p := <-l.plans:
 			l.planned(p)
+		case err := <-l.reports:
+			l.reported(err)
 		case <-l.a.wake:
 			l.dirty = true
 		case tasks := <-l.a.reloads:
@@ -741,6 +758,57 @@ func (l *loop) planned(results []planResult) {
 		if commit != nil && commit.GetAgentId() != l.a.ID {
 			l.a.logger().Warn("another agent wrote the set's newest commit; one agent per set", "job", e.task.Name, "set", e.task.Set, "agent", commit.GetAgentId())
 		}
+	}
+}
+
+// report starts reporting the tasks' schedule when it is due, without
+// waiting for it; reported takes in the result.
+func (l *loop) report(now time.Time) {
+	if l.env == nil || l.reporting || now.Before(l.reportDue) {
+		return
+	}
+
+	l.reportDue = now.Add(schedule.ReportEvery)
+
+	to := l.a.Reporter
+	if to == nil {
+		to, _ = l.env.Index.(schedule.Reporter)
+	}
+
+	if to == nil {
+		return
+	}
+
+	tasks := make([]*Task, len(l.entries))
+	for i, e := range l.entries {
+		tasks[i] = e.task
+	}
+
+	l.reporting = true
+
+	go func() {
+		ctx, cancel := context.WithTimeout(l.lookCtx, time.Minute)
+		err := ReportSchedule(ctx, to, l.a.ID, tasks)
+		cancel()
+
+		select {
+		case l.reports <- err:
+		case <-l.quit:
+		}
+	}()
+}
+
+func (l *loop) reported(err error) {
+	l.reporting = false
+
+	switch {
+	case errors.Is(err, backup.ErrNotImplemented):
+		if !l.unreported {
+			l.unreported = true
+			l.a.logger().Info("the store takes no schedule reports, so it cannot tell when a backup is late", "error", err)
+		}
+	case err != nil && l.lookCtx.Err() == nil:
+		l.a.logger().Warn("reporting the schedule to the store failed; it is sent again after the next reload or in a day", "error", err)
 	}
 }
 
@@ -1245,6 +1313,7 @@ func (l *loop) reload(tasks []*Task) {
 
 	l.entries = next
 	l.dirty = true
+	l.reportDue = time.Time{}
 
 	l.a.logger().Info("reloaded the config", "added", added, "changed", changed, "removed", removed)
 }
@@ -1277,6 +1346,8 @@ func (l *loop) wait(now time.Time) time.Duration {
 		consider(l.openAt)
 		return d
 	}
+
+	consider(l.reportDue)
 
 	for _, e := range l.entries {
 		switch {

@@ -198,3 +198,16 @@ func TestLastRunIsTheScanStart(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, start.Equal(last))
 }
+
+func TestTheLongestGapOfAnIntervalIsTheInterval(t *testing.T) {
+	require.Equal(t, 6*time.Hour, Every(6*time.Hour).LongestGap(time.Now()))
+}
+
+func TestTheLongestGapOfACronIsTheLongestBetweenTwoSlotsOverTheComingYear(t *testing.T) {
+	from := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+
+	require.Equal(t, 72*time.Hour, cronPlan(t, "0 3 * * 1-5", time.UTC).LongestGap(from), "Friday to Monday")
+	require.Equal(t, 25*time.Hour, cronPlan(t, "0 3 * * *", berlin(t)).LongestGap(from), "the day the clocks fall back")
+	require.Equal(t, 365*24*time.Hour, cronPlan(t, "0 0 1 1 *", time.UTC).LongestGap(from))
+	require.Equal(t, time.Minute, cronPlan(t, "* * * * *", time.UTC).LongestGap(from))
+}

@@ -35,6 +35,10 @@ type Task struct {
 	// StaleAfter is how long a Serve task may go without reporting itself
 	// healthy before it counts as unhealthy; zero never judges it.
 	StaleAfter time.Duration
+	// CommitEvery is how often a Serve task receiving a database's log
+	// commits while the database writes; the agent reports its set as a
+	// receiver's.
+	CommitEvery time.Duration
 	// Log marks log capture, which runs outside the concurrency limit.
 	Log bool
 	// After names a set that must hold a complete commit before the task

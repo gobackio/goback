@@ -129,6 +129,31 @@ func (p *Plan) Due(offset time.Duration, last, now time.Time) time.Time {
 	return spread
 }
 
+// LongestGap is the most time the plan leaves between two slots: its
+// interval, or for cron the longest gap between two of its slots from the
+// first after from through the year after from.
+func (p *Plan) LongestGap(from time.Time) time.Duration {
+	if p.cron == nil {
+		return p.every
+	}
+
+	end := from.AddDate(1, 0, 0)
+
+	var longest time.Duration
+
+	for slot := p.next(from); !slot.IsZero() && !slot.After(end); {
+		next := p.next(slot)
+		if next.IsZero() {
+			break
+		}
+
+		longest = max(longest, next.Sub(slot))
+		slot = next
+	}
+
+	return longest
+}
+
 // staleAfter is how long after since, the task's last success, a task with
 // this plan is stale without another: three intervals, or for cron until
 // the third slot after since.
