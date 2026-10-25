@@ -452,8 +452,6 @@ type loop struct {
 	reporting bool
 	// reportDue is when the schedule is reported next; zero is at once
 	reportDue time.Time
-	// unreported is set once the agent said the store takes no reports
-	unreported bool
 
 	entries []*entry
 	// retired are entries a reload removed while they ran.
@@ -801,13 +799,7 @@ func (l *loop) report(now time.Time) {
 func (l *loop) reported(err error) {
 	l.reporting = false
 
-	switch {
-	case errors.Is(err, backup.ErrNotImplemented):
-		if !l.unreported {
-			l.unreported = true
-			l.a.logger().Info("the store takes no schedule reports, so it cannot tell when a backup is late", "error", err)
-		}
-	case err != nil && l.lookCtx.Err() == nil:
+	if err != nil && l.lookCtx.Err() == nil {
 		l.a.logger().Warn("reporting the schedule to the store failed; it is sent again after the next reload or in a day", "error", err)
 	}
 }

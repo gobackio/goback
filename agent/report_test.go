@@ -1,17 +1,13 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
-	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
-	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/job"
 	"github.com/gobackio/goback/backup/schedule"
 
@@ -143,40 +139,4 @@ func TestAFailedReportNeitherFailsNorHoldsABackupAndIsSentAgainNextTime(t *testi
 		require.Equal(t, []string{ResultOK, ResultOK, ResultOK}, h.results["a"][:3])
 		require.Equal(t, []time.Duration{0, 24 * time.Hour}, reporter.times())
 	})
-}
-
-func TestAnAgentAgainstAStoreWithoutReportsSaysSoOnce(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h := newHarness(t)
-		var logs bytes.Buffer
-		h.a.Logger = slog.New(slog.NewTextHandler(&syncWriter{w: &logs}, nil))
-
-		reporter := &reportingIndex{t0: h.t0, err: backup.ErrNotImplemented}
-		h.a.Reporter = reporter
-
-		a := h.fake("a", Every(time.Hour), time.Second, nil)
-		h.run(a)
-
-		time.Sleep(time.Minute)
-		h.a.Reload([]*Task{a})
-
-		time.Sleep(25 * time.Hour)
-		h.stop()
-
-		require.Len(t, reporter.times(), 3)
-		require.Equal(t, minutes(0, 60), h.startsOf("a")[:2])
-		require.Equal(t, 1, strings.Count(logs.String(), backup.ErrNotImplemented.Error()))
-	})
-}
-
-type syncWriter struct {
-	mu sync.Mutex
-	w  *bytes.Buffer
-}
-
-func (s *syncWriter) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.w.Write(p)
 }

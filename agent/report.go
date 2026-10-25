@@ -32,8 +32,7 @@ func Expectations(tasks []*Task, now time.Time) []schedule.Expectation {
 }
 
 // ReportSchedule reports to the store what tasks expect of their sets as
-// agent's, replacing what agent reported before. A store that takes no
-// reports answers backup.ErrNotImplemented.
+// agent's, replacing what agent reported before.
 func ReportSchedule(ctx context.Context, to schedule.Reporter, agent string, tasks []*Task) error {
 	return to.ReportSchedule(ctx, schedule.Report{Agent: agent, Sets: Expectations(tasks, time.Now())})
 }

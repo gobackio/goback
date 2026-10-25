@@ -6,12 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/schedule"
-	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -86,17 +83,5 @@ func TestAStoreWhoseIndexTakesNoReportsDoesNotSupportThem(t *testing.T) {
 	client := startServerWith(t, newMemIndex(), nil)("node-1")
 
 	err := client.ReportSchedule(context.Background(), schedule.Report{Agent: "node-1", Sets: []schedule.Expectation{dailyWorld}})
-	require.ErrorIs(t, err, backup.ErrNotImplemented)
-}
-
-func TestAServerWithoutTheCallDoesNotSupportReports(t *testing.T) {
-	remote := NewServer(NewStore(&reporting{memIndex: newMemIndex()}, nil))
-
-	older := proto.Store_ServiceDesc
-	older.Methods = slices.DeleteFunc(slices.Clone(older.Methods), func(m grpc.MethodDesc) bool { return m.MethodName == "ReportSchedule" })
-
-	dial := serveRemote(t, remote, nil, func(s *grpc.Server) { s.RegisterService(&older, remote) })
-
-	err := dial(testSecret, "node-1").ReportSchedule(context.Background(), schedule.Report{Agent: "node-1", Sets: []schedule.Expectation{dailyWorld}})
-	require.ErrorIs(t, err, backup.ErrNotImplemented)
+	require.Equal(t, codes.Unimplemented, status.Code(err))
 }

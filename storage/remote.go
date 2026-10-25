@@ -1245,13 +1245,9 @@ func (r *Client) Pins(ctx context.Context) ([]*proto.PinInfo, error) {
 	return resp.GetPins(), nil
 }
 
-// ReportSchedule implements schedule.Reporter; a server without the call,
-// or whose store takes no reports, is backup.ErrNotImplemented.
+// ReportSchedule implements schedule.Reporter.
 func (r *Client) ReportSchedule(ctx context.Context, report schedule.Report) error {
 	_, err := r.store.ReportSchedule(r.outgoing(ctx), m.ReportSchedule(report))
-	if status.Code(err) == codes.Unimplemented {
-		return fmt.Errorf("%w: %s", backup.ErrNotImplemented, status.Convert(err).Message())
-	}
 
 	return err
 }
