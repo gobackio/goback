@@ -1,10 +1,13 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/gobackio/goback/proto"
@@ -181,6 +184,35 @@ func TestRestoreTreeWritesNothingThroughADirectorySwappedForALink(t *testing.T) 
 	after, err := os.Stat(outside)
 	require.NoError(t, err)
 	require.Equal(t, before.Mode(), after.Mode())
+}
+
+func TestEntriesWithTheLongestNamesAreRestored(t *testing.T) {
+	b := newTreeBuilder(t)
+	dst := t.TempDir()
+
+	long, wide := strings.Repeat("a", 250), strings.Repeat("日", 80)
+	nodes := []*proto.TreeNode{b.file(long, "long", 0o644), b.file(long[:249]+"b", "other", 0o644), b.file(wide, "wide", 0o644)}
+
+	linked := os.Symlink(dst, filepath.Join(dst, "probe")) == nil
+	if linked {
+		nodes = append(nodes, b.link(strings.Repeat("l", 250), long))
+	}
+
+	slices.SortFunc(nodes, func(x, y *proto.TreeNode) int { return bytes.Compare(x.Stat.Name, y.Stat.Name) })
+
+	require.NoError(t, (&Restorer{Store: b.store}).RestoreTree(context.Background(), b.commit(nodes...), dst, TreeOptions{Delete: true}))
+
+	for name, content := range map[string]string{long: "long", long[:249] + "b": "other", wide: "wide"} {
+		got, err := os.ReadFile(filepath.Join(dst, name))
+		require.NoError(t, err)
+		require.Equal(t, content, string(got))
+	}
+
+	if linked {
+		target, err := os.Readlink(filepath.Join(dst, strings.Repeat("l", 250)))
+		require.NoError(t, err)
+		require.Equal(t, long, target)
+	}
 }
 
 func TestACancelledRestoreFails(t *testing.T) {

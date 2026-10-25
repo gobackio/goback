@@ -3,6 +3,8 @@ package backup
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -13,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/gobackio/goback/backup/blobcache"
 	"github.com/gobackio/goback/backup/storekey"
@@ -621,8 +625,38 @@ func PartialPath(path string) string {
 	return filepath.Join(filepath.Dir(path), partialName(filepath.Base(path)))
 }
 
+// maxNameLength is the longest name a directory entry has on the
+// filesystems a restore writes, in bytes, or UTF-16 code units on Windows.
+const maxNameLength = 255
+
+// partialName is the name of the partial file of the entry named name:
+// the name between a dot and ".goback.partial" or, where that is too long
+// to be a name, as much of it as fits with a hash of all of it.
 func partialName(name string) string {
-	return "." + name + ".goback.partial"
+	const suffix = ".goback.partial"
+
+	if full := "." + name + suffix; nameLength(full) <= maxNameLength {
+		return full
+	}
+
+	sum := sha256.Sum256([]byte(name))
+	tag := "~" + hex.EncodeToString(sum[:8])
+
+	kept := name
+	for nameLength("."+kept+tag+suffix) > maxNameLength {
+		_, size := utf8.DecodeLastRuneInString(kept)
+		kept = kept[:len(kept)-size]
+	}
+
+	return "." + kept + tag + suffix
+}
+
+func nameLength(name string) int {
+	if runtime.GOOS == "windows" {
+		return len(utf16.Encode([]rune(name)))
+	}
+
+	return len(name)
 }
 
 // partial is the file RestoreFile assembles path in, next to it.
