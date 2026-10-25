@@ -789,6 +789,8 @@ func TestRestoreFilesOverADestinationFetchesOnlyWhatItLacks(t *testing.T) {
 	content := make([]byte, f.sizes[11])
 	random(content, 11)
 	require.NoError(t, os.Remove(path(into, 11)))
+	require.NoError(t, os.Mkdir(filepath.Join(into, backup.StagingDir), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(into, backup.StagingDir, backup.StagingMarker), nil, 0o600))
 	require.NoError(t, os.WriteFile(backup.PartialPath(path(into, 11)), content[:len(content)/2], 0o600))
 
 	client, seen := serveShaped(t, f, link{}, true)

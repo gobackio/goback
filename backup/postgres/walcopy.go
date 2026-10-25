@@ -216,7 +216,8 @@ func (t *commitFiles) restoreWAL(ctx context.Context, fsys backup.WriteFS, path 
 
 	random, ok := fsys.(backup.RandomWriteFS)
 	if pad && !ok {
-		restorer.FS = padFS{WriteFS: fsys, size: node.Stat.GetSize()}
+		_, name := fsys.Split(path)
+		restorer.FS = padFS{WriteFS: fsys, name: name, size: node.Stat.GetSize()}
 	}
 
 	outcome, err := restorer.RestoreFile(ctx, path, node.Stat, node.Ref)
@@ -265,16 +266,21 @@ func padSegment(ctx context.Context, fsys backup.RandomWriteFS, path string) err
 	return f.Close()
 }
 
-// padFS writes a partial segment of size bytes onto a tree written front
-// to back, followed by the zeros padSegment would add.
+// padFS writes a partial segment of size bytes, named name, onto a tree
+// written front to back, followed by the zeros padSegment would add.
 type padFS struct {
 	backup.WriteFS
+	name string
 	size int64
 }
 
 // WriteFile implements backup.WriteFS. It counts only the segment's own
-// bytes as written.
+// bytes as written, and writes every other file as it is.
 func (p padFS) WriteFile(ctx context.Context, path string, r io.Reader) (int64, error) {
+	if _, name := p.Split(path); name != p.name {
+		return p.WriteFS.WriteFile(ctx, path, r)
+	}
+
 	var head bytes.Buffer
 
 	hdr, err := readSegmentHeader(io.TeeReader(r, &head))

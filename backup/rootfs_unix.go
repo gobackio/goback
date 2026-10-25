@@ -26,6 +26,6 @@ var linksRefused error = syscall.EPERM
 
 func rootRel(rel string) string { return rel }
 
-func symlinkIn(root *os.Root, target, rel, path string) error {
+func symlinkIn(root *os.Root, target, rel, path, _ string) error {
 	return named(root.Symlink(target, rel), path)
 }

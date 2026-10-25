@@ -195,6 +195,11 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 		return nil
 	}
 
+	// before the directories get their times, which removing changes
+	if err := r.cleanStaging(ctx); err != nil {
+		return err
+	}
+
 	for i := len(l.entries) - 1; i >= 0; i-- {
 		e := l.entries[i]
 		if !e.info.IsDir() || e.stat.GetLost() || e.unsupported {
@@ -478,11 +483,13 @@ func keptName(name string) string {
 }
 
 // diskName is the name an entry named name is written under, and false when
-// it is left out because this platform cannot hold it, or it collides with
-// a sibling once the platform drops what it ends in, and names are not
-// escaped.
+// it is left out: it is StagingDir, or this platform cannot hold it, or it
+// collides with a sibling once the platform drops what it ends in, and
+// names are not escaped.
 func (l *treeList) diskName(name string, collides bool) (string, bool) {
 	switch {
+	case name == StagingDir:
+		return "", false
 	case holdsName(name) && !collides:
 		return name, true
 	case !l.escape:
@@ -704,7 +711,7 @@ func (r *Restorer) restoreAll(ctx context.Context, files []FileToRestore, opts T
 		}
 	}
 
-	err := r.RestoreFiles(ctx, files, func(i int, outcome Outcome, err error) error {
+	err := r.restoreFiles(ctx, files, func(i int, outcome Outcome, err error) error {
 		switch outcome {
 		case OutcomeWritten, OutcomeUnchanged, OutcomeSkipped, OutcomeSalvaged:
 			placed[i].Store(err == nil)
@@ -753,7 +760,12 @@ func (r *Restorer) restoreLink(ctx context.Context, target, path string, stat *p
 		}
 	}
 
-	partial := r.partial(path)
+	partial, staged, err := r.stage(ctx, path)
+	if err != nil {
+		return 0, err
+	}
+	defer staged()
+
 	if err := removeIfThere(ctx, fsys, partial); err != nil {
 		return 0, err
 	}
@@ -817,12 +829,23 @@ func (r *Restorer) restoreSymlink(ctx context.Context, path string, stat *proto.
 		}
 	}
 
-	partial := r.partial(path)
+	partial, staged, err := r.stage(ctx, path)
+	if err != nil {
+		return err
+	}
+	defer staged()
+
 	if err := removeIfThere(ctx, fsys, partial); err != nil {
 		return err
 	}
 
-	if err := fsys.Symlink(ctx, target, partial); err != nil {
+	if local, ok := fsys.(*rootedFS); ok {
+		err = local.symlinkAs(ctx, target, partial, path)
+	} else {
+		err = fsys.Symlink(ctx, target, partial)
+	}
+
+	if err != nil {
 		return err
 	}
 
@@ -869,19 +892,38 @@ func (r *Restorer) clearDir(ctx context.Context, path string, siblings []os.File
 
 // removeUnrestored deletes everything under dir the restore did not
 // write, a directory with all it holds, except the partial files a later
-// restore of the same paths resumes from.
+// restore of the same paths resumes from and the entries left out for
+// their names, with all they hold.
 func (r *Restorer) removeUnrestored(ctx context.Context, dir string, entries []treeEntry, removing func(string)) error {
 	fsys := r.fs()
 
 	keep := make(map[string]bool, 2*len(entries))
+	// whole holds the kept paths whose content is kept too, and staged
+	// whether a directory's staging directory is a restore's
+	whole, staged := map[string]bool{}, map[string]bool{}
 	// written holds the paths the restore wrote, by their directory
 	written := map[string][]string{}
 
 	for _, e := range entries {
 		keep[e.path] = true
-		keep[r.partial(e.path)] = true
+		whole[e.path] = e.unsupported
 
 		parent, _ := fsys.Split(e.path)
+		owned, seen := staged[parent]
+
+		if !seen {
+			_, owned = r.stagedPartial(ctx, e.path)
+			staged[parent] = owned
+
+			if owned {
+				keep[fsys.Join(parent, StagingDir)], keep[fsys.Join(fsys.Join(parent, StagingDir), StagingMarker)] = true, true
+			}
+		}
+
+		if owned {
+			keep[r.partial(e.path)] = true
+		}
+
 		written[parent] = append(written[parent], e.path)
 	}
 
@@ -955,7 +997,7 @@ func (r *Restorer) removeUnrestored(ctx context.Context, dir string, entries []t
 			switch {
 			case !kept:
 				stale = append(stale, fsys.Join(d, entry.Name()))
-			case entry.IsDir():
+			case entry.IsDir() && !whole[path]:
 				if err := walk(path); err != nil {
 					return err
 				}

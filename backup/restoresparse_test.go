@@ -51,7 +51,7 @@ func TestASparseFileIsRestoredFreshOverAPartialAndOverAnotherVersion(t *testing.
 
 			dir := t.TempDir()
 			fresh, patched, replaced := filepath.Join(dir, "fresh"), filepath.Join(dir, "patched"), filepath.Join(dir, "replaced")
-			require.NoError(t, os.WriteFile(PartialPath(patched), bytes.Repeat([]byte{0xff}, len(data)), 0o600))
+			writePartial(t, patched, bytes.Repeat([]byte{0xff}, len(data)))
 			require.NoError(t, os.WriteFile(replaced, bytes.Repeat([]byte{0xee}, len(data)), 0o600))
 
 			r := &Restorer{Store: store, Key: key, Verify: true}
@@ -104,7 +104,7 @@ func TestZeroPartsReadBackAsZeroes(t *testing.T) {
 
 	// a partial of other content, as a failed restore of another version
 	// leaves it, must have its zeroes written
-	require.NoError(t, os.WriteFile(PartialPath(patched), bytes.Repeat([]byte{0xff}, len(data)), 0o600))
+	writePartial(t, patched, bytes.Repeat([]byte{0xff}, len(data)))
 
 	r := &Restorer{Store: store, Verify: true}
 	for _, path := range []string{fresh, patched} {
@@ -121,7 +121,7 @@ func TestZeroPartsOfSmallFilesReadBackAsZeroes(t *testing.T) {
 
 	dir := t.TempDir()
 	fresh, patched := filepath.Join(dir, "fresh.dat"), filepath.Join(dir, "patched.dat")
-	require.NoError(t, os.WriteFile(PartialPath(patched), bytes.Repeat([]byte{0xff}, len(data)), 0o600))
+	writePartial(t, patched, bytes.Repeat([]byte{0xff}, len(data)))
 
 	r := &Restorer{Store: store}
 	err := r.RestoreFiles(context.Background(), []FileToRestore{

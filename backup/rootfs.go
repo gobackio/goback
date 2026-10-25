@@ -33,6 +33,7 @@ type confinedDir struct {
 var (
 	_ RandomWriteFS = (*rootedFS)(nil)
 	_ LinkWriteFS   = (*rootedFS)(nil)
+	_ mkdirFS       = (*rootedFS)(nil)
 )
 
 // confine reaches every path under dir, which must exist, through a root
@@ -173,6 +174,17 @@ func (l *rootedFS) MkdirAll(ctx context.Context, dir string) error {
 	return named(root.MkdirAll(rel, 0o775), dir)
 }
 
+// Mkdir makes dir, failing with an error matching fs.ErrExist where
+// something is there.
+func (l *rootedFS) Mkdir(ctx context.Context, dir string) error {
+	root, rel := l.resolve(dir)
+	if root == nil {
+		return LocalFS{}.Mkdir(ctx, dir)
+	}
+
+	return named(root.Mkdir(rel, 0o700), dir)
+}
+
 // WriteFile implements WriteFS.
 func (l *rootedFS) WriteFile(ctx context.Context, path string, r io.Reader) (int64, error) {
 	root, rel := l.resolve(path)
@@ -285,12 +297,19 @@ func (l *rootedFS) RemoveAll(ctx context.Context, path string) error {
 
 // Symlink implements WriteFS.
 func (l *rootedFS) Symlink(ctx context.Context, target, path string) error {
+	return l.symlinkAs(ctx, target, path, path)
+}
+
+// symlinkAs makes path a symlink to target that resolves target as a link
+// at at does, where Windows tells a link to a directory from one to a
+// file.
+func (l *rootedFS) symlinkAs(ctx context.Context, target, path, at string) error {
 	root, rel := l.resolve(path)
 	if root == nil {
 		return LocalFS{}.Symlink(ctx, target, path)
 	}
 
-	return unsupportedLink(symlinkIn(root, target, rel, path))
+	return unsupportedLink(symlinkIn(root, target, rel, path, at))
 }
 
 // Link implements LinkWriteFS; both paths are under the same root or under

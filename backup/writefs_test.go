@@ -181,7 +181,7 @@ func TestAFileIsStreamedOntoATreeWrittenFrontToBack(t *testing.T) {
 
 	stat := statFor(data)
 	path := filepath.Join(t.TempDir(), "world.dat")
-	require.NoError(t, os.WriteFile(PartialPath(path), []byte("left by an earlier restore"), 0o600))
+	writePartial(t, path, []byte("left by an earlier restore"))
 
 	restorer := &Restorer{Store: store, FS: frontToBack{LocalFS{}}}
 

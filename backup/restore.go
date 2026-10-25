@@ -3,8 +3,6 @@ package backup
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -15,8 +13,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode/utf16"
-	"unicode/utf8"
 
 	"github.com/gobackio/goback/backup/blobcache"
 	"github.com/gobackio/goback/backup/storekey"
@@ -89,7 +85,7 @@ const (
 	// restore wrote, as the backup recorded it.
 	OutcomeLinked
 	// OutcomeUnsupportedName means the entry, with all it holds, was left
-	// out: this platform cannot hold its name.
+	// out: this platform cannot hold its name, or it is StagingDir.
 	OutcomeUnsupportedName
 )
 
@@ -273,7 +269,8 @@ type Restorer struct {
 	owners   *owners
 	ownerErr error
 	// parts locates every part the restore can copy rather than fetch
-	parts *SeedMap
+	parts   *SeedMap
+	staging staging
 
 	budgetOnce sync.Once
 	budget     *semaphore.Weighted
@@ -431,14 +428,24 @@ func (r *Restorer) groupBudget() (*semaphore.Weighted, int64) {
 }
 
 // RestoreFile puts the file ref describes at path with the recorded mode
-// and mtime, assembling it in a partial file next to it and renaming into
-// place. A failed restore leaves the partial file behind, and the next one
-// takes every part from it that still hashes to its ref. On a tree that
-// is no RandomWriteFS, the file is written front to back and neither the
-// destination nor a partial file is read. A file the store lost, or whose
-// content was only in the cloud and never backed up, leaves path as it is,
-// with OutcomeLost or OutcomeCloudOnly.
+// and mtime, assembling it in a partial file in the StagingDir beside it
+// and renaming into place. A failed restore leaves the partial file
+// behind, and the next one takes every part from it that still hashes to
+// its ref. On a tree that is no RandomWriteFS, the file is written front
+// to back and neither the destination nor a partial file is read. A file
+// the store lost, or whose content was only in the cloud and never backed
+// up, leaves path as it is, with OutcomeLost or OutcomeCloudOnly.
 func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.FileInfo, ref *proto.Ref) (Outcome, error) {
+	outcome, err := r.restoreFile(ctx, path, stat, ref)
+	if err != nil {
+		return 0, err
+	}
+
+	return outcome, r.cleanStaging(ctx)
+}
+
+// restoreFile is RestoreFile leaving the staging directory in place.
+func (r *Restorer) restoreFile(ctx context.Context, path string, stat *proto.FileInfo, ref *proto.Ref) (Outcome, error) {
 	if err := r.check(); err != nil {
 		return 0, err
 	}
@@ -531,7 +538,12 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 	}
 
 	local := r.rechunked(path, hasFile, matched)
-	partial := r.partial(path)
+
+	partial, staged, err := r.stage(ctx, path)
+	if err != nil {
+		return 0, errors.Wrapf(err, "restoring %s", path)
+	}
+	defer staged()
 
 	tmp, err := openPartial(ctx, random, partial)
 	if err != nil {
@@ -683,51 +695,9 @@ func (r *Restorer) settle(ctx context.Context, fsys RandomWriteFS, tmp RandomFil
 }
 
 // PartialPath is the file RestoreFile assembles path in on the local disk,
-// next to it.
+// in the StagingDir beside it.
 func PartialPath(path string) string {
-	return filepath.Join(filepath.Dir(path), partialName(filepath.Base(path)))
-}
-
-// maxNameLength is the longest name a directory entry has on the
-// filesystems a restore writes, in bytes, or UTF-16 code units on Windows.
-const maxNameLength = 255
-
-// partialName is the name of the partial file of the entry named name:
-// the name between a dot and ".goback.partial" or, where that is too long
-// to be a name, as much of it as fits with a hash of all of it.
-func partialName(name string) string {
-	const suffix = ".goback.partial"
-
-	if full := "." + name + suffix; nameLength(full) <= maxNameLength {
-		return full
-	}
-
-	sum := sha256.Sum256([]byte(name))
-	tag := "~" + hex.EncodeToString(sum[:8])
-
-	kept := name
-	for nameLength("."+kept+tag+suffix) > maxNameLength {
-		_, size := utf8.DecodeLastRuneInString(kept)
-		kept = kept[:len(kept)-size]
-	}
-
-	return "." + kept + tag + suffix
-}
-
-func nameLength(name string) int {
-	if runtime.GOOS == "windows" {
-		return len(utf16.Encode([]rune(name)))
-	}
-
-	return len(name)
-}
-
-// partial is the file RestoreFile assembles path in, next to it.
-func (r *Restorer) partial(path string) string {
-	fsys := r.fs()
-	dir, name := fsys.Split(path)
-
-	return fsys.Join(dir, partialName(name))
+	return filepath.Join(filepath.Dir(path), StagingDir, filepath.Base(path))
 }
 
 // openPartial opens the partial file for writing, keeping what an earlier
@@ -758,7 +728,12 @@ func (r *Restorer) dropPartial(ctx context.Context, path string) error {
 		return nil
 	}
 
-	return removeIfThere(ctx, r.fs(), r.partial(path))
+	partial, ok := r.stagedPartial(ctx, path)
+	if !ok {
+		return nil
+	}
+
+	return removeIfThere(ctx, r.fs(), partial)
 }
 
 // zeroHoles writes zeroes over the parts a salvage went without, in a

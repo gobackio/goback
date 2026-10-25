@@ -156,7 +156,7 @@ const symlinkFlagRelative = 1
 
 // symlinkIn makes at rel in root the link os.Symlink would make at path: a
 // directory link when target, relative to path's directory, is one.
-func symlinkIn(root *os.Root, target, rel, path string) error {
+func symlinkIn(root *os.Root, target, rel, path, at string) error {
 	if target == "" {
 		return &os.LinkError{Op: "symlink", Old: target, New: path, Err: syscall.EINVAL}
 	}
@@ -171,9 +171,9 @@ func symlinkIn(root *os.Root, target, rel, path string) error {
 	dest := target
 	if filepath.VolumeName(target) == "" {
 		if os.IsPathSeparator(target[0]) {
-			dest = filepath.VolumeName(path) + target
+			dest = filepath.VolumeName(at) + target
 		} else {
-			dest = filepath.Join(filepath.Dir(path), target)
+			dest = filepath.Join(filepath.Dir(at), target)
 		}
 	}
 

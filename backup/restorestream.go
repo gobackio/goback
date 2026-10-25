@@ -20,7 +20,12 @@ func (r *Restorer) streamFile(ctx context.Context, fsys WriteFS, path string, st
 		return OutcomeWouldWrite, nil
 	}
 
-	partial := r.partial(path)
+	partial, staged, err := r.stage(ctx, path)
+	if err != nil {
+		return 0, errors.Wrapf(err, "restoring %s", path)
+	}
+	defer staged()
+
 	stream := r.newPartStream(ctx, reader)
 
 	n, err := fsys.WriteFile(ctx, partial, stream)

@@ -43,6 +43,15 @@ type FileToRestore struct {
 // once; an error it returns stops the restore. A restore whose ctx ends
 // fails with ctx's error, whatever done made of the files it cut short.
 func (r *Restorer) RestoreFiles(ctx context.Context, files []FileToRestore, done func(i int, outcome Outcome, err error) error) error {
+	if err := r.restoreFiles(ctx, files, done); err != nil {
+		return err
+	}
+
+	return r.cleanStaging(ctx)
+}
+
+// restoreFiles is RestoreFiles leaving the staging directories in place.
+func (r *Restorer) restoreFiles(ctx context.Context, files []FileToRestore, done func(i int, outcome Outcome, err error) error) error {
 	if err := r.check(); err != nil {
 		return err
 	}
@@ -120,7 +129,7 @@ func (r *Restorer) restoreOne(ctx context.Context, i int, file FileToRestore, do
 
 	r.guess(file.Rel, file.Stat)
 
-	outcome, err := r.RestoreFile(ctx, file.Path, file.Stat, file.Ref)
+	outcome, err := r.restoreFile(ctx, file.Path, file.Stat, file.Ref)
 
 	return done(i, outcome, err)
 }
@@ -501,7 +510,11 @@ func (g *group) finish(m *member, outcome Outcome, err error) error {
 // writeWhole puts a file whose content is all in buf at path through its
 // partial file.
 func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.FileInfo, ref *proto.Ref, reader *fileReader, buf []byte) error {
-	partial := r.partial(path)
+	partial, staged, err := r.stage(ctx, path)
+	if err != nil {
+		return err
+	}
+	defer staged()
 
 	random, ok := r.fs().(RandomWriteFS)
 	if !ok {

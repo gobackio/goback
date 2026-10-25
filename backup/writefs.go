@@ -113,6 +113,7 @@ type RandomFile interface {
 var (
 	_ RandomWriteFS = LocalFS{}
 	_ LinkWriteFS   = LocalFS{}
+	_ mkdirFS       = LocalFS{}
 )
 
 // Split implements WriteFS.
@@ -123,6 +124,12 @@ func (LocalFS) Split(path string) (string, string) {
 // MkdirAll implements WriteFS.
 func (LocalFS) MkdirAll(_ context.Context, dir string) error {
 	return os.MkdirAll(dir, 0o775)
+}
+
+// Mkdir makes dir, failing with an error matching fs.ErrExist where
+// something is there.
+func (LocalFS) Mkdir(_ context.Context, dir string) error {
+	return os.Mkdir(dir, 0o700)
 }
 
 // WriteFile implements WriteFS.

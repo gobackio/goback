@@ -842,7 +842,7 @@ func TestASalvageOverAPartialLeavesZeroesInItsHoles(t *testing.T) {
 	require.NoError(t, store.Delete(ctx, parts[1].Ref))
 
 	path := filepath.Join(t.TempDir(), "vm.img")
-	require.NoError(t, os.WriteFile(PartialPath(path), bytes.Repeat([]byte{0xaa}, len(data)), 0o600))
+	writePartial(t, path, bytes.Repeat([]byte{0xaa}, len(data)))
 
 	outcome, err := (&Restorer{Store: store, Salvage: true}).RestoreFile(ctx, path, statFor(data), ref)
 	require.NoError(t, err)
@@ -1026,7 +1026,7 @@ func TestARestoreResumesFromItsPartial(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, entries, 1, "the partial became the file")
 
-			require.NoError(t, os.WriteFile(PartialPath(path), []byte("left over"), 0o644))
+			writePartial(t, path, []byte("left over"))
 
 			outcome, err = r.RestoreFile(ctx, path, stat, ref)
 			require.NoError(t, err)

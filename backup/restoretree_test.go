@@ -491,8 +491,8 @@ func TestRemoveUnrestoredKeepsWhatTheRestoreWroteUnderAnotherSpelling(t *testing
 func TestRemoveUnrestoredKeepsThePartialsOfRestoredFiles(t *testing.T) {
 	base := t.TempDir()
 	level, gone := filepath.Join(base, "level.dat"), filepath.Join(base, "gone.dat")
-	writeFile(t, PartialPath(level))
-	writeFile(t, PartialPath(gone))
+	writePartial(t, level, []byte("x"))
+	writePartial(t, gone, []byte("x"))
 
 	require.NoError(t, (&Restorer{}).removeUnrestored(context.Background(), base, entriesOf(level), nil))
 	require.FileExists(t, PartialPath(level))
