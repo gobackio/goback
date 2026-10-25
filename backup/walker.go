@@ -211,7 +211,7 @@ type Walker struct {
 	emptyFile func() (*proto.Ref, error)
 	// local is the root a walk of the local disk lists and opens what it
 	// reads in, where the platform has one
-	local *os.Root
+	local localRoot
 	// mounts holds the timestamps of each mount a walk of the local disk
 	// reaches
 	mounts *mountTimes
@@ -906,7 +906,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, listed os.FileInf
 		return nil, false, fmt.Errorf("listing %s: %w", dir, err)
 	}
 
-	if listed != nil && found.self != nil && !os.SameFile(listed, found.self) {
+	if listed != nil && found.self != nil && !sameFile(listed, found.self) {
 		return nil, false, fmt.Errorf("%w: %s is no longer the directory listed", errVanished, dir)
 	}
 
@@ -1473,7 +1473,7 @@ func (w *Walker) readFile(ctx context.Context, path, rel string, parent, listed 
 	defer file.Close()
 
 	current := listed
-	if parent != nil && !os.SameFile(listed, info) {
+	if parent != nil && !sameFile(listed, info) {
 		current = info
 	}
 

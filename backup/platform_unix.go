@@ -132,10 +132,19 @@ func localReadDir(dir string) ([]os.DirEntry, error) {
 	return os.ReadDir(dir)
 }
 
+// localRoot is the directory a walk of the local disk lists and opens what
+// it reads in.
+type localRoot = *os.Root
+
 // openLocalRoot opens dir, the root of a walk on the local disk, as the
 // os.Root the walk lists and opens everything in.
 func openLocalRoot(dir string) (*os.Root, error) {
 	return os.OpenRoot(dir)
+}
+
+// sameFile is os.SameFile.
+func sameFile(a, b os.FileInfo) bool {
+	return os.SameFile(a, b)
 }
 
 // listIn lists the directory at rel in root sorted by name, each entry

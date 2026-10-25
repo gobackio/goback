@@ -15,9 +15,14 @@ import (
 // isSparse reports whether the file carries the sparse attribute; only
 // such a file can have unallocated ranges.
 func isSparse(info os.FileInfo) bool {
-	attrs, ok := info.Sys().(*syscall.Win32FileAttributeData)
+	switch stat := info.Sys().(type) {
+	case *syscall.Win32FileAttributeData:
+		return stat.FileAttributes&windows.FILE_ATTRIBUTE_SPARSE_FILE != 0
+	case *fileStatInformation:
+		return stat.FileAttributes&windows.FILE_ATTRIBUTE_SPARSE_FILE != 0
+	}
 
-	return ok && attrs.FileAttributes&windows.FILE_ATTRIBUTE_SPARSE_FILE != 0
+	return false
 }
 
 // allocatedRange is a FILE_ALLOCATED_RANGE_BUFFER.

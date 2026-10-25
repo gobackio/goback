@@ -11,7 +11,7 @@ import (
 // produces the zeros of the holes without reading them; any other file is
 // read as it is.
 func contentReader(file File, info os.FileInfo) io.Reader {
-	local, ok := file.(*os.File)
+	local, ok := file.(localFile)
 	if !ok || !info.Mode().IsRegular() || !isSparse(info) {
 		return file
 	}
@@ -22,6 +22,12 @@ func contentReader(file File, info os.FileInfo) io.Reader {
 	}
 
 	return &holeReader{conn: conn, data: local, size: info.Size()}
+}
+
+// localFile is a file of the local disk, an *os.File or one embedding it.
+type localFile interface {
+	io.ReaderAt
+	SyscallConn() (syscall.RawConn, error)
 }
 
 // holeReader reads a sparse file sequentially, asking the file system for

@@ -107,21 +107,6 @@ func localReadDir(dir string) ([]os.DirEntry, error) {
 	return entries, err
 }
 
-// openLocalRoot opens no root here: a walk on the local disk lists and
-// opens by path.
-func openLocalRoot(string) (*os.Root, error) {
-	return nil, nil
-}
-
-// listIn and openIn are never called without a root from openLocalRoot.
-func listIn(*os.Root, string) ([]os.DirEntry, os.FileInfo, error) {
-	return nil, nil, errors.ErrUnsupported
-}
-
-func openIn(*os.Root, string, string, os.FileInfo) (File, error) {
-	return nil, errors.ErrUnsupported
-}
-
 type lstatEntry struct {
 	os.DirEntry
 	dir string
