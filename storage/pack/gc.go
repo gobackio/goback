@@ -162,6 +162,9 @@ type CollectReport struct {
 	// Waiting is the generation whose published plan has not been
 	// rewritten yet; a run that waits does nothing else.
 	Waiting uint64
+	// Busy is set when another process maintains the store; a run that
+	// finds it busy does nothing else.
+	Busy bool
 	// SweepSkipped names the reason when the run marked but did not sweep.
 	SweepSkipped string
 	// Published counts the archives of the plan the run published.
@@ -187,6 +190,10 @@ type CollectReport struct {
 func (r *CollectReport) Summary() string {
 	if r.Waiting > 0 {
 		return fmt.Sprintf("GC waits for the rewrite of generation %d", r.Waiting)
+	}
+
+	if r.Busy {
+		return "GC left to another process maintaining the store"
 	}
 
 	summary := fmt.Sprintf("GC generation %d: %d roots, %d of %d objects in %d archives marked, %d objects (%s) dead, %s",
@@ -371,8 +378,9 @@ type gcRoot struct {
 // the result beside each archive and rewrites archives whose dead share
 // justifies it. An unreachable object gets a tombstone, and the next
 // generation drops it if it is still unreachable and no session that
-// relied on it took the tombstone back as it committed. The context must
-// not carry a session.
+// relied on it took the tombstone back as it committed. While another
+// process maintains the store it does nothing and sets Busy. The context
+// must not carry a session.
 func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*CollectReport, error) {
 	if _, ok := backup.SessionFromContext(ctx); ok {
 		return nil, errors.New("garbage collection runs outside a session")
@@ -384,16 +392,26 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 	ctx, span := tracer.Start(ctx, "PackStorage.Collect")
 	defer span.End()
 
-	ps.compactorMtx.Lock()
-	defer ps.compactorMtx.Unlock()
+	ps.maintenanceMtx.Lock()
+	defer ps.maintenanceMtx.Unlock()
 
-	pending, err := ps.PendingPlans()
+	lease, ctx, err := ps.leaseMaintenance(ctx)
 	if err != nil {
-		return nil, errors.Wrap(err, "listing published plans")
+		return nil, errors.Wrap(err, "leasing the maintenance")
 	}
 
-	if len(pending) > 0 {
-		return &CollectReport{Waiting: pending[0], Duration: time.Since(started)}, nil
+	if lease == nil {
+		return &CollectReport{Busy: true, Duration: time.Since(started)}, nil
+	}
+	defer lease.release()
+
+	waiting, err := ps.waitingPlan()
+	if err != nil {
+		return nil, err
+	}
+
+	if waiting > 0 {
+		return &CollectReport{Waiting: waiting, Duration: time.Since(started)}, nil
 	}
 
 	prev, err := loadGCState(ps.storage)

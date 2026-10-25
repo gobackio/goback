@@ -79,6 +79,7 @@ type Mapper interface {
 	// field:Commit from:"Revival.Commit" using:"Hex"
 	// field:Missing from:"Revival.Missing" using:"Hexes"
 	// field:MissingCount from:"Revival.MissingCount"
+	// field:Busy from:"Revival.Busy"
 	Unretired(in index.Unretired) UnretiredView
 }
 
@@ -181,6 +182,7 @@ type UnretiredView struct {
 	Missing      []string `json:"missing,omitempty"`
 	MissingCount int      `json:"missing_count,omitempty"`
 	RetainedBy   string   `json:"retained_by,omitempty"`
+	Busy         bool     `json:"busy,omitempty"`
 }
 
 // NodeView is a file or directory as JSON output shows it.
@@ -220,6 +222,7 @@ type WalkView struct {
 type ReportView struct {
 	Generation           uint64           `json:"generation"`
 	Waiting              uint64           `json:"waiting,omitempty"`
+	Busy                 bool             `json:"busy,omitempty"`
 	Archives             int              `json:"archives"`
 	Objects              uint64           `json:"objects"`
 	Roots                int              `json:"roots"`

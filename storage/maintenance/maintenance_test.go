@@ -222,6 +222,21 @@ func TestNewRunnerFindsTheJobsAndEachReindexesAfter(t *testing.T) {
 	require.Equal(t, int32(3), x.fakeReindexer.runs.Load())
 }
 
+type busyCollector struct{}
+
+func (busyCollector) Collect(context.Context, pack.CollectOptions) (*pack.CollectReport, error) {
+	return &pack.CollectReport{Busy: true}, nil
+}
+
+func TestABusyCollectionRecordsNoSetSizes(t *testing.T) {
+	x := &fakeIndex{}
+
+	report, err := Collect(context.Background(), busyCollector{}, x, pack.CollectOptions{})
+	require.NoError(t, err, "busy is no failure")
+	require.True(t, report.Busy)
+	require.Zero(t, x.recorded.Load(), "a collection that did nothing measured no set")
+}
+
 type fakeForecaster struct{ asked time.Time }
 
 func (f *fakeForecaster) RootDeath(_ context.Context, now time.Time) (func([]byte) time.Time, error) {

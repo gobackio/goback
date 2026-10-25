@@ -37,8 +37,8 @@ func Repair(ctx context.Context, store backup.ObjectStore, idx backup.Index) (*p
 	}
 
 	report, err := repairer.Repair(ctx)
-	if err != nil {
-		return nil, nil, err
+	if err != nil || report.Busy {
+		return report, nil, err
 	}
 
 	damage, err := RecordDamage(ctx, idx, report.Lost)

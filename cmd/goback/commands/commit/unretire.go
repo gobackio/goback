@@ -74,6 +74,10 @@ func unretireAction(c *cli.Context) {
 }
 
 func unretiredLine(u views.UnretiredView, dryRun bool) string {
+	if u.Busy {
+		return fmt.Sprintf("Commit %s of %s left as it is to another process maintaining the store", u.Commit, u.Set)
+	}
+
 	if u.MissingCount > 0 {
 		return fmt.Sprintf("Commit %s of %s stays tombstoned: %d objects it reaches are gone, among them %s",
 			u.Commit, u.Set, u.MissingCount, strings.Join(u.Missing, ", "))

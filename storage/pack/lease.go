@@ -13,27 +13,28 @@ import (
 	"time"
 )
 
-// CompactionExt names the leases on the store's compaction: <n>.compaction
+// MaintenanceExt names the leases on the store's maintenance: <n>.maintenance
 // is the nth, held by the process that created it until it releases it or
-// stops renewing it. A compaction in another process that finds the newest
-// one held does nothing.
-const CompactionExt = ".compaction"
+// stops renewing it. Collect, RewritePlan, Repair, Revive and Compact each
+// take it, and in another process that finds the newest one held they do
+// nothing and report Busy.
+const MaintenanceExt = ".maintenance"
 
-// compactionLeaseTTL is how long a lease nobody renews stays held, and
-// compactionLeaseRenewal how often its holder renews it.
+// maintenanceLeaseTTL is how long a lease nobody renews stays held, and
+// maintenanceLeaseRenewal how often its holder renews it.
 var (
-	compactionLeaseTTL     = time.Hour
-	compactionLeaseRenewal = 10 * time.Minute
+	maintenanceLeaseTTL     = time.Hour
+	maintenanceLeaseRenewal = 10 * time.Minute
 )
 
 var leaseReleased = []byte("released")
 
 func leaseName(n uint64) string {
-	return fmt.Sprintf("%020d%s", n, CompactionExt)
+	return fmt.Sprintf("%020d%s", n, MaintenanceExt)
 }
 
-// compactionLease is this process's lease on the store's compaction.
-type compactionLease struct {
+// maintenanceLease is this process's lease on the store's maintenance.
+type maintenanceLease struct {
 	ps     *PackStorage
 	n      uint64
 	cancel context.CancelFunc
@@ -48,14 +49,14 @@ type storedLease struct {
 
 // leases lists the stored leases, newest last.
 func (ps *PackStorage) leases() ([]storedLease, error) {
-	files, err := ListInfo(ps.storage, CompactionExt)
+	files, err := ListInfo(ps.storage, MaintenanceExt)
 	if err != nil {
 		return nil, err
 	}
 
 	var out []storedLease
 	for _, file := range files {
-		n, err := strconv.ParseUint(strings.TrimSuffix(file.Name, CompactionExt), 10, 64)
+		n, err := strconv.ParseUint(strings.TrimSuffix(file.Name, MaintenanceExt), 10, 64)
 		if err == nil {
 			out = append(out, storedLease{n: n, file: file})
 		}
@@ -68,7 +69,7 @@ func (ps *PackStorage) leases() ([]storedLease, error) {
 
 // held reports whether the lease is neither released nor gone unrenewed.
 func (ps *PackStorage) held(lease storedLease) (bool, error) {
-	if time.Since(lease.file.Modified) >= compactionLeaseTTL {
+	if time.Since(lease.file.Modified) >= maintenanceLeaseTTL {
 		return false, nil
 	}
 
@@ -90,10 +91,10 @@ func (ps *PackStorage) held(lease storedLease) (bool, error) {
 	return !bytes.Equal(data, leaseReleased), nil
 }
 
-// leaseCompaction takes the store's compaction for this process, or
+// leaseMaintenance takes the store's maintenance for this process, or
 // returns nil while another process holds it. The context it returns ends
 // once another process may have taken the lease over.
-func (ps *PackStorage) leaseCompaction(ctx context.Context) (*compactionLease, context.Context, error) {
+func (ps *PackStorage) leaseMaintenance(ctx context.Context) (*maintenanceLease, context.Context, error) {
 	leases, err := ps.leases()
 	if err != nil {
 		return nil, ctx, err
@@ -132,7 +133,7 @@ func (ps *PackStorage) leaseCompaction(ctx context.Context) (*compactionLease, c
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	lease := &compactionLease{ps: ps, n: n + 1, cancel: cancel, done: make(chan struct{})}
+	lease := &maintenanceLease{ps: ps, n: n + 1, cancel: cancel, done: make(chan struct{})}
 
 	go lease.renew(ctx)
 
@@ -169,17 +170,17 @@ func (ps *PackStorage) storeLease(n uint64, data []byte) error {
 
 func (ps *PackStorage) dropLease(name string) {
 	if err := ps.storage.Delete(name); err != nil && !notExist(err) {
-		ps.logger.Warn("deleting an old compaction lease failed", "lease", name, "err", err)
+		ps.logger.Warn("deleting an old maintenance lease failed", "lease", name, "err", err)
 	}
 }
 
 // renew keeps the lease fresh until ctx ends, and ends ctx once a newer
 // lease is stored or this one went unrenewed for so long that another
 // process may take it.
-func (l *compactionLease) renew(ctx context.Context) {
+func (l *maintenanceLease) renew(ctx context.Context) {
 	defer close(l.done)
 
-	ticker := time.NewTicker(compactionLeaseRenewal)
+	ticker := time.NewTicker(maintenanceLeaseRenewal)
 	defer ticker.Stop()
 
 	renewed := time.Now()
@@ -192,9 +193,9 @@ func (l *compactionLease) renew(ctx context.Context) {
 		}
 
 		if err := l.ps.storeLease(l.n, leaseData()); err != nil {
-			l.ps.logger.Warn("renewing the compaction lease failed", "lease", l.n, "err", err)
+			l.ps.logger.Warn("renewing the maintenance lease failed", "lease", l.n, "err", err)
 
-			if time.Since(renewed) >= compactionLeaseTTL-compactionLeaseRenewal {
+			if time.Since(renewed) >= maintenanceLeaseTTL-maintenanceLeaseRenewal {
 				l.cancel()
 				return
 			}
@@ -205,7 +206,7 @@ func (l *compactionLease) renew(ctx context.Context) {
 		renewed = time.Now()
 
 		if newer, err := l.ps.newerLease(l.n); err == nil && newer {
-			l.ps.logger.Warn("another process took the compaction lease over", "lease", l.n)
+			l.ps.logger.Warn("another process took the maintenance lease over", "lease", l.n)
 			l.cancel()
 
 			return
@@ -215,11 +216,11 @@ func (l *compactionLease) renew(ctx context.Context) {
 
 // release ends the lease, leaving it stored as released for the next one
 // to follow.
-func (l *compactionLease) release() {
+func (l *maintenanceLease) release() {
 	l.cancel()
 	<-l.done
 
 	if err := l.ps.storeLease(l.n, leaseReleased); err != nil {
-		l.ps.logger.Warn("releasing the compaction lease failed", "lease", l.n, "err", err)
+		l.ps.logger.Warn("releasing the maintenance lease failed", "lease", l.n, "err", err)
 	}
 }

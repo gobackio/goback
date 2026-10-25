@@ -214,6 +214,7 @@ func (m MapperImpl) Report(in *pack.CollectReport) views.ReportView {
 	return views.ReportView{
 		Generation:           in.Generation,
 		Waiting:              in.Waiting,
+		Busy:                 in.Busy,
 		Archives:             in.Archives,
 		Objects:              in.Objects,
 		Roots:                in.Roots,
@@ -260,6 +261,7 @@ func (m MapperImpl) Unretired(in index.Unretired) views.UnretiredView {
 		Missing:      views.Hexes(in.Revival.Missing),
 		MissingCount: in.Revival.MissingCount,
 		RetainedBy:   in.RetainedBy,
+		Busy:         in.Revival.Busy,
 	}
 }
 

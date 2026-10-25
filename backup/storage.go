@@ -349,10 +349,13 @@ type Revival struct {
 	// holds no copy of, and MissingCount counts them all.
 	Missing      []*proto.Ref
 	MissingCount int
+	// Busy is set when another process maintains the store, which left
+	// the commit unchecked and as it is.
+	Busy bool
 }
 
-// Whole reports whether the commit misses nothing.
-func (r Revival) Whole() bool { return r.MissingCount == 0 }
+// Whole reports whether the commit was checked and misses nothing.
+func (r Revival) Whole() bool { return !r.Busy && r.MissingCount == 0 }
 
 // Counter is implemented by stores that can count their objects.
 type Counter interface {

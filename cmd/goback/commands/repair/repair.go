@@ -49,13 +49,14 @@ func repairAction(c *cli.Context) {
 	}
 
 	common.Result(struct {
+		Busy      bool     `json:"busy,omitempty"`
 		Objects   uint64   `json:"objects"`
 		Archives  uint64   `json:"archives"`
 		Rewrote   uint64   `json:"rewrote"`
 		Recovered []string `json:"recovered"`
 		Lost      []string `json:"lost"`
-	}{report.Scrub.Objects, report.Scrub.Archives, report.Archives, hexes(report.Recovered), hexes(report.Lost)}, func() {
-		log.Printf("Scrubbed %d objects in %d archives, rewrote %d", report.Scrub.Objects, report.Scrub.Archives, report.Archives)
+	}{report.Busy, report.Scrub.Objects, report.Scrub.Archives, report.Archives, hexes(report.Recovered), hexes(report.Lost)}, func() {
+		log.Print(report.Summary())
 
 		for _, ref := range report.Recovered {
 			log.Printf("recovered %x from another archive", ref.GetHash())

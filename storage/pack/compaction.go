@@ -57,8 +57,8 @@ type CompactReport struct {
 	// Waiting is the generation whose published plan has not been
 	// rewritten yet; a compaction that waits does nothing else.
 	Waiting uint64
-	// Busy is set when another process holds the store's compaction; a
-	// compaction that finds it held does nothing else.
+	// Busy is set when another process maintains the store; a compaction
+	// that finds it busy does nothing else.
 	Busy bool
 	// Candidates counts the small committed archives Compact found, and
 	// CandidateBytes what they take up; it merges them only once they add
@@ -92,7 +92,7 @@ func (r *CompactReport) Summary() string {
 	}
 
 	if r.Busy {
-		return "Compaction left to another process compacting the store"
+		return "Compaction left to another process maintaining the store"
 	}
 
 	if r.Rewritten == 0 {
@@ -111,21 +111,21 @@ func (r *CompactReport) Summary() string {
 // expected to die about the same time together, each too large to be
 // merged again unless the candidates held too little of it. While a
 // published plan waits for its rewrite it does nothing and names the plan's
-// generation in Waiting, and while another process compacts the store it
+// generation in Waiting, and while another process maintains the store it
 // does nothing and sets Busy.
 func (ps *PackStorage) Compact(ctx context.Context) (*CompactReport, error) {
 	started := time.Now()
 
-	ps.compactorMtx.Lock()
-	defer ps.compactorMtx.Unlock()
+	ps.maintenanceMtx.Lock()
+	defer ps.maintenanceMtx.Unlock()
 
-	pending, err := ps.PendingPlans()
+	waiting, err := ps.waitingPlan()
 	if err != nil {
-		return nil, errors.Wrap(err, "listing published plans")
+		return nil, err
 	}
 
-	if len(pending) > 0 {
-		return &CompactReport{Waiting: pending[0], Duration: time.Since(started)}, nil
+	if waiting > 0 {
+		return &CompactReport{Waiting: waiting, Duration: time.Since(started)}, nil
 	}
 
 	group := ps.compactionCandidates()
@@ -133,9 +133,9 @@ func (ps *PackStorage) Compact(ctx context.Context) (*CompactReport, error) {
 		return &CompactReport{Candidates: len(group.candidates), CandidateBytes: group.total, Duration: time.Since(started)}, nil
 	}
 
-	lease, ctx, err := ps.leaseCompaction(ctx)
+	lease, ctx, err := ps.leaseMaintenance(ctx)
 	if err != nil {
-		return nil, errors.Wrap(err, "leasing the compaction")
+		return nil, errors.Wrap(err, "leasing the maintenance")
 	}
 
 	if lease == nil {
@@ -143,9 +143,18 @@ func (ps *PackStorage) Compact(ctx context.Context) (*CompactReport, error) {
 	}
 	defer lease.release()
 
-	// another process may have compacted since this one loaded the archives
+	// another process may have maintained the store since this one loaded
+	// the archives and listed the plans
 	if err := ps.refreshArchives(); err != nil {
 		return nil, errors.Wrap(err, "refreshing the archives")
+	}
+
+	if waiting, err = ps.waitingPlan(); err != nil {
+		return nil, err
+	}
+
+	if waiting > 0 {
+		return &CompactReport{Waiting: waiting, Duration: time.Since(started)}, nil
 	}
 
 	group = ps.compactionCandidates()

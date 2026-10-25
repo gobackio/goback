@@ -61,6 +61,21 @@ func (ps *PackStorage) PendingPlans() ([]uint64, error) {
 	return generations, nil
 }
 
+// waitingPlan is the oldest generation whose published plan waits for its
+// rewrite, zero when none does.
+func (ps *PackStorage) waitingPlan() (uint64, error) {
+	pending, err := ps.PendingPlans()
+	if err != nil {
+		return 0, errors.Wrap(err, "listing published plans")
+	}
+
+	if len(pending) == 0 {
+		return 0, nil
+	}
+
+	return pending[0], nil
+}
+
 // publish writes the sweep the run would do as a plan for RewritePlan.
 func (r *gcRun) publish() (int, error) {
 	plan := sweepPlan{Generation: r.gen, Now: r.opts.Now, MinAge: r.opts.MinAge, Drop: make(map[string]*bitset.BitSet),
@@ -103,6 +118,9 @@ func (r *gcRun) publish() (int, error) {
 
 // RewriteReport summarizes the plans one RewritePlan ran.
 type RewriteReport struct {
+	// Busy is set when another process maintains the store; a rewrite that
+	// finds it busy runs no plan.
+	Busy             bool
 	Plans            int
 	Swept            int
 	ReclaimedObjects uint64
@@ -113,10 +131,25 @@ type RewriteReport struct {
 // RewritePlan runs the sweeps collections published, oldest first, and
 // deletes each plan once its archives are rewritten. A run that stops
 // part way leaves the plan for the next one, which skips the archives
-// already retired.
+// already retired. While another process maintains the store it runs
+// nothing and sets Busy.
 func (ps *PackStorage) RewritePlan(ctx context.Context) (*RewriteReport, error) {
-	ps.compactorMtx.Lock()
-	defer ps.compactorMtx.Unlock()
+	ps.maintenanceMtx.Lock()
+	defer ps.maintenanceMtx.Unlock()
+
+	lease, ctx, err := ps.leaseMaintenance(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "leasing the maintenance")
+	}
+
+	if lease == nil {
+		return &RewriteReport{Busy: true}, nil
+	}
+	defer lease.release()
+
+	if err := ps.refreshArchives(); err != nil {
+		return nil, errors.Wrap(err, "refreshing the archives")
+	}
 
 	generations, err := ps.PendingPlans()
 	if err != nil {

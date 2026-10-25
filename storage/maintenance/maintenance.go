@@ -125,7 +125,7 @@ func attributed(ctx context.Context, collector pack.Collector, attributor Attrib
 		return nil, err
 	}
 
-	if attributor != nil && report.Waiting == 0 {
+	if attributor != nil && report.Waiting == 0 && !report.Busy {
 		if err := attributor.RecordSetSizes(ctx, report); err != nil {
 			return report, err
 		}

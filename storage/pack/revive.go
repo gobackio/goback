@@ -24,15 +24,35 @@ var _ backup.Reviver = (*PackStorage)(nil)
 // Revive implements backup.Reviver. A revival is an un-tombstone of the
 // commit newer than its tombstone, which a collection takes as a root;
 // what the commit reaches gets un-tombstones as a session's skipped refs
-// do. It holds off this process's collections while it runs and refuses
-// while a published plan waits for its rewrite.
+// do. It refuses while a published plan waits for its rewrite, and while
+// another process maintains the store it leaves every commit as it is and
+// sets each revival's Busy.
 func (ps *PackStorage) Revive(ctx context.Context, commits []*proto.Ref, dryRun bool) ([]backup.Revival, error) {
 	if _, ok := backup.SessionFromContext(ctx); ok {
 		return nil, errors.New("a revival runs outside a session")
 	}
 
-	ps.compactorMtx.Lock()
-	defer ps.compactorMtx.Unlock()
+	ps.maintenanceMtx.Lock()
+	defer ps.maintenanceMtx.Unlock()
+
+	lease, ctx, err := ps.leaseMaintenance(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("leasing the maintenance: %w", err)
+	}
+
+	if lease == nil {
+		revivals := make([]backup.Revival, len(commits))
+		for i, c := range commits {
+			revivals[i] = backup.Revival{Commit: c, Busy: true}
+		}
+
+		return revivals, nil
+	}
+	defer lease.release()
+
+	if err := ps.refreshArchives(); err != nil {
+		return nil, fmt.Errorf("refreshing the archives: %w", err)
+	}
 
 	if err := ps.noPendingPlan(); err != nil {
 		return nil, err

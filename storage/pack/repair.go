@@ -3,6 +3,7 @@ package pack
 import (
 	"bytes"
 	"context"
+	"fmt"
 
 	"github.com/gobackio/goback/proto"
 
@@ -11,6 +12,9 @@ import (
 
 // RepairReport summarises one repair pass.
 type RepairReport struct {
+	// Busy is set when another process maintains the store; a repair that
+	// finds it busy does nothing else, its Scrub empty.
+	Busy bool
 	// Scrub is the pass that found the damage.
 	Scrub *ScrubReport
 	// Archives is how many archives were rewritten.
@@ -28,8 +32,26 @@ type RepairReport struct {
 // leaving the corrupt records behind. Objects an intact copy exists for
 // survive the pass; the rest are gone from the store, so a later backup
 // stores them again instead of finding them present. It fails while a
-// published plan waits for its rewrite.
+// published plan waits for its rewrite, and while another process
+// maintains the store it does nothing and sets Busy.
 func (ps *PackStorage) Repair(ctx context.Context) (*RepairReport, error) {
+	ps.maintenanceMtx.Lock()
+	defer ps.maintenanceMtx.Unlock()
+
+	lease, ctx, err := ps.leaseMaintenance(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "leasing the maintenance")
+	}
+
+	if lease == nil {
+		return &RepairReport{Busy: true, Scrub: &ScrubReport{}}, nil
+	}
+	defer lease.release()
+
+	if err := ps.refreshArchives(); err != nil {
+		return nil, errors.Wrap(err, "refreshing the archives")
+	}
+
 	if err := ps.noPendingPlan(); err != nil {
 		return nil, err
 	}
@@ -42,15 +64,24 @@ func (ps *PackStorage) Repair(ctx context.Context) (*RepairReport, error) {
 	return ps.repair(ctx, report)
 }
 
-// noPendingPlan fails while a published plan waits for its rewrite.
-func (ps *PackStorage) noPendingPlan() error {
-	pending, err := ps.PendingPlans()
-	if err != nil {
-		return errors.Wrap(err, "listing published plans")
+// Summary renders the report as a line for a log or an operator.
+func (r *RepairReport) Summary() string {
+	if r.Busy {
+		return "Repair left to another process maintaining the store"
 	}
 
-	if len(pending) > 0 {
-		return errors.Errorf("the plan of generation %d waits for its rewrite", pending[0])
+	return fmt.Sprintf("Scrubbed %d objects in %d archives, rewrote %d", r.Scrub.Objects, r.Scrub.Archives, r.Archives)
+}
+
+// noPendingPlan fails while a published plan waits for its rewrite.
+func (ps *PackStorage) noPendingPlan() error {
+	waiting, err := ps.waitingPlan()
+	if err != nil {
+		return err
+	}
+
+	if waiting > 0 {
+		return errors.Errorf("the plan of generation %d waits for its rewrite", waiting)
 	}
 
 	return nil
@@ -128,14 +159,7 @@ func (ps *PackStorage) repair(ctx context.Context, scrub *ScrubReport) (*RepairR
 		return !damaged[candidate.name][string(hdr.Ref.GetHash())]
 	}
 
-	ps.compactorMtx.Lock()
-	err := ps.noPendingPlan()
-	if err == nil {
-		err = ps.compactGroup(ctx, group)
-	}
-	ps.compactorMtx.Unlock()
-
-	if err != nil {
+	if err := ps.compactGroup(ctx, group); err != nil {
 		return nil, errors.Wrap(err, "rewriting the damaged archives")
 	}
 

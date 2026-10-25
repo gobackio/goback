@@ -174,9 +174,9 @@ type PackStorage struct {
 	sessionsMtx sync.Mutex
 	sessions    map[string]*writeSession
 
-	compactorMtx sync.Mutex
-	atRest       *AtRestKey
-	logger       *slog.Logger
+	maintenanceMtx sync.Mutex
+	atRest         *AtRestKey
+	logger         *slog.Logger
 }
 
 type pendingObject struct {
