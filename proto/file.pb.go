@@ -163,7 +163,11 @@ type FileInfo struct {
 	DarwinFlags uint32 `protobuf:"varint,22,opt,name=darwin_flags,json=darwinFlags,proto3" json:"darwin_flags,omitempty"`
 	// the slash-separated path in the commit of the file this one is a hard
 	// link to, whose ref is this one's too; sealed like link_target
-	HardLink      []byte `protobuf:"bytes,23,opt,name=hard_link,json=hardLink,proto3" json:"hard_link,omitempty"`
+	HardLink []byte `protobuf:"bytes,23,opt,name=hard_link,json=hardLink,proto3" json:"hard_link,omitempty"`
+	// some of the entry's metadata, its security descriptor, a stream or an
+	// extended attribute, is gone from the store and was dropped; its
+	// content is kept and restored
+	MetadataLost  bool `protobuf:"varint,24,opt,name=metadata_lost,json=metadataLost,proto3" json:"metadata_lost,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -343,6 +347,13 @@ func (x *FileInfo) GetHardLink() []byte {
 		return x.HardLink
 	}
 	return nil
+}
+
+func (x *FileInfo) GetMetadataLost() bool {
+	if x != nil {
+		return x.MetadataLost
+	}
+	return false
 }
 
 // Stream is one alternate data stream of a file or directory.
@@ -591,7 +602,7 @@ var File_file_proto protoreflect.FileDescriptor
 const file_file_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"file.proto\x12\x05proto\x1a\tref.proto\x1a\x10encryption.proto\"\xfe\x04\n" +
+	"file.proto\x12\x05proto\x1a\tref.proto\x1a\x10encryption.proto\"\xa3\x05\n" +
 	"\bFileInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\fR\x04name\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\rR\x04mode\x12\x12\n" +
@@ -620,7 +631,8 @@ const file_file_proto_rawDesc = "" +
 	"\vlinux_flags\x18\x15 \x01(\rR\n" +
 	"linuxFlags\x12!\n" +
 	"\fdarwin_flags\x18\x16 \x01(\rR\vdarwinFlags\x12\x1b\n" +
-	"\thard_link\x18\x17 \x01(\fR\bhardLinkJ\x04\b\x05\x10\x06J\x04\b\a\x10\bR\ttimestampR\x04tree\"N\n" +
+	"\thard_link\x18\x17 \x01(\fR\bhardLink\x12#\n" +
+	"\rmetadata_lost\x18\x18 \x01(\bR\fmetadataLostJ\x04\b\x05\x10\x06J\x04\b\a\x10\bR\ttimestampR\x04tree\"N\n" +
 	"\x06Stream\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\fR\x04name\x12\x1c\n" +
 	"\x03ref\x18\x02 \x01(\v2\n" +

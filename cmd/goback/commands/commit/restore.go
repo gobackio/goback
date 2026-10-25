@@ -214,7 +214,7 @@ func (c *commit) restore() error {
 	}
 
 	stats, missed := c.restorer.Stats(), unrestored.Load()
-	incomplete := commit.GetIncomplete() || stats.Lost > 0 || stats.PartialDirs > 0
+	incomplete := commit.GetIncomplete() || stats.Lost > 0 || stats.PartialDirs > 0 || stats.MetadataLost > 0
 
 	common.Result(struct {
 		Commit     views.CommitView    `json:"commit"`
@@ -266,6 +266,10 @@ func logStats(stats backup.RestoreStats) {
 
 	if stats.Lost > 0 {
 		log.Printf("%d entries left out: the store lost them", stats.Lost)
+	}
+
+	if stats.MetadataLost > 0 {
+		log.Printf("%d entries restored without metadata the store lost: a security descriptor, a stream or an extended attribute", stats.MetadataLost)
 	}
 
 	if stats.PartialDirs > 0 {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/gobackio/goback/proto"
 
@@ -88,6 +89,75 @@ func TestAnIncompleteCommitRestoresWhatItKeptAndListsWhatItLost(t *testing.T) {
 	require.False(t, top["other"].Stat.Lost, "the next run reads a lost directory again")
 	require.False(t, f.tree(top["sub"].Ref)["b.bin"].Stat.Lost, "and a lost file")
 	require.Equal(t, "four", f.content(top["other"].Ref, "d.txt"))
+}
+
+func TestALostDescriptorStreamOrXattrDropsOnlyThatMetadata(t *testing.T) {
+	ctx := context.Background()
+	store := newMemStore()
+
+	security := putFile(t, store, nil, []byte("a shared descriptor"))
+	gone := putFile(t, store, nil, []byte("a zone identifier"))
+	attr := putFile(t, store, nil, []byte("an attribute"))
+	kept := putFile(t, store, nil, []byte("a kept stream"))
+	inner := putFile(t, store, nil, []byte("intact inside"))
+	outer := putFile(t, store, nil, []byte("intact outside"))
+
+	stat := func(name string, data string) *proto.FileInfo {
+		s := statFor([]byte(data))
+		s.Name = []byte(name)
+
+		return s
+	}
+
+	sub, err := PutTree(ctx, store, []*proto.TreeNode{{Stat: stat("f", "intact inside"), Ref: inner}}, nil, nil)
+	require.NoError(t, err)
+
+	d := &proto.FileInfo{Name: []byte("d"), Mode: uint32(os.ModeDir | 0o755), Type: proto.NodeType_NODE_DIRECTORY, Security: security}
+	g := stat("g", "intact outside")
+	g.Streams = []*proto.Stream{{Name: []byte("kept"), Ref: kept, Size: 13}, {Name: []byte("zone"), Ref: gone, Size: 17}}
+	g.Xattrs = []*proto.Stream{{Name: []byte("user.gone"), Ref: attr, Size: 12}}
+
+	root, err := PutTree(ctx, store, SortNodes([]*proto.TreeNode{{Stat: d, Ref: sub}, {Stat: g, Ref: outer}}), nil, nil)
+	require.NoError(t, err)
+
+	commit := proto.NewObject(&proto.Commit{BackupSet: "test", Tree: root, Timestamp: time.Now().UnixNano()})
+	marked, err := MarkLost(ctx, store, commit, []*proto.Ref{security, gone, attr}, nil)
+	require.NoError(t, err)
+	require.True(t, marked.GetCommit().Incomplete)
+
+	tree := map[string]*proto.TreeNode{}
+	loaded, err := LoadTree(ctx, store, marked.GetCommit().Tree)
+	require.NoError(t, err)
+	for _, node := range loaded.Nodes {
+		tree[string(node.Stat.Name)] = node
+	}
+
+	require.False(t, tree["d"].Stat.Lost)
+	require.True(t, tree["d"].Stat.MetadataLost)
+	require.Nil(t, tree["d"].Stat.Security)
+	require.True(t, tree["d"].Ref.Equal(sub), "the directory keeps its listing")
+
+	require.False(t, tree["g"].Stat.Lost)
+	require.True(t, tree["g"].Stat.MetadataLost)
+	require.True(t, tree["g"].Ref.Equal(outer), "the file keeps its content")
+	require.Len(t, tree["g"].Stat.Streams, 1)
+	require.Equal(t, "kept", string(tree["g"].Stat.Streams[0].Name))
+	require.Empty(t, tree["g"].Stat.Xattrs)
+
+	dst := t.TempDir()
+	restorer := &Restorer{Store: store}
+	require.NoError(t, restorer.RestoreTree(ctx, marked.GetCommit(), dst, TreeOptions{}))
+	require.Zero(t, restorer.Stats().Lost)
+	require.EqualValues(t, 2, restorer.Stats().MetadataLost)
+	require.Zero(t, restorer.Stats().PartialDirs)
+
+	content, err := os.ReadFile(filepath.Join(dst, "d", "f"))
+	require.NoError(t, err)
+	require.Equal(t, "intact inside", string(content))
+
+	content, err = os.ReadFile(filepath.Join(dst, "g"))
+	require.NoError(t, err)
+	require.Equal(t, "intact outside", string(content))
 }
 
 // splitLost makes a commit whose directory big lost one of its tree splits,

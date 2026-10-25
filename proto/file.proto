@@ -72,6 +72,11 @@ message FileInfo {
 	// the slash-separated path in the commit of the file this one is a hard
 	// link to, whose ref is this one's too; sealed like link_target
 	bytes hard_link = 23;
+
+	// some of the entry's metadata, its security descriptor, a stream or an
+	// extended attribute, is gone from the store and was dropped; its
+	// content is kept and restored
+	bool metadata_lost = 24;
 }
 
 // Stream is one alternate data stream of a file or directory.

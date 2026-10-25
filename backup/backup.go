@@ -95,7 +95,7 @@ func (br *BackupReader) walk(ctx context.Context, trees Getter, path string, par
 			return errors.Wrap(err, "WalkFn returned error")
 		}
 
-		explained = explained || info.Lost
+		explained = explained || info.Lost || info.MetadataLost
 
 		if info.IsDir() && !info.Lost {
 			token := NameToken(br.key, parent, info.Name)

@@ -497,6 +497,10 @@ func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts
 	)
 
 	for i, e := range entries {
+		if e.stat.GetMetadataLost() && !e.stat.GetLost() {
+			atomic.AddInt64(&r.stats.MetadataLost, 1)
+		}
+
 		switch {
 		case e.stat.GetLost() && e.stat.GetType() != proto.NodeType_NODE_FILE:
 			atomic.AddInt64(&r.stats.Lost, 1)

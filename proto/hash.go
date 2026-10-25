@@ -705,7 +705,9 @@ func canonicalFileInfo(info *FileInfo) ([]byte, error) {
 		return nil, invalid("hard link on a %s node", info.Type)
 	}
 
-	return appendBytes(b, 23, info.HardLink), nil
+	b = appendBytes(b, 23, info.HardLink)
+
+	return appendBool(b, 24, info.MetadataLost), nil
 }
 
 // appendStreams encodes streams, sorted by name and each name once, as

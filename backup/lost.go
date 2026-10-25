@@ -3,16 +3,18 @@ package backup
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/gobackio/goback/proto"
 	pb "google.golang.org/protobuf/proto"
 )
 
 // MarkLost returns commit rewritten to reference none of lost: an entry
-// whose content, listing or metadata reaches a lost ref is marked lost,
-// a lost tree split is left out, and every tree above such a change and
-// the commit are marked incomplete. The rewritten trees are put in store,
-// and the returned commit is still to be put.
+// whose content or listing reaches a lost ref is marked lost, an entry
+// whose security descriptor, stream or extended attribute does loses that
+// and is marked MetadataLost, a lost tree split is left out, and every tree
+// above such a change and the commit are marked incomplete. The rewritten
+// trees are put in store, and the returned commit is still to be put.
 //
 // reaches reports whether the object at a ref reaches a lost ref, so only
 // those are read; nil reads every tree and file the commit reaches.
@@ -157,15 +159,13 @@ func (m *marker) node(node *proto.TreeNode) (*proto.TreeNode, bool, error) {
 
 	gone := node.Ref != nil && m.lost[string(node.Ref.Hash)]
 
-	for _, ref := range stat.MetadataRefs() {
-		if gone {
-			break
-		}
+	kept, err := m.metadata(stat)
+	if err != nil {
+		return nil, false, err
+	}
 
-		var err error
-		if gone, err = m.file(ref); err != nil {
-			return nil, false, err
-		}
+	if kept != stat {
+		node = &proto.TreeNode{Stat: kept, Ref: node.Ref}
 	}
 
 	if !gone && node.Ref != nil {
@@ -176,26 +176,79 @@ func (m *marker) node(node *proto.TreeNode) (*proto.TreeNode, bool, error) {
 			}
 
 			if r.ref.Equal(node.Ref) {
-				return node, r.incomplete, nil
+				return node, r.incomplete || kept.MetadataLost, nil
 			}
 
-			return &proto.TreeNode{Stat: stat, Ref: r.ref}, r.incomplete, nil
+			return &proto.TreeNode{Stat: kept, Ref: r.ref}, r.incomplete || kept.MetadataLost, nil
 		}
 
-		var err error
 		if gone, err = m.file(node.Ref); err != nil {
 			return nil, false, err
 		}
 	}
 
 	if !gone {
-		return node, false, nil
+		return node, kept.MetadataLost, nil
 	}
 
 	lost := pb.Clone(stat).(*proto.FileInfo)
 	lost.Lost, lost.Security, lost.Streams, lost.Xattrs = true, nil, nil, nil
 
 	return &proto.TreeNode{Stat: lost}, true, nil
+}
+
+// metadata returns stat, or a copy without the security descriptor, the
+// streams and the extended attributes that reach a lost ref, marked
+// MetadataLost.
+func (m *marker) metadata(stat *proto.FileInfo) (*proto.FileInfo, error) {
+	var kept *proto.FileInfo
+
+	edit := func() *proto.FileInfo {
+		if kept == nil {
+			kept = pb.Clone(stat).(*proto.FileInfo)
+			kept.MetadataLost = true
+		}
+
+		return kept
+	}
+
+	if ref := stat.GetSecurity(); ref != nil {
+		gone, err := m.file(ref)
+		if err != nil {
+			return nil, err
+		}
+
+		if gone {
+			edit().Security = nil
+		}
+	}
+
+	for _, list := range []func(*proto.FileInfo) []*proto.Stream{(*proto.FileInfo).GetStreams, (*proto.FileInfo).GetXattrs} {
+		for i, stream := range list(stat) {
+			if stream.GetRef() == nil {
+				continue
+			}
+
+			gone, err := m.file(stream.Ref)
+			if err != nil {
+				return nil, err
+			}
+
+			if gone {
+				list(edit())[i] = nil
+			}
+		}
+	}
+
+	if kept == nil {
+		return stat, nil
+	}
+
+	cleared := func(s *proto.Stream) bool { return s == nil }
+	kept.Streams = slices.DeleteFunc(kept.Streams, cleared)
+	kept.Xattrs = slices.DeleteFunc(kept.Xattrs, cleared)
+
+	return kept, nil
 }
 
 // file reports whether the file object at ref reaches a lost ref.

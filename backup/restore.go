@@ -166,6 +166,9 @@ type RestoreStats struct {
 	// a part of their listing, so those entries go uncounted.
 	Lost        int64 `json:"lost"`
 	PartialDirs int64 `json:"partial_dirs"`
+	// MetadataLost counts the entries restored without the security
+	// descriptor, streams or extended attributes the store lost.
+	MetadataLost int64 `json:"metadata_lost"`
 
 	BytesFromDestination int64 `json:"bytes_from_destination"`
 	BytesFromSeeds       int64 `json:"bytes_from_seeds"`
@@ -290,6 +293,7 @@ func (r *Restorer) Stats() RestoreStats {
 		CloudOnly:            atomic.LoadInt64(&r.stats.CloudOnly),
 		Lost:                 atomic.LoadInt64(&r.stats.Lost),
 		PartialDirs:          atomic.LoadInt64(&r.stats.PartialDirs),
+		MetadataLost:         atomic.LoadInt64(&r.stats.MetadataLost),
 		BytesFromDestination: atomic.LoadInt64(&r.stats.BytesFromDestination),
 		BytesFromSeeds:       atomic.LoadInt64(&r.stats.BytesFromSeeds),
 		BytesFromRestored:    atomic.LoadInt64(&r.stats.BytesFromRestored),
