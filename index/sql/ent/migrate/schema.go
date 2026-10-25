@@ -234,6 +234,11 @@ var (
 					Where: "ref IS NOT NULL",
 				},
 			},
+			{
+				Name:    "files_by_dir",
+				Unique:  false,
+				Columns: []*schema.Column{FilesColumns[14], FilesColumns[2], FilesColumns[4]},
+			},
 		},
 	}
 	// ObjectsColumns holds the columns for the "objects" table.
@@ -474,6 +479,11 @@ var (
 				Annotation: &entsql.IndexAnnotation{
 					Where: "valid_until IS NULL",
 				},
+			},
+			{
+				Name:    "trees_by_dir",
+				Unique:  false,
+				Columns: []*schema.Column{TreesColumns[6], TreesColumns[2], TreesColumns[4]},
 			},
 		},
 	}

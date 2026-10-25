@@ -180,6 +180,8 @@ func (File) Indexes() []ent.Index {
 			StorageKey("files_versions"),
 		// the versions of a file object, whatever set holds them
 		index.Fields("ref").Annotations(entsql.IndexWhere("ref IS NOT NULL")).StorageKey("files_by_ref"),
+		// what a directory held at any time
+		index.Fields("set_id", "dir", "valid_until").StorageKey("files_by_dir"),
 	}
 }
 
@@ -217,6 +219,7 @@ func (Tree) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("set_id", "path", "valid_from").Unique(),
 		index.Fields("set_id", "dir").Annotations(entsql.IndexWhere("valid_until IS NULL")).StorageKey("trees_open"),
+		index.Fields("set_id", "dir", "valid_until").StorageKey("trees_by_dir"),
 	}
 }
 
