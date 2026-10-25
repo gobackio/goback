@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -86,6 +87,7 @@ func serverAction(c *cli.Context) {
 		common.Fatal(err)
 	}
 
+	ctx := common.Context(c)
 	repo := common.OpenRepo(c)
 
 	listener, err := net.Listen("tcp", c.String("address"))
@@ -93,11 +95,12 @@ func serverAction(c *cli.Context) {
 		common.Fatal(err)
 	}
 
-	if _, err := telemetry.Setup(context.Background(), "goback"); err != nil {
+	stopTelemetry, err := telemetry.Setup(context.Background(), "goback")
+	if err != nil {
 		common.Fatalf("failed setting up telemetry: %s", err)
 	}
 
-	common.Fatal(repo.Serve(context.Background(), listener, goback.ServeOptions{
+	err = repo.Serve(ctx, listener, goback.ServeOptions{
 		Secret:               secret,
 		TLS:                  tlsConfig,
 		PlaintextBehindProxy: c.Bool("plaintext-behind-proxy"),
@@ -108,7 +111,19 @@ func serverAction(c *cli.Context) {
 			Retire:   c.Duration("retire-interval"),
 			Presence: c.Duration("presence-interval"),
 		},
-	}))
+	})
+
+	if cerr := repo.Close(); cerr != nil {
+		log.Printf("Closing the store failed: %v", cerr)
+	}
+
+	if terr := stopTelemetry(context.Background()); terr != nil {
+		log.Printf("Flushing telemetry failed: %v", terr)
+	}
+
+	if err != nil {
+		common.Fatal(err)
+	}
 }
 
 // sharedSecret reads --secret or --secret-file; the server accepts no
