@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
+	"runtime/debug"
 	"time"
 
 	"github.com/gobackio/goback/admin"
@@ -21,9 +23,11 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 )
 
 // serveStreams is how many calls one connection to a store server has
@@ -107,8 +111,8 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 		grpc.MaxConcurrentStreams(serveStreams),
 		grpc.KeepaliveParams(serveKeepalive),
 		grpc.StatsHandler(otelgrpc.NewServerHandler(otelgrpc.WithPublicEndpoint())),
-		grpc.ChainUnaryInterceptor(health.Unary(auth.UnaryInterceptor(opts.Secret), remote.UnaryInterceptor())),
-		grpc.ChainStreamInterceptor(health.Stream(auth.StreamInterceptor(opts.Secret), remote.StreamInterceptor())),
+		grpc.ChainUnaryInterceptor(recoverUnary(logger), health.Unary(auth.UnaryInterceptor(opts.Secret), remote.UnaryInterceptor())),
+		grpc.ChainStreamInterceptor(recoverStream(logger), health.Stream(auth.StreamInterceptor(opts.Secret), remote.StreamInterceptor())),
 	)
 
 	proto.RegisterStoreServer(srv, remote)
@@ -165,6 +169,39 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 	}
 
 	return err
+}
+
+// recoverUnary answers a call whose handler panics with codes.Internal and
+// logs the stack, so the server goes on serving the other calls.
+func recoverUnary(logger *slog.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
+		defer func() {
+			if p := recover(); p != nil {
+				err = panicked(logger, info.FullMethod, p)
+			}
+		}()
+
+		return handler(ctx, req)
+	}
+}
+
+// recoverStream is recoverUnary for streaming calls.
+func recoverStream(logger *slog.Logger) grpc.StreamServerInterceptor {
+	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (err error) {
+		defer func() {
+			if p := recover(); p != nil {
+				err = panicked(logger, info.FullMethod, p)
+			}
+		}()
+
+		return handler(srv, ss)
+	}
+}
+
+func panicked(logger *slog.Logger, method string, p any) error {
+	logger.Error("a call panicked", "method", method, "panic", fmt.Sprint(p), "stack", string(debug.Stack()))
+
+	return status.Error(codes.Internal, "the server failed handling the call")
 }
 
 // adminServer is the Admin service over the index and the runner's jobs.

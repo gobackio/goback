@@ -1,18 +1,25 @@
 package goback
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage/maintenance"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 )
 
 func TestAServedRepoIsAStoreForAnAgentUntilItsContextEnds(t *testing.T) {
@@ -141,4 +148,64 @@ func TestServeRefusesNoSecretAndUndeclaredPlaintext(t *testing.T) {
 
 	require.Error(t, repo.Serve(context.Background(), nil, ServeOptions{PlaintextBehindProxy: true}))
 	require.Error(t, repo.Serve(context.Background(), nil, ServeOptions{Secret: "s3cret"}))
+}
+
+// panickingIndex panics where an agent asks for a set's latest commit.
+type panickingIndex struct{ backup.Index }
+
+func (panickingIndex) LatestCommit(context.Context, string) (*proto.Ref, error) {
+	panic("the index broke")
+}
+
+func TestACallThatPanicsFailsAloneAndLogsItsStack(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	opened, err := Open(ctx, Settings{Storage: t.TempDir(), Index: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = opened.Close() })
+
+	var logged syncBuffer
+	repo := &Repo{Store: opened.Store, Index: panickingIndex{opened.Index}, settings: Settings{Logger: slog.New(slog.NewTextHandler(&logged, nil))}}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	served := make(chan error, 1)
+	go func() {
+		served <- repo.Serve(ctx, listener, ServeOptions{Secret: "s3cret", PlaintextBehindProxy: true})
+	}()
+
+	agent, err := Open(ctx, Settings{Storage: "goback+insecure://s3cret@" + listener.Addr().String(), AgentID: "agent"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = agent.Close() })
+
+	_, err = agent.Index.LatestCommit(ctx, "world")
+	require.Equal(t, codes.Internal, status.Code(err))
+	require.Contains(t, logged.String(), "panickingIndex.LatestCommit", "the stack is logged")
+
+	_, err = agent.Index.CommitInfo(ctx, "world", time.Now(), 1)
+	require.NoError(t, err, "the server serves on")
+
+	cancel()
+	require.NoError(t, <-served)
+}
+
+type syncBuffer struct {
+	mtx sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mtx.Lock()
+	defer b.mtx.Unlock()
+
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mtx.Lock()
+	defer b.mtx.Unlock()
+
+	return b.buf.String()
 }
