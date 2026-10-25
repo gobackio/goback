@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
+	"strings"
 	"time"
 
 	entmigrate "github.com/gobackio/goback/index/sql/ent/migrate"
@@ -121,10 +123,72 @@ func applyDir(ctx context.Context, db *sql.DB, dialect string, dir migrate.Dir, 
 		}
 		defer func() { _ = unlock() }()
 
+		if err := settleIndexBuild(ctx, db, dir, table); err != nil {
+			return err
+		}
+
 		return apply(ctx, db, dialect, dir, table, allowDirty)
 	default:
 		return fmt.Errorf("no migrations for dialect %q", dialect)
 	}
+}
+
+// concurrentIndex matches a statement that builds an index without a
+// transaction, capturing the index's name.
+var concurrentIndex = regexp.MustCompile(`(?i)^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([^"\s]+)"?\s+ON\s`)
+
+// settleIndexBuild drops the index of an interrupted CREATE INDEX
+// CONCURRENTLY, which a migration resumes at: the build leaves its index
+// behind, invalid or finished after its session went, and running the
+// statement again would fail on the name.
+func settleIndexBuild(ctx context.Context, db *sql.DB, dir migrate.Dir, table string) error {
+	rrw, err := newRevisions(ctx, db, Postgres, table)
+	if err != nil {
+		return err
+	}
+
+	revs, err := rrw.ReadRevisions(ctx)
+	if err != nil {
+		return err
+	}
+
+	files, err := dir.Files()
+	if err != nil {
+		return err
+	}
+
+	byVersion := make(map[string]migrate.File, len(files))
+	for _, f := range files {
+		byVersion[f.Version()] = f
+	}
+
+	for _, rev := range revs {
+		f, ok := byVersion[rev.Version]
+		if !ok || rev.Applied >= rev.Total {
+			continue
+		}
+
+		stmts, err := f.Stmts()
+		if err != nil {
+			return err
+		}
+
+		if rev.Applied >= len(stmts) {
+			continue
+		}
+
+		match := concurrentIndex.FindStringSubmatch(stmts[rev.Applied])
+		if match == nil {
+			continue
+		}
+
+		_, err = db.ExecContext(ctx, `DROP INDEX CONCURRENTLY IF EXISTS "`+strings.ReplaceAll(match[1], `"`, `""`)+`"`)
+		if err != nil {
+			return fmt.Errorf("dropping the index an interrupted migration left: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // applySQLite runs the pending migrations in one transaction on conn with

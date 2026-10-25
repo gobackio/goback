@@ -182,6 +182,32 @@ func TestPostgresMigrationsOfTwoSchemasRunAtOnce(t *testing.T) {
 	require.NoError(t, <-started)
 }
 
+// TestPostgresMigrationResumesAnInterruptedIndexBuild fails a migration
+// in a CREATE INDEX CONCURRENTLY, which leaves the index behind invalid,
+// and expects the retry to build it.
+func TestPostgresMigrationResumesAnInterruptedIndexBuild(t *testing.T) {
+	ctx := context.Background()
+	db := inSchema(t, testpg.Start(t), "store")
+
+	dir := dirOf(t, map[string]string{
+		"1_t.sql":   "CREATE TABLE t (id int);\nINSERT INTO t VALUES (1), (1);\n",
+		"2_idx.sql": `CREATE UNIQUE INDEX CONCURRENTLY "t_id" ON t (id);` + "\n",
+	})
+
+	require.Error(t, ApplyDir(ctx, db, Postgres, dir, "revisions", "lock"))
+
+	var valid bool
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT indisvalid FROM pg_index WHERE indexrelid = 't_id'::regclass").Scan(&valid))
+	require.False(t, valid)
+
+	_, err := db.ExecContext(ctx, "DELETE FROM t; INSERT INTO t VALUES (1)")
+	require.NoError(t, err)
+
+	require.NoError(t, ApplyDir(ctx, db, Postgres, dir, "revisions", "lock"))
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT indisvalid FROM pg_index WHERE indexrelid = 't_id'::regclass").Scan(&valid))
+	require.True(t, valid)
+}
+
 func TestApplyRefusesADirtyDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := memory(t)
