@@ -136,6 +136,32 @@ func TestARestoreRefusesABaseTheWALSetCannotContinue(t *testing.T) {
 	require.ErrorContains(t, err, "before the WAL set's first file")
 }
 
+func TestARestoreRefusesABaseWhoseRecoveryStopsAtAGap(t *testing.T) {
+	f := newWALFixture(t)
+
+	_, err := f.runBase(baseTar(t, 42), nil)
+	require.NoError(t, err)
+
+	f.spoolSegment(7, 42)
+	f.spoolSegment(8, 42)
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "base.tar"), []byte("base"), 0o600))
+	w := &backup.Walker{Index: f.index, Objects: f.index, Set: "db-base", AgentID: "a", Root: dir, Workers: 1,
+		Metadata: map[string]string{MetaStartWALFile: walName(1, 11), MetaStopLSN: "0/F000000", MetaSystemID: "42"}}
+	_, err = w.Run(f.ctx)
+	require.NoError(t, err)
+
+	f.spoolSegment(11, 42)
+	_, err = f.run()
+	require.NoError(t, err)
+
+	_, _, err = f.restore(time.Time{})
+	require.ErrorIs(t, err, ErrNoBase)
+	require.ErrorContains(t, err, "after the WAL set's end")
+	require.ErrorContains(t, err, "stops before "+walName(1, 11))
+}
+
 func TestARestoreRefusesABaseOfAnotherCluster(t *testing.T) {
 	f := newWALFixture(t)
 

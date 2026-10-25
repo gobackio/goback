@@ -150,6 +150,63 @@ func (t *commitFiles) onHistory(h history, i int) bool {
 	return h == nil || size == 0 || h.holds(t.names[i], size)
 }
 
+// segmentSize is the cluster's segment size, as the header of the tree's
+// first segment records it; zero when the tree holds no segment.
+func (t *commitFiles) segmentSize(ctx context.Context) (uint64, error) {
+	for i, name := range t.names {
+		if _, partial := isPartial(name); !partial && !isSegment(name) {
+			continue
+		}
+
+		file, err := backup.NewBackupReader(t.objects).WithKey(t.key).ReadFile(ctx, t.nodes[i].Ref)
+		if err != nil {
+			return 0, fmt.Errorf("reading %s: %w", name, err)
+		}
+
+		hdr, err := readSegmentHeader(file)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %w", name, err)
+		}
+
+		return uint64(hdr.segSize), nil
+	}
+
+	return 0, nil
+}
+
+// gap names the first segment recovery from a base that started in start
+// and stopped at stop (zero when unknown) cannot reach, because the segment
+// before it is missing from the tree; "" when it reaches every one of
+// copies(h, start, until). The base itself holds its WAL up to its stop.
+func (t *commitFiles) gap(h history, start string, stop, segSize uint64, until time.Time) string {
+	if segSize == 0 {
+		return ""
+	}
+
+	next := segmentNumber(start, segSize)
+	if stop > 0 {
+		next = max(next, (stop-1)/segSize+1)
+	}
+
+	for _, i := range t.copies(h, start, until) {
+		segment, ok := isPartial(t.names[i])
+		if !ok {
+			if segment = t.names[i]; !isSegment(segment) {
+				continue
+			}
+		}
+
+		n := segmentNumber(segment, segSize)
+		if n > next {
+			return segment
+		}
+
+		next = max(next, n+1)
+	}
+
+	return ""
+}
+
 // restoreWAL writes file i of the tree to path on fsys; pad extends a
 // partial segment with zeros to the size its header records, as outside
 // standby mode Postgres refuses a restored segment of any other size.

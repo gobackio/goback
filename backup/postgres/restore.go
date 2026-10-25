@@ -114,7 +114,8 @@ type walCommit struct {
 	end uint64
 	// path is the history of its newest timeline, which recovery follows;
 	// nil when it lacks that timeline's history file.
-	path history
+	path    history
+	segSize uint64
 }
 
 func (r *Restore) wal(ctx context.Context) (*proto.Ref, *walCommit, error) {
@@ -157,12 +158,16 @@ func (r *Restore) wal(ctx context.Context) (*proto.Ref, *walCommit, error) {
 		return nil, nil, err
 	}
 
+	if wal.segSize, err = wal.files.segmentSize(ctx); err != nil {
+		return nil, nil, err
+	}
+
 	return ref, wal, nil
 }
 
 // chooseBase picks the newest base backup of the WAL set's cluster that
-// ended before At and whose WAL from its start to its stop the WAL commit
-// holds.
+// ended before At, whose WAL from its start to its stop the WAL commit
+// holds, and past whose stop the WAL commit has no gap short of At.
 func (r *Restore) chooseBase(ctx context.Context, wal *walCommit) (*proto.Ref, *proto.Commit, error) {
 	ref, err := r.Latest(ctx, r.BaseSet)
 	if errors.Is(err, backup.ErrNotFound) {
@@ -234,6 +239,14 @@ func (r *Restore) unusable(base *proto.Commit, wal *walCommit) string {
 
 	stop, err := ParseLSN(base.GetMetadata()[MetaStopLSN])
 	if err != nil {
+		stop = 0
+	}
+
+	if gap := wal.files.gap(wal.path, start, stop, wal.segSize, r.At); gap != "" {
+		return fmt.Sprintf("recovery from it stops before %s, which follows a gap in the WAL set", gap)
+	}
+
+	if stop == 0 {
 		return ""
 	}
 
