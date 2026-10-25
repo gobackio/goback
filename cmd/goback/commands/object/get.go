@@ -19,7 +19,7 @@ func (o *object) get() {
 		common.Fatal(err)
 	}
 
-	err = os.WriteFile(o.out, obj.Bytes(), 0666)
+	err = os.WriteFile(o.out, obj.Bytes(), 0o600)
 	if err != nil {
 		common.Fatal(err)
 	}
