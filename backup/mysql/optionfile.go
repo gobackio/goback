@@ -139,14 +139,7 @@ func readOptionFile(path string, values map[string]string, depth int) error {
 		}
 
 		name, value, _ := strings.Cut(line, "=")
-		name = optionName(name)
-
-		value, err := optionValue(value)
-		if err != nil {
-			return fmt.Errorf("%s:%d: %s: %w", path, n, name, err)
-		}
-
-		values[name] = value
+		values[optionName(name)] = optionValue(value)
 	}
 
 	return scanner.Err()
@@ -186,31 +179,52 @@ func optionName(name string) string {
 	return strings.TrimPrefix(name, "loose-")
 }
 
-// optionValue reads an option's value: quoted, or up to a # comment, with
-// MySQL's escape sequences.
-func optionValue(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
+// optionValue reads an option's value as MySQL does: up to a # comment
+// outside quotes, without the quotes around it, with MySQL's escape
+// sequences.
+func optionValue(raw string) string {
+	raw = strings.TrimSpace(withoutComment(raw))
 
-	if raw != "" && (raw[0] == '"' || raw[0] == '\'') {
-		end := strings.IndexByte(raw[1:], raw[0])
-		if end < 0 {
-			return "", errors.New("a quoted value without its closing quote")
-		}
-
-		return unescapeOption(raw[1 : end+1]), nil
+	if len(raw) > 1 && (raw[0] == '"' || raw[0] == '\'') && raw[len(raw)-1] == raw[0] {
+		raw = raw[1 : len(raw)-1]
 	}
 
-	if i := strings.IndexByte(raw, '#'); i >= 0 {
-		raw = strings.TrimSpace(raw[:i])
-	}
-
-	return unescapeOption(raw), nil
+	return unescapeOption(raw)
 }
 
-var optionEscapes = map[byte]byte{'b': '\b', 't': '\t', 'n': '\n', 'r': '\r', '\\': '\\', 's': ' '}
+// withoutComment cuts s at the first # outside quotes; inside quotes, a
+// backslash escapes a quote.
+func withoutComment(s string) string {
+	var quote byte
 
-// unescapeOption converts \b, \t, \n, \r, \\ and \s; a backslash before
-// any other character stays.
+	escaped := false
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+
+		if (c == '"' || c == '\'') && !escaped {
+			switch quote {
+			case 0:
+				quote = c
+			case c:
+				quote = 0
+			}
+		}
+
+		if quote == 0 && c == '#' {
+			return s[:i]
+		}
+
+		escaped = quote != 0 && c == '\\' && !escaped
+	}
+
+	return s
+}
+
+var optionEscapes = map[byte]byte{'b': '\b', 't': '\t', 'n': '\n', 'r': '\r', '\\': '\\', 's': ' ', '"': '"', '\'': '\''}
+
+// unescapeOption converts \b, \t, \n, \r, \\, \s, \" and \'; a backslash
+// before any other character stays.
 func unescapeOption(s string) string {
 	if !strings.Contains(s, `\`) {
 		return s

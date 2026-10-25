@@ -39,6 +39,21 @@ socket
 	require.Equal(t, &Options{Host: "db.example", Port: 3307, User: "goback", Password: `p#ss word\x\S`, SSLMode: "REQUIRED"}, o)
 }
 
+func TestOptionValuesReadAsMySQLReadsThem(t *testing.T) {
+	for raw, want := range map[string]string{
+		` "pa\"ss#word" `:     `pa"ss#word`,
+		`'it\'s' # a comment`: `it's`,
+		`pa"ss#word"`:         `pa"ss#word"`,
+		`"unclosed # comment`: `"unclosed # comment`,
+		`plain # a comment`:   `plain`,
+		`"a\\" # a comment`:   `a\`,
+		`'mixed"`:             `'mixed"`,
+		`"`:                   `"`,
+	} {
+		require.Equal(t, want, optionValue(raw), raw)
+	}
+}
+
 func TestTheUsersOptionFileOverridesTheExtraOne(t *testing.T) {
 	home := t.TempDir()
 	extra := writeOptionFile(t, filepath.Join(t.TempDir(), "extra.cnf"), "[client]\nuser=extra\npassword=secret\n")
@@ -79,11 +94,4 @@ func TestAMissingOptionFile(t *testing.T) {
 
 	_, err = readOptions(filepath.Join(home, "missing.cnf"), home)
 	require.ErrorIs(t, err, os.ErrNotExist)
-}
-
-func TestAnUnclosedQuoteFails(t *testing.T) {
-	extra := writeOptionFile(t, filepath.Join(t.TempDir(), "extra.cnf"), "[client]\npassword=\"open\n")
-
-	_, err := readOptions(extra, "")
-	require.Error(t, err)
 }
