@@ -884,14 +884,16 @@ func (rw *rewrite) candidate(ctx context.Context, worker int, candidate *archive
 
 	mark := candidate.gcResult()
 
-	walk := candidate.foreach
+	// records come as stored, so one the rewrite leaves behind is never
+	// opened
+	walk := candidate.foreachStored
 	if data != nil {
 		walk = func(load loadPredicate, fn func(*proto.ObjectHeader, []byte, uint32, uint32) error) error {
-			return candidate.foreachReader(bytes.NewReader(data), load, fn)
+			return candidate.foreachStoredReader(bytes.NewReader(data), load, fn)
 		}
 	}
 
-	err := walk(loadAll, func(hdr *proto.ObjectHeader, bytes []byte, offset, length uint32) error {
+	err := walk(loadAll, func(hdr *proto.ObjectHeader, stored []byte, offset, length uint32) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -914,6 +916,11 @@ func (rw *rewrite) candidate(ctx context.Context, worker int, candidate *archive
 		if newer, ok := standIn[string(hdr.Ref.Hash)]; ok && (!tomb || newer != nil && !newer.Before(version)) {
 			superseded++
 			return nil
+		}
+
+		bytes, err := openAtRest(candidate.atRest, hdr, stored)
+		if err != nil {
+			return errors.Wrapf(err, "object %x in archive %s", hdr.Ref.Hash, candidate.name)
 		}
 
 		// a copy between archives is a trust boundary: never carry a

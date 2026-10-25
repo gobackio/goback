@@ -684,6 +684,16 @@ func loadType(t proto.ObjectType) loadPredicate {
 }
 
 func (a *archive) foreachReader(reader io.Reader, load loadPredicate, callback func(hdr *proto.ObjectHeader, bytes []byte, offset uint32, length uint32) error) error {
+	return a.walkReader(reader, load, true, callback)
+}
+
+// foreachStoredReader is foreachReader handing over the bytes as stored,
+// still sealed at rest; the caller opens them with openAtRest.
+func (a *archive) foreachStoredReader(reader io.Reader, load loadPredicate, callback func(hdr *proto.ObjectHeader, bytes []byte, offset uint32, length uint32) error) error {
+	return a.walkReader(reader, load, false, callback)
+}
+
+func (a *archive) walkReader(reader io.Reader, load loadPredicate, open bool, callback func(hdr *proto.ObjectHeader, bytes []byte, offset uint32, length uint32) error) error {
 	bufReader := bufio.NewReaderSize(reader, 1024*16)
 
 	fileHeader := make([]byte, archiveHeaderSize)
@@ -750,9 +760,11 @@ func (a *archive) foreachReader(reader io.Reader, load loadPredicate, callback f
 				return errors.Wrap(err, "Failed reading object")
 			}
 
-			objectBytes, err = openAtRest(a.atRest, hdr, objectBytes)
-			if err != nil {
-				return err
+			if open {
+				objectBytes, err = openAtRest(a.atRest, hdr, objectBytes)
+				if err != nil {
+					return err
+				}
 			}
 		} else if n, err := bufReader.Discard(int(hdr.Size)); uint64(n) != hdr.Size {
 			if err == nil || err == io.EOF {
@@ -862,6 +874,16 @@ const (
 )
 
 func (a *archive) foreach(load loadPredicate, callback func(hdr *proto.ObjectHeader, bytes []byte, offset uint32, length uint32) error) error {
+	return a.walk(load, true, callback)
+}
+
+// foreachStored is foreach handing over the bytes as stored, still sealed
+// at rest; the caller opens them with openAtRest.
+func (a *archive) foreachStored(load loadPredicate, callback func(hdr *proto.ObjectHeader, bytes []byte, offset uint32, length uint32) error) error {
+	return a.walk(load, false, callback)
+}
+
+func (a *archive) walk(load loadPredicate, open bool, callback func(hdr *proto.ObjectHeader, bytes []byte, offset uint32, length uint32) error) error {
 	file, err := a.storage.Open(a.archiveName())
 	if err != nil {
 		return errors.Wrap(err, "Couldn't open file for streaming")
@@ -882,7 +904,7 @@ func (a *archive) foreach(load loadPredicate, callback func(hdr *proto.ObjectHea
 
 		grp.Go(func() error {
 			// closing the read side unblocks the writer if the walk stops early
-			rErr := a.foreachReader(pReader, load, callback)
+			rErr := a.walkReader(pReader, load, open, callback)
 			pReader.CloseWithError(rErr)
 
 			return rErr
@@ -897,7 +919,7 @@ func (a *archive) foreach(load loadPredicate, callback func(hdr *proto.ObjectHea
 		return nil
 	}
 
-	return a.foreachReader(file, load, callback)
+	return a.walkReader(file, load, open, callback)
 }
 
 // readAll returns the archive file's bytes, read in one request where the

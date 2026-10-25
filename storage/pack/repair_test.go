@@ -71,6 +71,64 @@ func TestRepairDropsWhatItCannotRead(t *testing.T) {
 	require.Empty(t, after.Corrupt)
 }
 
+func TestRepairDropsARecordSealedAtRestThatNoLongerOpens(t *testing.T) {
+	base := t.TempDir()
+	key := atRestKey(t)
+	ctx := context.Background()
+
+	store := newTestStore(t, base, WithAtRestKey(key))
+	objects := makeTestData(t, 20)
+	for _, obj := range objects {
+		require.NoError(t, store.Put(ctx, obj))
+	}
+	require.NoError(t, store.Close())
+
+	damaged := objects[7]
+	damageRecord(t, base, damaged.Ref())
+
+	store = newTestStore(t, base, WithAtRestKey(key))
+	t.Cleanup(func() { _ = store.Close() })
+
+	scrub, err := store.Scrub(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, len(objects), scrub.Objects)
+	require.Len(t, scrub.Corrupt, 1)
+	require.True(t, scrub.Corrupt[0].Ref.Equal(damaged.Ref()))
+
+	report, err := store.Repair(ctx)
+	require.NoError(t, err)
+	require.Len(t, report.Lost, 1)
+
+	for _, obj := range objects {
+		if obj.Ref().Equal(damaged.Ref()) {
+			continue
+		}
+
+		got, err := store.Get(ctx, obj.Ref())
+		require.NoError(t, err)
+		require.Equal(t, obj.GetBlob().Data, got.GetBlob().Data)
+	}
+
+	after, err := store.Scrub(ctx)
+	require.NoError(t, err)
+	require.Empty(t, after.Corrupt)
+}
+
+func TestScrubWithoutTheAtRestKeyFails(t *testing.T) {
+	base := t.TempDir()
+	ctx := context.Background()
+
+	store := newTestStore(t, base, WithAtRestKey(atRestKey(t)))
+	require.NoError(t, store.Put(ctx, makeTestData(t, 1)[0]))
+	require.NoError(t, store.Close())
+
+	store = newTestStore(t, base)
+	t.Cleanup(func() { _ = store.Close() })
+
+	_, err := store.Scrub(ctx)
+	require.ErrorIs(t, err, ErrAtRestKeyMissing)
+}
+
 func TestRepairKeepsAnObjectAnotherArchiveHolds(t *testing.T) {
 	base := t.TempDir()
 	ctx := context.Background()

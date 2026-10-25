@@ -62,12 +62,22 @@ func (ps *PackStorage) Scrub(ctx context.Context) (*ScrubReport, error) {
 		report.Archives++
 
 		var prev *proto.Ref
-		err := a.foreach(loadAll, func(hdr *proto.ObjectHeader, bytes []byte, offset, length uint32) error {
+		err := a.foreachStored(loadAll, func(hdr *proto.ObjectHeader, stored []byte, offset, length uint32) error {
 			report.Objects++
 			report.Bytes += uint64(length)
 			report.Sealed[hex.EncodeToString(hdr.AtRestKeyId)]++
 
-			err := proto.VerifyStored(hdr, bytes)
+			// a record sealed at rest that the key cannot open is damaged,
+			// but one this store holds no key for says nothing of it
+			bytes, err := openAtRest(a.atRest, hdr, stored)
+			if errors.Is(err, ErrAtRestKeyMissing) || errors.Is(err, ErrAtRestKeyMismatch) {
+				return err
+			}
+
+			if err == nil {
+				err = proto.VerifyStored(hdr, bytes)
+			}
+
 			if err != nil {
 				ps.logger.Warn("corrupt object", "ref", fmt.Sprintf("%x", hdr.Ref.GetHash()), "archive", a.name, "offset", offset, "err", err)
 				report.Corrupt = append(report.Corrupt, ScrubFailure{Archive: a.name, Ref: hdr.Ref, Err: err})
