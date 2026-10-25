@@ -13,8 +13,8 @@ import (
 	cron "github.com/netresearch/go-cron"
 )
 
-// Plan is when a task runs: an interval from the last run's start, or a
-// cron expression read in a time zone.
+// Plan is when a task runs: at the multiples of an interval since the Unix
+// epoch, or at the times of a cron expression read in a time zone.
 type Plan struct {
 	every time.Duration
 	cron  cron.Schedule
@@ -22,7 +22,8 @@ type Plan struct {
 	spec  string
 }
 
-// Every runs a task d after its last run started.
+// Every runs a task at every multiple of d since the Unix epoch, moved by
+// the task's jitter offset.
 func Every(d time.Duration) *Plan {
 	return &Plan{every: d, spec: "every " + d.String()}
 }
@@ -67,7 +68,13 @@ func (p *Plan) String() string {
 // counts once, at its first occurrence.
 func (p *Plan) next(t time.Time) time.Time {
 	if p.cron == nil {
-		return t.Add(p.every)
+		every := int64(p.every)
+		slot := t.UnixNano() / every
+		if t.UnixNano() < 0 && t.UnixNano()%every != 0 {
+			slot--
+		}
+
+		return time.Unix(0, (slot+1)*every).In(t.Location())
 	}
 
 	n := p.cron.Next(t.In(p.loc))
@@ -99,24 +106,27 @@ func repeated(t time.Time) bool {
 }
 
 // Due is when a task with this plan next runs, its slots moved by offset,
-// given when its last run started and the time now. A task that never ran
-// is due now, as is one that missed a slot, however many; a last start
-// ahead of now counts as now.
+// given when its last run started and the time now. A task that never ran,
+// or missed a slot, however many, runs offset after now, or at its next
+// slot when that comes first, so tasks whose offsets a jitter window spreads
+// start apart; a last start ahead of now counts as now.
 func (p *Plan) Due(offset time.Duration, last, now time.Time) time.Time {
-	if last.IsZero() {
-		return now
+	if !last.IsZero() {
+		if last.After(now) {
+			last = now
+		}
+
+		if next := p.next(last.Add(-offset)).Add(offset); !next.Before(now) {
+			return next
+		}
 	}
 
-	if last.After(now) {
-		last = now
+	spread := now.Add(offset)
+	if next := p.next(now.Add(-offset)).Add(offset); next.Before(spread) {
+		return next
 	}
 
-	next := p.next(last.Add(-offset)).Add(offset)
-	if next.Before(now) {
-		return now
-	}
-
-	return next
+	return spread
 }
 
 // staleAfter is how long after since, the task's last success, a task with

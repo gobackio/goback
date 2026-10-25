@@ -137,7 +137,8 @@ func TestTheAgentPlansFromTheStoreAcrossRestarts(t *testing.T) {
 	n, _ = commits(t, s, "two")
 	require.Equal(t, 1, n)
 
-	require.True(t, byHand.Add(time.Hour).Equal(jobNamed(status, "one").NextDue), "%v vs %v", byHand, jobNamed(status, "one").NextDue)
+	slot := time.Unix(0, (byHand.UnixNano()/int64(time.Hour)+1)*int64(time.Hour))
+	require.True(t, slot.Equal(jobNamed(status, "one").NextDue), "%v vs %v", slot, jobNamed(status, "one").NextDue)
 
 	require.NoError(t, os.WriteFile(filepath.Join(home, "one", "data.txt"), []byte("one, changed"), 0o644))
 	s = agentAt(t, home, backups("1s"))

@@ -238,7 +238,7 @@ func TestBackoffDoublesCapsAndYieldsToTheNextSlot(t *testing.T) {
 		h.stop()
 
 		require.Equal(t, minutes(0, 1, 3, 7, 15, 31, 63, 123, 183), h.startsOf("daily"))
-		require.Equal(t, minutes(0, 1, 3, 7, 15, 25, 35), h.startsOf("often")[:7])
+		require.Equal(t, minutes(0, 1, 3, 7, 10, 20, 30), h.startsOf("often")[:7])
 	})
 }
 
@@ -257,7 +257,7 @@ func TestASuccessResetsTheBackoff(t *testing.T) {
 		time.Sleep(65 * time.Minute)
 		h.stop()
 
-		require.Equal(t, minutes(0, 1, 3, 63, 64), h.startsOf("w"))
+		require.Equal(t, minutes(0, 1, 3, 60, 61, 63), h.startsOf("w"))
 	})
 }
 
@@ -325,7 +325,7 @@ func TestASecondSignalCancelsAtOnce(t *testing.T) {
 func TestAClockSteppedForwardRunsADueTaskOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t)
-		h.idx.commit("w", "a1", h.t0.Add(-10*time.Minute))
+		h.idx.commit("w", "a1", h.t0)
 
 		h.run(h.fake("w", Every(time.Hour), 0, nil))
 

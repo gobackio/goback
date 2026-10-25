@@ -30,10 +30,29 @@ func cronPlan(t *testing.T, expr string, loc *time.Location) *Plan {
 	return p
 }
 
-func TestEveryRunsAnIntervalAfterTheLastStart(t *testing.T) {
+func TestEveryRunsAtTheMultiplesOfItsIntervalSinceTheEpoch(t *testing.T) {
 	last := time.Date(2026, 10, 11, 9, 0, 7, 0, time.UTC)
 
-	require.Equal(t, last.Add(6*time.Hour), Every(6*time.Hour).Due(0, last, last.Add(time.Hour)))
+	require.Equal(t, time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC), Every(6*time.Hour).Due(0, last, last.Add(time.Hour)))
+}
+
+func TestJitterMovesTheSlotsOfAnInterval(t *testing.T) {
+	for _, offset := range []time.Duration{0, 17 * time.Minute, 45 * time.Minute} {
+		last := time.Date(2026, 10, 11, 12, 0, 3, 0, time.UTC).Add(offset)
+		want := time.Date(2026, 10, 11, 18, 0, 0, 0, time.UTC).Add(offset)
+		require.Equal(t, want, Every(6*time.Hour).Due(offset, last, last.Add(time.Hour)), offset)
+	}
+}
+
+func TestANewOrOverdueTaskStartsItsOffsetAfterNow(t *testing.T) {
+	now := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
+	offset := 40 * time.Minute
+
+	require.Equal(t, now.Add(offset), Every(24*time.Hour).Due(offset, time.Time{}, now))
+	require.Equal(t, now.Add(offset), Every(24*time.Hour).Due(offset, now.AddDate(0, 0, -3), now))
+	require.Equal(t, now.Add(offset), cronPlan(t, "0 3 * * *", time.UTC).Due(offset, time.Time{}, now))
+
+	require.Equal(t, time.Date(2026, 10, 11, 9, 10, 0, 0, time.UTC), Every(30*time.Minute).Due(offset, time.Time{}, now), "or at its next slot, sooner")
 }
 
 func TestCronRunsAtTheNextSlotInItsZone(t *testing.T) {
@@ -58,10 +77,10 @@ func TestOverdueRunsOnceNow(t *testing.T) {
 	}
 }
 
-func TestANewSetIsDueNow(t *testing.T) {
+func TestANewSetWithoutJitterIsDueNow(t *testing.T) {
 	now := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
 
-	require.Equal(t, now, cronPlan(t, "0 3 * * *", time.UTC).Due(time.Hour, time.Time{}, now))
+	require.Equal(t, now, cronPlan(t, "0 3 * * *", time.UTC).Due(0, time.Time{}, now))
 	require.Equal(t, now, Every(time.Hour).Due(0, time.Time{}, now))
 }
 
@@ -122,7 +141,9 @@ func TestEveryAcrossDSTIsElapsedTime(t *testing.T) {
 	loc := berlin(t)
 	last := time.Date(2026, 10, 25, 2, 30, 0, 0, loc)
 
-	require.Equal(t, time.Hour, Every(time.Hour).next(last).Sub(last))
+	next := Every(time.Hour).next(last)
+	require.Equal(t, 30*time.Minute, next.Sub(last))
+	require.Equal(t, time.Hour, Every(time.Hour).next(next).Sub(next))
 }
 
 func TestStaleAfterIsThreeIntervals(t *testing.T) {
