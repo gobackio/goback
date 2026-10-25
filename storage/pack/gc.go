@@ -398,6 +398,15 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 	}
 
 	run := newGCRun(ps, opts, prev, newGCReads())
+	if prev == nil {
+		floor, err := ps.newestGeneration()
+		if err != nil {
+			return nil, errors.Wrap(err, "finding the newest generation")
+		}
+
+		run.gen = floor + 1
+	}
+
 	report := &CollectReport{Generation: run.gen}
 
 	sessions, err := run.liveSessions()
@@ -603,6 +612,31 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 	report.Duration = time.Since(started)
 
 	return report, nil
+}
+
+// newestGeneration is the newest generation a seal or a mark result names,
+// zero for none, which a collection without a stored state continues
+// after: sessions read only the seals of generations newer than they began.
+func (ps *PackStorage) newestGeneration() (uint64, error) {
+	newest, err := ps.lastSeal()
+	if err != nil {
+		return 0, err
+	}
+
+	if err := ps.refreshArchives(); err != nil {
+		return 0, err
+	}
+
+	ps.mtx.RLock()
+	defer ps.mtx.RUnlock()
+
+	for _, a := range ps.archives {
+		if g := a.gcResult(); g != nil {
+			newest = max(newest, g.Generation)
+		}
+	}
+
+	return newest, nil
 }
 
 // scanArchive walks an archive's index record by record, counting the

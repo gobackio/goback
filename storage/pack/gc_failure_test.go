@@ -225,3 +225,25 @@ func TestAMergeRefusesALiveSetThatLacksARoot(t *testing.T) {
 	_, err = r.merge(live)
 	require.Error(t, err)
 }
+
+func TestACollectionWithoutItsStateContinuesTheGenerations(t *testing.T) {
+	base := t.TempDir()
+	store := newGCStore(t, base)
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	reachable, unreachable := makeGCTestData(t)
+	putAll(t, store, append(append([]*proto.Object{}, reachable...), unreachable...))
+
+	for _, ahead := range []time.Duration{0, 48 * time.Hour} {
+		_, err := store.Collect(ctx, gcOptions(t, ahead))
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, os.Remove(filepath.Join(base, gcStateName)))
+
+	report, err := store.Collect(ctx, gcOptions(t, 96*time.Hour))
+	require.NoError(t, err)
+	require.EqualValues(t, 3, report.Generation)
+	requireStored(t, store, reachable, true)
+}
