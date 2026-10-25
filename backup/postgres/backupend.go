@@ -95,7 +95,7 @@ func (s *walSegment) place() {
 	log, err1 := strconv.ParseUint(s.name[8:16], 16, 32)
 	seg, err2 := strconv.ParseUint(s.name[16:24], 16, 32)
 
-	if err1 != nil || err2 != nil || e.segSize == 0 || e.pageSize < longPageHeaderLen || e.segSize%e.pageSize != 0 {
+	if err1 != nil || err2 != nil || e.segSize == 0 || e.pageSize < longPageHeaderLen || e.pageSize&(e.pageSize-1) != 0 || e.segSize%e.pageSize != 0 {
 		e.done = true
 		return
 	}

@@ -146,6 +146,20 @@ func TestWALThatSkipsASegmentEndsTheSearch(t *testing.T) {
 	require.Empty(t, ends.stops)
 }
 
+func TestAPageSizeThatIsNoPowerOfTwoEndsTheSearch(t *testing.T) {
+	page := make([]byte, 42)
+	binary.LittleEndian.PutUint16(page[2:], xlpLongHeader)
+	binary.LittleEndian.PutUint64(page[8:], 42000)
+	binary.LittleEndian.PutUint32(page[32:], 42000)
+	binary.LittleEndian.PutUint32(page[36:], 42)
+
+	ends := &backupEnd{}
+	scan(t, ends, "000000010000000000000001", page)
+
+	require.True(t, ends.done)
+	require.Empty(t, ends.stops)
+}
+
 func TestTheEndOfABackupIsWhatPostgresReports(t *testing.T) {
 	for file, stop := range map[string]uint64{"testdata/wal-9.6": 0x30000F8, "testdata/wal-17": 0x3000120} {
 		wal, err := os.ReadFile(file)
