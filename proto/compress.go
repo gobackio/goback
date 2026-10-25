@@ -4,9 +4,13 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// maxDecoded is the most one stored payload decompresses to; a payload
+// that claims or yields more fails to decode.
+const maxDecoded = 256 << 20
+
 var (
 	zstdEncoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(1))
-	zstdDecoder, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
+	zstdDecoder, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(maxDecoded))
 )
 
 // Encode compresses a payload for storage and reports the codec used; it
