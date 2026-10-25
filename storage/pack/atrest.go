@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 
 	"github.com/gobackio/goback/proto"
 
@@ -106,7 +107,8 @@ func LoadAtRestKey(path string) (*AtRestKey, error) {
 	return NewAtRestKey(h)
 }
 
-// Save writes the keyset, readable by its owner only.
+// Save writes the keyset, readable by its owner only. It replaces a file
+// at path whole or not at all.
 func (k *AtRestKey) Save(path string) error {
 	var buf bytes.Buffer
 
@@ -115,7 +117,26 @@ func (k *AtRestKey) Save(path string) error {
 		return err
 	}
 
-	return os.WriteFile(path, buf.Bytes(), 0o600)
+	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temp.Name())
+
+	_, err = temp.Write(buf.Bytes())
+	if err == nil {
+		err = temp.Sync()
+	}
+
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return os.Rename(temp.Name(), path)
 }
 
 // Wrap returns the keyset sealed under kek, a key-encryption key such as
