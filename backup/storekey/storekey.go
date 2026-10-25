@@ -1,6 +1,6 @@
 // Package storekey implements the client-held store key: its key file,
-// deterministic sealing of blobs, name tokens and inline content, the
-// digest blobs are named by, and passphrase escrow. The server never sees
+// deterministic sealing of blobs, name tokens and inline content, and
+// passphrase escrow. The server never sees
 // the key. It carries none of the object format, so a WebAssembly build
 // can take it without the rest of goback.
 package storekey
@@ -84,15 +84,14 @@ func DefaultPolicy() Policy {
 
 // Key is a store key, named after its store, with the policy the agent
 // writes under. It is a pair of Tink keysets: deterministic AEAD seals,
-// a PRF names blobs.
+// a PRF derives the key id.
 type Key struct {
 	Name   string
 	Policy Policy
 
-	seal, ref *keyset.Handle
-	sealer    tink.DeterministicAEAD
-	prf       *prf.Set
-	id        []byte
+	seal, ident *keyset.Handle
+	sealer      tink.DeterministicAEAD
+	id          []byte
 }
 
 const keyKind = "goback store key"
@@ -103,7 +102,7 @@ type keyFile struct {
 	KeyID  string          `json:"key_id"`
 	Policy Policy          `json:"policy"`
 	Seal   json.RawMessage `json:"seal"`
-	Ref    json.RawMessage `json:"ref"`
+	Ident  json.RawMessage `json:"ref"`
 }
 
 // Generate makes a fresh key named after its store.
@@ -113,23 +112,23 @@ func Generate(name string) (*Key, error) {
 		return nil, err
 	}
 
-	ref, err := keyset.NewHandle(prf.HMACSHA256PRFKeyTemplate())
+	ident, err := keyset.NewHandle(prf.HMACSHA256PRFKeyTemplate())
 	if err != nil {
 		return nil, err
 	}
 
-	return New(name, DefaultPolicy(), seal, ref)
+	return New(name, DefaultPolicy(), seal, ident)
 }
 
 // New makes a key from its keysets: deterministic AEAD to seal with and a
-// PRF to name blobs with.
-func New(name string, policy Policy, seal, ref *keyset.Handle) (*Key, error) {
+// PRF to derive the key id from.
+func New(name string, policy Policy, seal, ident *keyset.Handle) (*Key, error) {
 	sealer, err := daead.New(seal)
 	if err != nil {
 		return nil, fmt.Errorf("store key %s: %w", name, err)
 	}
 
-	set, err := prf.NewPRFSet(ref)
+	set, err := prf.NewPRFSet(ident)
 	if err != nil {
 		return nil, fmt.Errorf("store key %s: %w", name, err)
 	}
@@ -139,7 +138,7 @@ func New(name string, policy Policy, seal, ref *keyset.Handle) (*Key, error) {
 		return nil, err
 	}
 
-	return &Key{Name: name, Policy: policy, seal: seal, ref: ref, sealer: sealer, prf: set, id: id}, nil
+	return &Key{Name: name, Policy: policy, seal: seal, ident: ident, sealer: sealer, id: id}, nil
 }
 
 // Load reads a key file written by Save.
@@ -175,12 +174,12 @@ func Parse(data []byte) (*Key, error) {
 		return nil, err
 	}
 
-	ref, err := ReadKeyset(f.Ref)
+	ident, err := ReadKeyset(f.Ident)
 	if err != nil {
 		return nil, err
 	}
 
-	key, err := New(f.Name, f.Policy, seal, ref)
+	key, err := New(f.Name, f.Policy, seal, ident)
 	if err != nil {
 		return nil, err
 	}
@@ -229,13 +228,13 @@ func (k *Key) Marshal() ([]byte, error) {
 		return nil, err
 	}
 
-	ref, err := WriteKeyset(k.ref)
+	ident, err := WriteKeyset(k.ident)
 	if err != nil {
 		return nil, err
 	}
 
 	data, err := json.MarshalIndent(keyFile{
-		Kind: keyKind, Name: k.Name, KeyID: k.IDString(), Policy: k.Policy, Seal: seal, Ref: ref,
+		Kind: keyKind, Name: k.Name, KeyID: k.IDString(), Policy: k.Policy, Seal: seal, Ident: ident,
 	}, "", "  ")
 	if err != nil {
 		return nil, err
@@ -271,26 +270,15 @@ func (k *Key) ID() []byte { return k.id }
 // IDString is the hex form of ID.
 func (k *Key) IDString() string { return hex.EncodeToString(k.id) }
 
-// Digest is the PRF of a blob's plaintext, which its ref is made from:
-// equal under one key, unrelated under another.
-func (k *Key) Digest(plaintext []byte) []byte {
-	out, err := k.prf.ComputePrimaryPRF(plaintext, 32)
-	if err != nil {
-		panic(fmt.Sprintf("computing a digest under store key %s: %v", k.IDString(), err))
-	}
-
-	return out
-}
-
-// SealBlob seals a blob's stored bytes, bound to the blob's ref. Sealing
-// is deterministic, so a blob stored twice is stored once.
-func (k *Key) SealBlob(stored, ref []byte) []byte {
-	return k.encrypt(stored, blobAD(ref))
+// SealBlob seals a blob's stored bytes, bound to the key's id. Sealing is
+// deterministic, so a blob stored twice is stored once.
+func (k *Key) SealBlob(stored []byte) []byte {
+	return k.encrypt(stored, k.blobAD())
 }
 
 // OpenBlob reverses SealBlob.
-func (k *Key) OpenBlob(sealed, ref []byte) ([]byte, error) {
-	stored, err := k.sealer.DecryptDeterministically(sealed, blobAD(ref))
+func (k *Key) OpenBlob(sealed []byte) ([]byte, error) {
+	stored, err := k.sealer.DecryptDeterministically(sealed, k.blobAD())
 	if err != nil {
 		return nil, ErrWrongKey
 	}
@@ -298,8 +286,8 @@ func (k *Key) OpenBlob(sealed, ref []byte) ([]byte, error) {
 	return stored, nil
 }
 
-func blobAD(ref []byte) []byte {
-	return append([]byte("blob"), ref...)
+func (k *Key) blobAD() []byte {
+	return append([]byte("blob"), k.id...)
 }
 
 // SealInline seals a small file's whole content.

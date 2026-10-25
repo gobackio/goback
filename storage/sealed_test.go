@@ -11,11 +11,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"gocloud.dev/blob/fileblob"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // testSealedStore checks that a store keeps a sealed blob byte for byte
-// and hands it back under the client's ref; read is how the store serves
-// a blob.
+// and hands it back under its ref; read is how the store serves a blob.
 func testSealedStore(t *testing.T, store backup.ObjectStore, read func(context.Context, *proto.Ref) (*proto.Object, error)) {
 	t.Helper()
 
@@ -28,27 +29,18 @@ func testSealedStore(t *testing.T, store backup.ObjectStore, read func(context.C
 
 	require.NoError(t, store.Put(ctx, obj))
 
-	got, err := read(ctx, sealed.Ref)
+	got, err := read(ctx, sealed.Ref())
 	require.NoError(t, err)
 	require.NotNil(t, got.GetSealed())
 	require.Equal(t, sealed.Data, got.GetSealed().Data)
 	require.Equal(t, sealed.Encryption, got.GetSealed().Encryption)
 	require.Equal(t, sealed.KeyId, got.GetSealed().KeyId)
 	require.Equal(t, sealed.Compression, got.GetSealed().Compression)
-	require.True(t, got.Ref().Equal(sealed.Ref))
+	require.True(t, got.Ref().Equal(sealed.Ref()))
 
 	opened, err := backup.OpenBlob(key, got.GetSealed())
 	require.NoError(t, err)
 	require.Equal(t, []byte("secret save data"), opened)
-
-	// a sealed object whose bytes do not match its ref is still stored as
-	// is: the server cannot check the ref, only the client can
-	forged := proto.NewObject(&proto.Sealed{Ref: proto.HashPayload(proto.ObjectType_BLOB, []byte("other")), Type: proto.ObjectType_BLOB, Data: []byte("junk"), Encryption: proto.Encryption_SEALED})
-	require.NoError(t, store.Put(ctx, forged))
-	back, err := read(ctx, forged.Ref())
-	require.NoError(t, err)
-	_, err = backup.OpenBlob(key, back.GetSealed())
-	require.ErrorIs(t, err, storekey.ErrWrongKey)
 }
 
 func TestPackStoreSealed(t *testing.T) {
@@ -97,4 +89,23 @@ func TestRemoteSealed(t *testing.T) {
 	}
 
 	testSealedStore(t, client, readPart)
+}
+
+func TestASealedBlobFiledUnderAnotherRefIsRefused(t *testing.T) {
+	_, dial := startServer(t)
+	client := dial("node-1")
+	ctx := context.Background()
+
+	key, err := storekey.Generate("s1")
+	require.NoError(t, err)
+
+	honest := proto.NewObject(&proto.Blob{Data: []byte("a popular server jar")})
+	junk := proto.NewObject(backup.SealBlob(key, []byte("junk")))
+
+	_, err = client.store.Put(client.outgoing(ctx), &proto.PutRequest{Object: junk, Ref: honest.Ref()})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	missing, err := client.Missing(ctx, []*proto.Ref{honest.Ref()})
+	require.NoError(t, err)
+	require.Len(t, missing, 1, "nothing answers for the ref the forgery claimed")
 }

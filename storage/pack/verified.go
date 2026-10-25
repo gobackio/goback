@@ -186,7 +186,7 @@ func (ps *PackStorage) refuseShadow(ctx context.Context, object *proto.Object) e
 		return nil
 	}
 
-	found, err := ps.index.LocateCopies([]*proto.Ref{sealed.Ref}, ScopeOf(ctx))
+	found, err := ps.index.LocateCopies([]*proto.Ref{sealed.Ref()}, ScopeOf(ctx))
 	if err != nil {
 		return err
 	}
@@ -194,21 +194,21 @@ func (ps *PackStorage) refuseShadow(ctx context.Context, object *proto.Object) e
 	pending := false
 	if ws := ps.lookupWriteSession(ScopeOf(ctx).Session); ws != nil {
 		ws.pendingMtx.RLock()
-		_, pending = ws.pending[string(sealed.Ref.Hash)]
+		_, pending = ws.pending[string(sealed.Ref().Hash)]
 		ws.pendingMtx.RUnlock()
 	}
 
-	if len(found[string(sealed.Ref.Hash)]) == 0 && !pending {
+	if len(found[string(sealed.Ref().Hash)]) == 0 && !pending {
 		return nil
 	}
 
-	has, err := ps.HasVerified(ctx, []*proto.Ref{sealed.Ref})
+	has, err := ps.HasVerified(ctx, []*proto.Ref{sealed.Ref()})
 	if err != nil {
 		return err
 	}
 
 	if has[0] {
-		return fmt.Errorf("%w: sealed blob %x: the store holds that ref in the clear", proto.ErrInvalidObject, sealed.Ref.Hash)
+		return fmt.Errorf("%w: sealed blob %x: the store holds that ref in the clear", proto.ErrInvalidObject, sealed.Ref().Hash)
 	}
 
 	return nil

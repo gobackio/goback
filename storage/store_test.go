@@ -191,7 +191,7 @@ func TestAStoreRefusesASealedObjectThatIsNotABlob(t *testing.T) {
 	store := NewStore(newMemIndex(), nil)
 
 	for _, kind := range []proto.ObjectType{proto.ObjectType_COMMIT, proto.ObjectType_TREE, proto.ObjectType_FILE, proto.ObjectType_PIN} {
-		sealed := proto.NewObject(&proto.Sealed{Ref: proto.HashPayload(kind, []byte("x")), Type: kind, Data: []byte("junk"), Encryption: proto.Encryption_SEALED})
+		sealed := proto.NewObject(&proto.Sealed{Type: kind, Data: []byte("junk"), Encryption: proto.Encryption_SEALED, KeyId: []byte{0xba, 0xd0}})
 
 		_, err := store.Put(ctx, Upload{Object: sealed})
 		require.ErrorIs(t, err, ErrInvalidRequest, kind.String())

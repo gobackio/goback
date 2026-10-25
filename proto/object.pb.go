@@ -271,11 +271,11 @@ func (x *ObjectHeader) GetAtRestKeyId() []byte {
 	return nil
 }
 
-// Sealed carries a blob that the client encrypted: its ref is derived from
-// the blob key, not from the stored bytes, so the server stores it as is.
+// Sealed carries a blob that the client encrypted. Its ref is the hash of
+// its key id, codec and sealed bytes, which the server checks like any
+// other object's.
 type Sealed struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	Ref   *Ref                   `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
 	Type  ObjectType             `protobuf:"varint,2,opt,name=type,proto3,enum=proto.ObjectType" json:"type,omitempty"`
 	Data  []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
 	// the codec applied before encryption
@@ -314,13 +314,6 @@ func (x *Sealed) ProtoReflect() protoreflect.Message {
 // Deprecated: Use Sealed.ProtoReflect.Descriptor instead.
 func (*Sealed) Descriptor() ([]byte, []int) {
 	return file_object_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *Sealed) GetRef() *Ref {
-	if x != nil {
-		return x.Ref
-	}
-	return nil
 }
 
 func (x *Sealed) GetType() ObjectType {
@@ -557,17 +550,15 @@ const file_object_proto_rawDesc = "" +
 	" \x01(\fR\n" +
 	"storedHash\x12\x14\n" +
 	"\x05erase\x18\v \x01(\bR\x05erase\x12#\n" +
-	"\x0eat_rest_key_id\x18\f \x01(\fR\vatRestKeyId\"\xe1\x01\n" +
-	"\x06Sealed\x12\x1c\n" +
-	"\x03ref\x18\x01 \x01(\v2\n" +
-	".proto.RefR\x03ref\x12%\n" +
+	"\x0eat_rest_key_id\x18\f \x01(\fR\vatRestKeyId\"\xce\x01\n" +
+	"\x06Sealed\x12%\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x11.proto.ObjectTypeR\x04type\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x124\n" +
 	"\vcompression\x18\x04 \x01(\x0e2\x12.proto.CompressionR\vcompression\x121\n" +
 	"\n" +
 	"encryption\x18\x05 \x01(\x0e2\x11.proto.EncryptionR\n" +
 	"encryption\x12\x15\n" +
-	"\x06key_id\x18\x06 \x01(\fR\x05keyId\"\xad\x02\n" +
+	"\x06key_id\x18\x06 \x01(\fR\x05keyIdJ\x04\b\x01\x10\x02R\x03ref\"\xad\x02\n" +
 	"\x06Object\x12'\n" +
 	"\x06commit\x18\x01 \x01(\v2\r.proto.CommitH\x00R\x06commit\x12!\n" +
 	"\x04tree\x18\x02 \x01(\v2\v.proto.TreeH\x00R\x04tree\x12!\n" +
@@ -634,22 +625,21 @@ var file_object_proto_depIdxs = []int32{
 	0,  // 4: proto.ObjectHeader.type:type_name -> proto.ObjectType
 	5,  // 5: proto.ObjectHeader.tombstone_for:type_name -> proto.Ref
 	7,  // 6: proto.ObjectHeader.encryption:type_name -> proto.Encryption
-	5,  // 7: proto.Sealed.ref:type_name -> proto.Ref
-	0,  // 8: proto.Sealed.type:type_name -> proto.ObjectType
-	1,  // 9: proto.Sealed.compression:type_name -> proto.Compression
-	7,  // 10: proto.Sealed.encryption:type_name -> proto.Encryption
-	8,  // 11: proto.Object.commit:type_name -> proto.Commit
-	9,  // 12: proto.Object.tree:type_name -> proto.Tree
-	10, // 13: proto.Object.file:type_name -> proto.File
-	11, // 14: proto.Object.blob:type_name -> proto.Blob
-	3,  // 15: proto.Object.sealed:type_name -> proto.Sealed
-	12, // 16: proto.Object.pin:type_name -> proto.Pin
-	13, // 17: proto.Object.policy:type_name -> proto.Policy
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	0,  // 7: proto.Sealed.type:type_name -> proto.ObjectType
+	1,  // 8: proto.Sealed.compression:type_name -> proto.Compression
+	7,  // 9: proto.Sealed.encryption:type_name -> proto.Encryption
+	8,  // 10: proto.Object.commit:type_name -> proto.Commit
+	9,  // 11: proto.Object.tree:type_name -> proto.Tree
+	10, // 12: proto.Object.file:type_name -> proto.File
+	11, // 13: proto.Object.blob:type_name -> proto.Blob
+	3,  // 14: proto.Object.sealed:type_name -> proto.Sealed
+	12, // 15: proto.Object.pin:type_name -> proto.Pin
+	13, // 16: proto.Object.policy:type_name -> proto.Policy
+	17, // [17:17] is the sub-list for method output_type
+	17, // [17:17] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_object_proto_init() }

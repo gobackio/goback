@@ -1,7 +1,9 @@
 package proto
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -52,7 +54,6 @@ func TestCanonicalGoldenVectorsEncryption(t *testing.T) {
 
 func sealedFixture() *Sealed {
 	return &Sealed{
-		Ref:         refOf("blob key"),
 		Type:        ObjectType_BLOB,
 		Data:        []byte("ciphertext"),
 		Compression: Compression_NONE,
@@ -66,20 +67,45 @@ func TestSealedObject(t *testing.T) {
 	obj := NewObject(sealed)
 
 	require.Equal(t, ObjectType_BLOB, obj.Type())
-	require.True(t, obj.Ref().Equal(sealed.Ref), "a sealed object's ref is the one the client computed")
 
 	payload, err := obj.Canonical()
 	require.NoError(t, err)
 	require.Equal(t, sealed.Data, payload)
 
-	// a sealed object must claim an encryption and carry a valid ref
+	// a sealed object must claim an encryption and a key
 	plain := sealedFixture()
 	plain.Encryption = Encryption_PLAINTEXT
 	require.Error(t, NewObject(plain).Validate())
 
-	bad := sealedFixture()
-	bad.Ref = &Ref{Hash: []byte("short")}
-	require.Error(t, NewObject(bad).Validate())
+	keyless := sealedFixture()
+	keyless.KeyId = nil
+	require.Error(t, NewObject(keyless).Validate())
+}
+
+func TestASealedRefHashesTheKeyIDTheCodecAndTheSealedBytes(t *testing.T) {
+	sealed := sealedFixture()
+	ref := NewObject(sealed).Ref()
+
+	payload := append([]byte{8}, "keyid123"...)
+	payload = append(payload, byte(Compression_NONE))
+	payload = append(payload, "ciphertext"...)
+
+	sum := sha256.Sum256(append([]byte("sealed blob "+strconv.Itoa(len(payload))+"\x00"), payload...))
+	require.Equal(t, sum[:], ref.Hash)
+	require.NoError(t, NewObject(sealed).Verify(ref))
+
+	for name, change := range map[string]func(*Sealed){
+		"key id":      func(s *Sealed) { s.KeyId = []byte("keyid124") },
+		"compression": func(s *Sealed) { s.Compression = Compression_ZSTD },
+		"data":        func(s *Sealed) { s.Data = []byte("ciphertexu") },
+	} {
+		other := sealedFixture()
+		change(other)
+		require.False(t, NewObject(other).Ref().Equal(ref), name)
+		require.ErrorIs(t, NewObject(other).Verify(ref), ErrRefMismatch, name)
+	}
+
+	require.False(t, NewObject(&Blob{Data: sealed.Data}).Ref().Equal(ref), "no sealed ref is a plaintext one")
 }
 
 func TestSealedStoredRoundTrip(t *testing.T) {

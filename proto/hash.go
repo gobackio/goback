@@ -63,12 +63,41 @@ func HashPayload(t ObjectType, payload []byte) *Ref {
 		panic(fmt.Sprintf("no hash tag for object type %s", t))
 	}
 
+	return hashTagged(tag, payload)
+}
+
+// sealedTag separates the refs of sealed blobs from those of every object
+// type, so no sealed ref equals a plaintext one.
+const sealedTag = "sealed blob"
+
+// Ref is the ref a sealed blob is stored under: HashPayload's form under
+// its own tag over uvarint(len(key_id)) || key_id || uvarint(compression)
+// || data.
+func (s *Sealed) Ref() *Ref {
+	prefix := protowire.AppendVarint(nil, uint64(len(s.GetKeyId())))
+	prefix = append(prefix, s.GetKeyId()...)
+	prefix = protowire.AppendVarint(prefix, uint64(s.GetCompression()))
+
+	return hashTagged(sealedTag, prefix, s.GetData())
+}
+
+// hashTagged is SHA-256(tag || " " || decimal(len(payload)) || 0x00 ||
+// payload) over the concatenation of parts.
+func hashTagged(tag string, parts ...[]byte) *Ref {
+	size := 0
+	for _, part := range parts {
+		size += len(part)
+	}
+
 	h := sha256.New()
 	h.Write([]byte(tag))
 	h.Write([]byte{' '})
-	h.Write([]byte(strconv.Itoa(len(payload))))
+	h.Write([]byte(strconv.Itoa(size)))
 	h.Write([]byte{0})
-	h.Write(payload)
+
+	for _, part := range parts {
+		h.Write(part)
+	}
 
 	return &Ref{Hash: h.Sum(nil)}
 }
@@ -88,12 +117,11 @@ func (r *Ref) Valid() bool {
 	return len(r.GetHash()) == HashSize
 }
 
-// Ref computes the object's ref, or returns the carried ref of a sealed
-// object. It panics on an object that cannot be canonically encoded; use
-// Canonical to get the error instead.
+// Ref computes the object's ref. It panics on an object that cannot be
+// canonically encoded; use Canonical to get the error instead.
 func (o *Object) Ref() *Ref {
 	if sealed := o.GetSealed(); sealed != nil {
-		return sealed.Ref
+		return sealed.Ref()
 	}
 
 	payload, err := o.Canonical()
@@ -105,17 +133,16 @@ func (o *Object) Ref() *Ref {
 }
 
 // Verify fails with ErrRefMismatch, naming ref, unless the object is the one
-// ref names. A sealed object is checked only against the ref it carries;
-// opening it under the store key checks its contents.
+// ref names.
 func (o *Object) Verify(ref *Ref) error {
 	payload, err := o.Canonical()
 	if err != nil {
 		return fmt.Errorf("object %x: %w", ref.GetHash(), err)
 	}
 
-	got := o.GetSealed().GetRef()
-	if got == nil {
-		got = HashPayload(o.Type(), payload)
+	got := HashPayload(o.Type(), payload)
+	if sealed := o.GetSealed(); sealed != nil {
+		got = sealed.Ref()
 	}
 
 	if !got.Equal(ref) {
@@ -132,8 +159,8 @@ func StoredHash(stored []byte) []byte {
 }
 
 // VerifyStored checks stored bytes against their header: the stored hash
-// when present, and the ref for objects the server can rehash. Sealed
-// objects can only be checked by their stored hash.
+// when present, and the ref of everything but a sealed blob, which its
+// stored hash alone checks.
 func VerifyStored(hdr *ObjectHeader, stored []byte) error {
 	if len(hdr.StoredHash) > 0 && !hmac.Equal(StoredHash(stored), hdr.StoredHash) {
 		return ErrRefMismatch
@@ -170,7 +197,6 @@ func ObjectFromStored(hdr *ObjectHeader, stored []byte) (*Object, error) {
 
 	if hdr.Encryption != Encryption_PLAINTEXT {
 		return &Object{Object: &Object_Sealed{Sealed: &Sealed{
-			Ref:         hdr.Ref,
 			Type:        hdr.Type,
 			Data:        stored,
 			Compression: hdr.Compression,
@@ -199,7 +225,7 @@ func HeaderFor(o *Object) (*ObjectHeader, []byte, error) {
 
 	if sealed := o.GetSealed(); sealed != nil {
 		return &ObjectHeader{
-			Ref:         sealed.Ref,
+			Ref:         sealed.Ref(),
 			Type:        sealed.Type,
 			Compression: sealed.Compression,
 			Encryption:  sealed.Encryption,
@@ -276,8 +302,8 @@ func (o *Object) Canonical() ([]byte, error) {
 		if err := noUnknown(t.Sealed); err != nil {
 			return nil, err
 		}
-		if !t.Sealed.GetRef().Valid() {
-			return nil, invalid("sealed object without a valid ref")
+		if len(t.Sealed.KeyId) == 0 {
+			return nil, invalid("sealed object without a key id")
 		}
 		if t.Sealed.Encryption == Encryption_PLAINTEXT {
 			return nil, invalid("sealed object without an encryption mode")

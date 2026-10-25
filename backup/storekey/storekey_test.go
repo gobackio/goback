@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tink-crypto/tink-go/v2/keyset"
+	"github.com/tink-crypto/tink-go/v2/prf"
 )
 
 func testKey(t *testing.T) *Key {
@@ -25,34 +27,35 @@ func saveData(size int) []byte {
 func TestASealedBlobOpensAndIsStoredOnce(t *testing.T) {
 	key := testKey(t)
 	data := saveData(2000)
-	ref := key.Digest(data)
 
-	sealed := key.SealBlob(data, ref)
+	sealed := key.SealBlob(data)
 	require.NotContains(t, string(sealed), "game save")
-	require.Equal(t, sealed, key.SealBlob(data, ref), "the same blob seals the same way")
+	require.Equal(t, sealed, key.SealBlob(data), "the same blob seals the same way")
 
-	opened, err := key.OpenBlob(sealed, ref)
+	opened, err := key.OpenBlob(sealed)
 	require.NoError(t, err)
 	require.Equal(t, data, opened)
 }
 
-func TestDigestsArePrivateToTheirKey(t *testing.T) {
-	data := saveData(5000)
-
-	require.NotEqual(t, testKey(t).Digest(data), testKey(t).Digest(data))
-}
-
-func TestABlobDoesNotOpenUnderAnotherRefOrKey(t *testing.T) {
+func TestABlobOpensOnlyAsABlobUnderItsKey(t *testing.T) {
 	key := testKey(t)
-	data := saveData(3000)
-	ref := key.Digest(data)
-	sealed := key.SealBlob(data, ref)
+	sealed := key.SealBlob(saveData(3000))
 
-	_, err := key.OpenBlob(sealed, key.Digest(saveData(3001)))
+	_, err := testKey(t).OpenBlob(sealed)
 	require.ErrorIs(t, err, ErrWrongKey)
 
-	_, err = testKey(t).OpenBlob(sealed, ref)
+	_, err = key.OpenInline(sealed)
 	require.ErrorIs(t, err, ErrWrongKey)
+
+	_, err = key.OpenBlob(key.SealInline(saveData(3000)))
+	require.ErrorIs(t, err, ErrWrongKey)
+
+	ident, err := keyset.NewHandle(prf.HMACSHA256PRFKeyTemplate())
+	require.NoError(t, err)
+	twin, err := New("s1", key.Policy, key.seal, ident)
+	require.NoError(t, err)
+	_, err = twin.OpenBlob(sealed)
+	require.ErrorIs(t, err, ErrWrongKey, "a blob is bound to the id of the key that sealed it")
 }
 
 func TestInlineContentRoundTrips(t *testing.T) {
@@ -102,8 +105,7 @@ func TestAKeyFileLoadsAsTheSameKey(t *testing.T) {
 	require.Equal(t, "s1", loaded.Name)
 	require.Equal(t, key.Policy, loaded.Policy)
 
-	ref := key.Digest(saveData(100))
-	opened, err := loaded.OpenBlob(key.SealBlob(saveData(100), ref), ref)
+	opened, err := loaded.OpenBlob(key.SealBlob(saveData(100)))
 	require.NoError(t, err)
 	require.Equal(t, saveData(100), opened)
 }

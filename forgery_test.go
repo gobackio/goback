@@ -42,16 +42,16 @@ func TestAPlaintextAgentNeverDedupsAgainstASealedForgeryOfItsContent(t *testing.
 	honest := proto.NewObject(&proto.Blob{Data: []byte("a popular server jar")})
 	empty := proto.NewObject(&proto.Tree{})
 
+	junk := proto.NewObject(&proto.Sealed{Type: proto.ObjectType_BLOB, Data: []byte("junk"), Encryption: proto.Encryption_SEALED, KeyId: []byte{0xba, 0xd0}})
+
 	sctx, err := client.BeginSession(ctx, &backup.Session{Set: "evil"})
 	require.NoError(t, err)
-	require.NoError(t, client.PutObjects(sctx, []*proto.Object{empty, proto.NewObject(&proto.Sealed{
-		Ref: honest.Ref(), Type: proto.ObjectType_BLOB, Data: []byte("junk"), Encryption: proto.Encryption_SEALED, KeyId: []byte{0xba, 0xd0},
-	})}))
+	require.NoError(t, client.PutObjects(sctx, []*proto.Object{empty, junk}))
 	require.NoError(t, client.PutCommits(sctx, []*proto.Object{snapshotOf("evil", 1, empty)}))
 
 	has, err := repo.Store.Has(ctx, honest.Ref())
 	require.NoError(t, err)
-	require.True(t, has, "the forgery is stored")
+	require.False(t, has, "the junk is stored under the ref its bytes hash to")
 
 	sctx, err = client.BeginSession(ctx, &backup.Session{Set: "world"})
 	require.NoError(t, err)

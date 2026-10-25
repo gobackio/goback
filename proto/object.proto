@@ -55,10 +55,12 @@ message ObjectHeader {
   bytes at_rest_key_id = 12;
 }
 
-// Sealed carries a blob that the client encrypted: its ref is derived from
-// the blob key, not from the stored bytes, so the server stores it as is.
+// Sealed carries a blob that the client encrypted. Its ref is the hash of
+// its key id, codec and sealed bytes, which the server checks like any
+// other object's.
 message Sealed {
-  Ref ref = 1;
+  reserved 1;
+  reserved "ref";
   ObjectType type = 2;
   bytes data = 3;
   // the codec applied before encryption
