@@ -243,6 +243,36 @@ func TestAFailedCommitKeepsTheFlushAndIsRetried(t *testing.T) {
 	require.Equal(t, uint64(100), s.flushed)
 }
 
+func TestAFailedCommitWhileTheServerShutsDownEndsTheSession(t *testing.T) {
+	f := &fakeStream{script: []any{xlogData{start: 0, data: wal(0, 100)}}}
+	stop := make(chan struct{})
+	start := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+
+	f.tick = func(now time.Time) {
+		if now.Sub(start) == time.Hour {
+			close(stop)
+		}
+	}
+
+	var attempts int
+
+	s := newSession(t, f, func(context.Context, *cut) (*backup.WalkResult, error) {
+		attempts++
+		return nil, errors.New("the store is down")
+	})
+	f.settle(s)
+
+	down := make(chan struct{})
+	close(down)
+	s.down = down
+
+	err := s.run(context.Background(), stop)
+	require.ErrorContains(t, err, "the store is down")
+	require.Equal(t, 1, attempts)
+	require.Less(t, f.clock().Sub(start), time.Minute, "the shutdown waited for the store")
+	require.True(t, s.retry, "the WAL waits in the spool")
+}
+
 func TestTheLastCommitHappensOnStop(t *testing.T) {
 	stop := make(chan struct{})
 	f := &fakeStream{script: []any{xlogData{start: 0, data: wal(0, 100)}}}

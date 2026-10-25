@@ -151,7 +151,8 @@ func (r *Receiver) setDefaults() error {
 // until it is caught up, then commits what it received and returns nil.
 // When the server shuts down, it commits what the server sent up to its
 // shutdown at once, so the shutdown doesn't wait for CommitEvery, and
-// returns ErrServerShutDown. It returns early with an error that needs a
+// returns ErrServerShutDown; when that commit fails, it returns the error at
+// once, so the shutdown doesn't wait for the store. It returns early with an error that needs a
 // person (ErrGap, ErrForeignCluster, ErrUncappedSlot,
 // ErrSynchronousStandby, ErrSlotActive) or, on any other failure, one a
 // restart may clear. When ctx ends, it stops without the last commit.
@@ -660,6 +661,12 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 				return err
 			}
 
+			// the server's walsender waits for this commit's flush to shut
+			// down, and keeps waiting while the session answers it
+			if d.err != nil && s.shuttingDown() {
+				return fmt.Errorf("the server is shutting down and the commit of what it sent failed, so that WAL waits in the spool: %w", d.err)
+			}
+
 			lastStatus = r.now()
 		default:
 		}
@@ -784,14 +791,14 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 
 // due reports whether a commit starts now, since after the last one
 // started: every CommitEvery while new WAL waits, after the floor once
-// CommitBytes of it waits, at once while the server shuts down, and backing
-// off after failed commits.
+// CommitBytes of it waits, at once while the server shuts down, and
+// otherwise backing off after failed commits.
 func (s *session) due(since time.Duration, waiting bool, failures int) bool {
 	if !waiting {
 		return false
 	}
 
-	if s.shuttingDown() && failures == 0 {
+	if s.shuttingDown() {
 		return true
 	}
 
