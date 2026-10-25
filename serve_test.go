@@ -343,6 +343,56 @@ func TestAServerHoldsBackAnAddressThatGuessesKeys(t *testing.T) {
 	require.Equal(t, codes.ResourceExhausted, status.Code(err))
 }
 
+// streamCalled is a server stream of a call whose context is ctx.
+type streamCalled struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s streamCalled) Context() context.Context { return s.ctx }
+
+func TestOnlySoManyUploadsRunAtOnceAndTheRestWait(t *testing.T) {
+	slots := uploadSlots(2)
+	upload := &grpc.StreamServerInfo{FullMethod: proto.Store_SendUpload_FullMethodName}
+	ctx := context.Background()
+
+	release := make(chan struct{})
+	running := make(chan struct{}, 3)
+	hold := func(any, grpc.ServerStream) error {
+		running <- struct{}{}
+		<-release
+		return nil
+	}
+
+	done := make(chan error, 3)
+	for range 3 {
+		go func() { done <- slots(nil, streamCalled{ctx: ctx}, upload, hold) }()
+	}
+
+	<-running
+	<-running
+	select {
+	case <-running:
+		t.Fatal("a third upload runs beside two")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	require.NoError(t, slots(nil, streamCalled{ctx: ctx}, &grpc.StreamServerInfo{FullMethod: proto.Store_ReadFile_FullMethodName}, func(any, grpc.ServerStream) error { return nil }),
+		"other streams do not wait")
+
+	gone, cancel := context.WithCancel(ctx)
+	cancel()
+	require.Equal(t, codes.Canceled, status.Code(slots(nil, streamCalled{ctx: gone}, upload, hold)), "a waiting call ends with its context")
+
+	release <- struct{}{}
+	<-running
+	close(release)
+
+	for range 3 {
+		require.NoError(t, <-done)
+	}
+}
+
 func TestServeRefusesAnAdminKeyThatIsTheBackupKey(t *testing.T) {
 	repo := &Repo{}
 

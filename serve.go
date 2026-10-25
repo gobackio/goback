@@ -23,6 +23,7 @@ import (
 	"github.com/gobackio/goback/storage/pack"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -52,6 +53,10 @@ const (
 	serveFailures     = 10
 	serveFailureEvery = 6 * time.Second
 )
+
+// serveUploads is how many SendUpload streams a store server ingests at
+// once, each holding up to a few dozen MiB; one past them waits.
+const serveUploads = 16
 
 // ServeOptions say how Serve serves a store.
 type ServeOptions struct {
@@ -136,7 +141,7 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 		grpc.KeepaliveParams(serveKeepalive),
 		grpc.StatsHandler(otelgrpc.NewServerHandler(otelgrpc.WithPublicEndpoint())),
 		grpc.ChainUnaryInterceptor(recoverUnary(logger), health.Unary(auth.Unary(keys), gateUnary, remote.UnaryInterceptor())),
-		grpc.ChainStreamInterceptor(recoverStream(logger), health.Stream(auth.Stream(keys), gateStream, remote.StreamInterceptor())),
+		grpc.ChainStreamInterceptor(recoverStream(logger), health.Stream(auth.Stream(keys), gateStream, uploadSlots(serveUploads), remote.StreamInterceptor())),
 	)
 
 	proto.RegisterStoreServer(srv, remote)
@@ -257,6 +262,25 @@ func gateStream(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, hand
 	}
 
 	return handler(srv, ss)
+}
+
+// uploadSlots has at most n SendUpload streams run at once; the others wait
+// for one of them to end, or for their own call to.
+func uploadSlots(n int64) grpc.StreamServerInterceptor {
+	slots := semaphore.NewWeighted(n)
+
+	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if info.FullMethod != proto.Store_SendUpload_FullMethodName {
+			return handler(srv, ss)
+		}
+
+		if err := slots.Acquire(ss.Context(), 1); err != nil {
+			return status.FromContextError(err).Err()
+		}
+		defer slots.Release(1)
+
+		return handler(srv, ss)
+	}
 }
 
 // recoverUnary answers a call whose handler panics with codes.Internal and
