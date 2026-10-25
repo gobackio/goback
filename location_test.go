@@ -3,6 +3,7 @@ package goback
 import (
 	"context"
 	"fmt"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/storage"
 	"github.com/gobackio/goback/storage/pack"
 	"github.com/stretchr/testify/require"
@@ -176,4 +178,33 @@ func TestARedactedLocationLeavesTheKeyOut(t *testing.T) {
 	_, err := Open(context.Background(), Settings{Storage: "goback://gbk_live_xyz@backup.example:abc"})
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "gbk_live_xyz")
+}
+
+type unopenable struct {
+	backup.ObjectStore
+	closed bool
+}
+
+func (s *unopenable) Open() error  { return errors.New("listing archives: 503") }
+func (s *unopenable) Close() error { s.closed = true; return nil }
+
+type closingIndex struct {
+	backup.Index
+	closed bool
+}
+
+func (x *closingIndex) Close() error { x.closed = true; return nil }
+
+func TestAStoreThatFailsToOpenIsClosedWithItsIndex(t *testing.T) {
+	store, index := &unopenable{}, &closingIndex{}
+
+	drivers["unopenable"] = func(context.Context, *url.URL, Settings) (backup.ObjectStore, backup.Index, error) {
+		return store, index, nil
+	}
+	t.Cleanup(func() { delete(drivers, "unopenable") })
+
+	_, err := Open(context.Background(), Settings{Storage: "unopenable://store"})
+	require.ErrorContains(t, err, "503")
+	require.True(t, store.closed)
+	require.True(t, index.closed)
 }

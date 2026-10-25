@@ -123,12 +123,12 @@ func openDirectory(_ context.Context, u *url.URL, s Settings) (backup.ObjectStor
 		return nil, nil, err
 	}
 
-	file, err := fileblob.OpenBucket(dir, &fileblob.Options{NoTempDir: true})
+	options, err := s.packOptions()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	options, err := s.packOptions()
+	file, err := fileblob.OpenBucket(dir, &fileblob.Options{NoTempDir: true})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -263,12 +263,12 @@ func openBucket(scheme string) driver {
 			return nil, nil, errors.New("a bucket url takes no cache; the cache directory names where caches go")
 		}
 
-		bucket, err := blob.OpenBucket(ctx, (&url.URL{Scheme: scheme, Host: u.Host, RawQuery: query.Encode()}).String())
+		options, err := s.packOptions()
 		if err != nil {
 			return nil, nil, err
 		}
 
-		options, err := s.packOptions()
+		bucket, err := blob.OpenBucket(ctx, (&url.URL{Scheme: scheme, Host: u.Host, RawQuery: query.Encode()}).String())
 		if err != nil {
 			return nil, nil, err
 		}
@@ -281,9 +281,14 @@ func openBucket(scheme string) driver {
 			limit = 0
 		}
 
-		return s.withIndex(func(x *sql.Index) (*pack.PackStorage, error) {
-			return storage.NewBucketObjectStore(bucket, x, s.storeCache("metadata"), limit, append(options, pack.WithOwned(x))...)
+		packs, x, err := s.withIndex(func(x *sql.Index) (*pack.PackStorage, error) {
+			return storage.NewBucketObjectStore(bucket, x, s.storeCache("metadata"), limit, append(options, pack.WithOwned(x, bucket))...)
 		})
+		if err != nil {
+			_ = bucket.Close()
+		}
+
+		return packs, x, err
 	}
 }
 
@@ -327,6 +332,7 @@ func (s Settings) withIndex(build func(*sql.Index) (*pack.PackStorage, error)) (
 	x.ObjectStore = packs
 
 	if err := x.Open(); err != nil {
+		_ = packs.Close()
 		return nil, nil, fmt.Errorf("opening the index: %w", err)
 	}
 

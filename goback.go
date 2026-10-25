@@ -122,6 +122,7 @@ func Open(ctx context.Context, s Settings) (*Repo, error) {
 
 	if op, ok := r.Store.(interface{ Open() error }); ok {
 		if err := op.Open(); err != nil {
+			_ = r.Close()
 			return nil, fmt.Errorf("opening the store: %w", err)
 		}
 	}
