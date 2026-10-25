@@ -1119,60 +1119,64 @@ func (d *treeDiff) dir(l *level, trees map[string][]byte, files map[string]*ent.
 }
 
 // indexPin caches a pin and revives its target commit. A pin of a
-// tombstoned commit is refused in strict mode.
+// tombstoned commit is refused in strict mode. A commit the pin takes out
+// of the trash is recorded as out of it, so a rebuild keeps it out.
 func (x *Index) indexPin(ctx context.Context, p *proto.Pin, ref *proto.Ref, strict bool) error {
-	return x.tx(ctx, func(tx *ent.Tx) error {
+	return x.policyTx(ctx, func(tx *ent.Tx) (*proto.Policy, error) {
 		c := tx.Client()
 		target := p.GetTarget().GetHash()
 
-		setID, tombstoned, err := x.lockCommit(ctx, tx, target)
+		row, err := x.lockCommitRow(ctx, tx, target)
 		if err != nil && !errors.Is(err, backup.ErrNotFound) {
-			return err
+			return nil, err
 		}
 
+		tombstoned := row != nil && row.TombstonedAt != nil
 		if !tombstoned {
 			tombstoned, err = isDeleted(ctx, c, target)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 
 		if tombstoned {
 			if strict {
-				return fmt.Errorf("%w: commit %x", backup.ErrTombstoned, target)
+				return nil, fmt.Errorf("%w: commit %x", backup.ErrTombstoned, target)
 			}
 
 			x.logger().Warn("pin targets a tombstoned commit", "pin", fmt.Sprintf("%x", ref.GetHash()), "commit", fmt.Sprintf("%x", target))
 		}
 
-		if setID != 0 && strict {
-			err = x.checkPinScope(ctx, c, setID)
+		if row != nil && strict {
+			err = x.checkPinScope(ctx, c, row.SetID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 
 		err = ignoreNoRows(c.Pin.Create().SetRef(ref.Hash).SetTarget(target).SetReceivedAt(time.Unix(0, p.GetReceivedAtNs()).UTC()).
 			SetMetadata(p.GetMetadata()).OnConflict().DoNothing().Exec(ctx))
+		if err != nil || row == nil || tombstoned {
+			return nil, err
+		}
+
+		err = c.CommitRow.Update().Where(commitrow.Ref(target)).ClearRetireAt().ClearRetirePolicy().ClearDeletedAt().ClearExpiresAt().Exec(ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		if setID != 0 && !tombstoned {
-			err = c.CommitRow.Update().Where(commitrow.Ref(target)).ClearRetireAt().ClearRetirePolicy().ClearDeletedAt().ClearExpiresAt().Exec(ctx)
+		if strict {
+			err = x.evaluateSet(ctx, tx, row.SetID, x.now())
 			if err != nil {
-				return err
-			}
-
-			if strict {
-				err = x.evaluateSet(ctx, tx, setID, x.now())
-				if err != nil {
-					return err
-				}
+				return nil, err
 			}
 		}
 
-		return nil
+		if row.DeletedAt == nil {
+			return nil, nil
+		}
+
+		return commitScope(target, time.Time{}), nil
 	})
 }
 

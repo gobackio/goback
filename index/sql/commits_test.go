@@ -474,6 +474,33 @@ func TestRestoreLeasesHoldRetirement(t *testing.T) {
 	require.True(t, f.store.tombstoned(a))
 }
 
+func TestAPinTakesATrashedCommitOutOfTheTrashForARebuildToo(t *testing.T) {
+	f := newFixture(t)
+
+	f.commit("world", f.tree(f.file("a.txt", "one")), false)
+	f.advance(time.Hour)
+	trashed := f.commit("world", f.tree(f.file("a.txt", "two")), false)
+	f.advance(time.Hour)
+	f.commit("world", f.tree(f.file("a.txt", "three")), false)
+
+	require.NoError(t, f.x.DeleteCommit(f.ctx, trashed))
+	f.advance(time.Hour)
+	_, err := f.pin(trashed)
+	require.NoError(t, err)
+	require.Nil(t, f.commitRow(trashed).DeletedAt)
+
+	rebuilt := f.index()
+	require.NoError(t, reindexErr(rebuilt.ReIndex(f.ctx)))
+
+	row := f.commitRowIn(rebuilt, trashed)
+	require.Nil(t, row.DeletedAt)
+	require.Nil(t, row.ExpiresAt)
+
+	details, err := rebuilt.CommitDetails(f.ctx, "world", f.clock, 10)
+	require.NoError(t, err)
+	require.Len(t, details, 3)
+}
+
 func TestPinsKeepCommitsAlive(t *testing.T) {
 	f := newFixture(t)
 

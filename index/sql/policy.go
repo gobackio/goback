@@ -17,7 +17,8 @@ import (
 // policyTx runs change, which returns the state of the scope it changed,
 // and stores that state as a policy object numbered after the store's
 // last. The number is taken under the settings row's lock, so policies
-// replay in the order their changes committed.
+// replay in the order their changes committed. A change that returns no
+// state records nothing.
 func (x *Index) policyTx(ctx context.Context, change func(tx *ent.Tx) (*proto.Policy, error)) error {
 	var p *proto.Policy
 
@@ -32,7 +33,7 @@ func (x *Index) policyTx(ctx context.Context, change func(tx *ent.Tx) (*proto.Po
 		}
 
 		p, err = change(tx)
-		if err != nil {
+		if err != nil || p == nil {
 			return err
 		}
 
@@ -41,7 +42,7 @@ func (x *Index) policyTx(ctx context.Context, change func(tx *ent.Tx) (*proto.Po
 
 		return tx.Settings.UpdateOneID(settingsID).SetPolicySequence(p.Sequence).Exec(ctx)
 	})
-	if err != nil {
+	if err != nil || p == nil {
 		return err
 	}
 
