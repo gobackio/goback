@@ -2,16 +2,12 @@ package watch
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -26,54 +22,13 @@ var addWatch = unix.InotifyAddWatch
 
 // inotifySource follows a tree with a watch on each of its directories.
 // It sets them up in the background, listing the tree, and has no
-// position until they are all set. An overflow, or the root moving away,
-// ends it.
+// position until they are all set.
 type inotifySource struct {
-	root string
-	id   identity
-	// fd is file's; it is only used while rc holds it
-	fd   int
-	file *os.File
-	rc   syscall.RawConn
-	done chan struct{}
+	*kernelSource
 
-	mtx     sync.Mutex
-	stream  string
-	seq     int64
-	end     int64
-	ready   bool
-	err     error
-	pending *Changes
-	wds     map[int32]string
-	paths   map[string]int32
-	queue   []string
-	// linked are the files checked for other hard links since the last
-	// Read
-	linked map[string]bool
-	buf    []byte
-}
-
-// identity tells a directory from another that takes its path.
-type identity struct{ dev, ino uint64 }
-
-func identify(path string) (identity, error) {
-	var st unix.Stat_t
-	if err := unix.Stat(path, &st); err != nil {
-		return identity{}, err
-	}
-
-	if st.Mode&unix.S_IFMT != unix.S_IFDIR {
-		return identity{}, fmt.Errorf("%s is not a directory", path)
-	}
-
-	return identity{dev: uint64(st.Dev), ino: st.Ino}, nil
-}
-
-func newStream(backend string) string {
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-
-	return backend + "-" + hex.EncodeToString(b)
+	wds   map[int32]string
+	paths map[string]int32
+	queue []string
 }
 
 func openInotify(root string) (*inotifySource, error) {
@@ -92,19 +47,15 @@ func openInotify(root string) (*inotifySource, error) {
 		return nil, fmt.Errorf("%w: inotify: %w", ErrUnavailable, err)
 	}
 
-	file := os.NewFile(uintptr(fd), "inotify")
-
-	rc, err := file.SyscallConn()
+	k, err := newKernelSource("inotify", root, id, fd)
 	if err != nil {
-		_ = file.Close()
 		return nil, err
 	}
 
-	s := &inotifySource{
-		root: root, id: id, fd: fd, file: file, rc: rc, done: make(chan struct{}),
-		stream: newStream("inotify"), seq: 1, end: 1,
-		pending: NewChanges(), wds: map[int32]string{}, paths: map[string]int32{},
-		queue: []string{""}, linked: map[string]bool{}, buf: make([]byte, 64<<10),
+	s := &inotifySource{kernelSource: k, wds: map[int32]string{}, paths: map[string]int32{}, queue: []string{""}}
+	k.take = func() {
+		s.drain()
+		s.watchQueued(-1)
 	}
 
 	go s.run()
@@ -112,13 +63,9 @@ func openInotify(root string) (*inotifySource, error) {
 	return s, nil
 }
 
-func (s *inotifySource) Backend() string { return "inotify" }
-
 // run sets up the watches, taking in events between directories, then
-// takes in events until the source is closed or ends.
+// follows the events.
 func (s *inotifySource) run() {
-	defer close(s.done)
-
 	for {
 		var more bool
 
@@ -139,40 +86,12 @@ func (s *inotifySource) run() {
 		}
 	}
 
-	_ = s.rc.Read(func(uintptr) bool {
-		s.mtx.Lock()
-		defer s.mtx.Unlock()
-
-		s.drain()
-		s.watchQueued(-1)
-
-		return s.err != nil
-	})
-}
-
-// fail ends the source for err; positions taken before are in doubt.
-func (s *inotifySource) fail(err error) {
-	if s.err == nil {
-		s.err = err
-	}
+	s.follow()
 }
 
 // drain takes in every event the kernel queued.
 func (s *inotifySource) drain() {
-	for s.err == nil {
-		n, err := unix.Read(s.fd, s.buf)
-		switch {
-		case errors.Is(err, unix.EINTR):
-			continue
-		case errors.Is(err, unix.EAGAIN):
-			return
-		case err != nil:
-			s.fail(fmt.Errorf("%w: reading inotify events: %w", ErrInDoubt, err))
-			return
-		case n <= 0:
-			return
-		}
-
+	for n := s.read(); n > 0; n = s.read() {
 		for off := 0; off+unix.SizeofInotifyEvent <= n; {
 			ev := (*unix.InotifyEvent)(unsafe.Pointer(&s.buf[off]))
 			name := s.buf[off+unix.SizeofInotifyEvent : off+unix.SizeofInotifyEvent+int(ev.Len)]
@@ -238,27 +157,9 @@ func (s *inotifySource) handle(wd int32, mask uint32, name string) {
 		return
 	}
 
-	if mask&(unix.IN_MODIFY|unix.IN_ATTRIB|unix.IN_CLOSE_WRITE|unix.IN_CREATE|unix.IN_MOVED_TO) != 0 && s.hardLinked(rel) {
-		s.pending.MarkTree("", s.seq)
+	if mask&(unix.IN_MODIFY|unix.IN_ATTRIB|unix.IN_CLOSE_WRITE|unix.IN_CREATE|unix.IN_MOVED_TO) != 0 {
+		s.changedFile(rel)
 	}
-}
-
-// hardLinked reports whether the file at rel has other hard links, whose
-// directories don't hear of its changes.
-func (s *inotifySource) hardLinked(rel string) bool {
-	if linked, ok := s.linked[rel]; ok {
-		return linked
-	}
-
-	if len(s.linked) >= MaxDirs {
-		clear(s.linked)
-	}
-
-	var st unix.Stat_t
-	linked := unix.Lstat(filepath.Join(s.root, rel), &st) == nil && st.Mode&unix.S_IFMT == unix.S_IFREG && st.Nlink > 1
-	s.linked[rel] = linked
-
-	return linked
 }
 
 // unwatchUnder removes the watches at and under rel, which moved away.
@@ -353,74 +254,4 @@ func listDirs(dir string) ([]string, error) {
 			return dirs, err
 		}
 	}
-}
-
-// sync takes in every event queued so far and checks the root is still
-// the one followed.
-func (s *inotifySource) sync() error {
-	err := s.rc.Control(func(uintptr) {
-		s.drain()
-		s.watchQueued(-1)
-	})
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrInDoubt, err)
-	}
-
-	if id, err := identify(s.root); err != nil || id != s.id {
-		s.fail(fmt.Errorf("%w: the root was moved, removed or unmounted", ErrInDoubt))
-	}
-
-	switch {
-	case s.err != nil:
-		return s.err
-	case !s.ready:
-		return ErrStarting
-	}
-
-	return nil
-}
-
-func (s *inotifySource) Now() (Position, error) {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
-	if err := s.sync(); err != nil {
-		return Position{}, err
-	}
-
-	s.seq++
-
-	return Position{Stream: s.stream, Seq: s.seq}, nil
-}
-
-func (s *inotifySource) Read(from Position) (*Changes, Position, error) {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
-	if err := s.sync(); err != nil {
-		return nil, Position{}, err
-	}
-
-	if from.Stream != s.stream || from.Seq < s.end {
-		return nil, Position{}, fmt.Errorf("%w: the position is from before inotify started following", ErrInDoubt)
-	}
-
-	changes := s.pending
-	s.pending = NewChanges()
-	clear(s.linked)
-
-	for rel, why := range changes.Unwatched {
-		s.pending.Unwatch(rel, why)
-	}
-
-	s.end = s.seq
-
-	return changes, Position{Stream: s.stream, Seq: s.seq}, nil
-}
-
-func (s *inotifySource) Close() error {
-	err := s.file.Close()
-	<-s.done
-
-	return err
 }

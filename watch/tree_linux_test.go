@@ -2,6 +2,7 @@ package watch_test
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -144,12 +145,38 @@ func (f *treeFixture) seed() {
 	}
 }
 
+// backends runs test with a tracker of each Linux backend, fanotify only
+// where the process may use it.
+func backends(t *testing.T, test func(t *testing.T, follow func(root string) *watch.Tracker)) {
+	for _, b := range []struct {
+		name string
+		open func(root string) (watch.Source, error)
+	}{{"inotify", watch.OpenInotify}, {"fanotify", watch.OpenFanotify}} {
+		t.Run(b.name, func(t *testing.T) {
+			probe, err := b.open(t.TempDir())
+			if errors.Is(err, watch.ErrUnavailable) {
+				t.Skipf("%v; fanotify needs root", err)
+			}
+			require.NoError(t, err)
+			require.NoError(t, probe.Close())
+
+			test(t, func(root string) *watch.Tracker {
+				return watch.NewTracker(func() (watch.Source, error) { return b.open(root) })
+			})
+		})
+	}
+}
+
 func allDirs() []string {
 	return []string{"", "a", "a/b", "a/b/c", "a/x", "d", "d/e"}
 }
 
 func TestAnIdleTreeListsNoDirectoryButItsRoot(t *testing.T) {
-	f := newTreeFixture(t, watch.Follow)
+	backends(t, anIdleTreeListsNoDirectoryButItsRoot)
+}
+
+func anIdleTreeListsNoDirectoryButItsRoot(t *testing.T, follow func(root string) *watch.Tracker) {
+	f := newTreeFixture(t, follow)
 	f.seed()
 	f.follow()
 
@@ -164,7 +191,11 @@ func TestAnIdleTreeListsNoDirectoryButItsRoot(t *testing.T) {
 }
 
 func TestADeepChangeListsOnlyItsPath(t *testing.T) {
-	f := newTreeFixture(t, watch.Follow)
+	backends(t, aDeepChangeListsOnlyItsPath)
+}
+
+func aDeepChangeListsOnlyItsPath(t *testing.T, follow func(root string) *watch.Tracker) {
+	f := newTreeFixture(t, follow)
 	f.seed()
 	f.follow()
 	f.backup()
@@ -178,7 +209,11 @@ func TestADeepChangeListsOnlyItsPath(t *testing.T) {
 }
 
 func TestANewDirectoryAndWhatIsCreatedInItAreCaught(t *testing.T) {
-	f := newTreeFixture(t, watch.Follow)
+	backends(t, aNewDirectoryAndWhatIsCreatedInItAreCaught)
+}
+
+func aNewDirectoryAndWhatIsCreatedInItAreCaught(t *testing.T, follow func(root string) *watch.Tracker) {
+	f := newTreeFixture(t, follow)
 	f.seed()
 	f.follow()
 	f.backup()
@@ -208,7 +243,11 @@ func TestANewDirectoryAndWhatIsCreatedInItAreCaught(t *testing.T) {
 }
 
 func TestADirectoryMovedWithinTheTreeIsFollowedAtItsNewPath(t *testing.T) {
-	f := newTreeFixture(t, watch.Follow)
+	backends(t, aDirectoryMovedWithinTheTreeIsFollowedAtItsNewPath)
+}
+
+func aDirectoryMovedWithinTheTreeIsFollowedAtItsNewPath(t *testing.T, follow func(root string) *watch.Tracker) {
+	f := newTreeFixture(t, follow)
 	f.seed()
 	f.follow()
 	f.backup()
@@ -224,7 +263,11 @@ func TestADirectoryMovedWithinTheTreeIsFollowedAtItsNewPath(t *testing.T) {
 }
 
 func TestAChangeToAHardLinkedFileReadsEverything(t *testing.T) {
-	f := newTreeFixture(t, watch.Follow)
+	backends(t, aChangeToAHardLinkedFileReadsEverything)
+}
+
+func aChangeToAHardLinkedFileReadsEverything(t *testing.T, follow func(root string) *watch.Tracker) {
+	f := newTreeFixture(t, follow)
 	f.seed()
 	require.NoError(t, os.Link(filepath.Join(f.root, "a", "x", "y.txt"), filepath.Join(f.root, "d", "e", "y.txt")))
 	f.follow()
@@ -237,7 +280,11 @@ func TestAChangeToAHardLinkedFileReadsEverything(t *testing.T) {
 }
 
 func TestTheRootMovingAwayLeavesEveryRunInDoubt(t *testing.T) {
-	f := newTreeFixture(t, watch.Follow)
+	backends(t, theRootMovingAwayLeavesEveryRunInDoubt)
+}
+
+func theRootMovingAwayLeavesEveryRunInDoubt(t *testing.T, follow func(root string) *watch.Tracker) {
+	f := newTreeFixture(t, follow)
 	f.seed()
 	f.follow()
 	f.backup()
@@ -261,7 +308,11 @@ func TestTheRootMovingAwayLeavesEveryRunInDoubt(t *testing.T) {
 }
 
 func TestADirectoryReplacedByAnotherOfTheSameNameIsReadWhole(t *testing.T) {
-	f := newTreeFixture(t, watch.Follow)
+	backends(t, aDirectoryReplacedByAnotherOfTheSameNameIsReadWhole)
+}
+
+func aDirectoryReplacedByAnotherOfTheSameNameIsReadWhole(t *testing.T, follow func(root string) *watch.Tracker) {
+	f := newTreeFixture(t, follow)
 	f.seed()
 	f.follow()
 	f.backup()
