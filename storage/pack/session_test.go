@@ -48,7 +48,7 @@ func requireVisible(t *testing.T, store *PackStorage, ctx context.Context, obj *
 	got, err := store.Get(ctx, obj.Ref())
 	if visible {
 		require.NoError(t, err)
-		require.Equal(t, obj.Bytes(), got.Bytes())
+		require.Equal(t, plain(obj), plain(got))
 	} else {
 		require.ErrorIs(t, err, backup.ErrNotFound)
 	}

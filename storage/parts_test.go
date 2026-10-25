@@ -103,7 +103,7 @@ func TestReadFileHandsOverEveryPartOfASplitFile(t *testing.T) {
 
 	got := map[uint32]string{}
 	require.NoError(t, store.ReadFile(ctx, top.Ref(), []uint32{1}, func(resp *proto.ReadFileResponse) error {
-		got[resp.Index] = string(resp.Object.Ref().Hash)
+		got[resp.Index] = string(decoded(t, resp.Object).Ref().Hash)
 		return nil
 	}))
 	require.Equal(t, want, got)
@@ -145,7 +145,7 @@ func TestReadFilesHandsOverTheFirstOfEachPart(t *testing.T) {
 	got := map[at]string{}
 	require.NoError(t, store.ReadFiles(ctx, files, false, func(resp *proto.ReadFilesResponse) error {
 		if resp.Part {
-			got[at{resp.File, resp.Index}] = string(resp.Object.Ref().Hash)
+			got[at{resp.File, resp.Index}] = string(decoded(t, resp.Object).Ref().Hash)
 		}
 
 		return nil

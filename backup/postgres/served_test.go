@@ -60,7 +60,7 @@ func (m *meter) HandleRPC(ctx context.Context, s stats.RPCStats) {
 	case *stats.OutPayload:
 		m.bytes[method] += int64(s.WireLength)
 
-		if resp, ok := s.Payload.(*proto.GetResponse); ok && resp.GetObject().Type().Metadata() {
+		if resp, ok := s.Payload.(*proto.GetResponse); ok && resp.GetObject().GetType().Metadata() {
 			m.metadata++
 		}
 

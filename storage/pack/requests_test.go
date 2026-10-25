@@ -385,7 +385,7 @@ func TestARewriteRetiresItsInputsWithOneWrite(t *testing.T) {
 	for _, object := range objects {
 		got, err := other.Get(context.Background(), object.Ref())
 		require.NoError(t, err)
-		require.Equal(t, object.Bytes(), got.Bytes())
+		require.Equal(t, plain(object), plain(got))
 	}
 }
 
@@ -533,7 +533,7 @@ func TestAServerReadsWhatItsBoundedCacheLetGoFromTheBucket(t *testing.T) {
 
 	obj, err := store.Get(ctx, oldest.Ref())
 	require.NoError(t, err)
-	require.Equal(t, oldest.Bytes(), obj.Bytes())
+	require.Equal(t, plain(oldest), plain(obj))
 	require.NotEmpty(t, storage.take(), "an evicted object is read from the bucket")
 }
 
@@ -582,7 +582,7 @@ func TestOpeningAStoreReadsNoArchiveItsIndexKnows(t *testing.T) {
 	for _, obj := range objects {
 		got, err := store.Get(ctx, obj.Ref())
 		require.NoError(t, err)
-		require.Equal(t, obj.Bytes(), got.Bytes())
+		require.Equal(t, plain(obj), plain(got))
 	}
 
 	counts = storage.take()

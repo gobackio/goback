@@ -121,9 +121,18 @@ func (m MapperImpl) FromStorePolicy(in *proto.StorePolicy) *storekey.Policy {
 	}
 }
 
-func (m MapperImpl) FromUploadStatus(in *proto.UploadStatus) backup.UploadStatus {
+func (m MapperImpl) FromUploadStatus(in *proto.UploadStatus) (backup.UploadStatus, error) {
 	if in == nil {
-		return backup.UploadStatus{}
+		return backup.UploadStatus{}, nil
+	}
+	tmp0, err := mapping.Decoded(in.Commit)
+	if err != nil {
+		return backup.UploadStatus{}, err
+	}
+
+	tmp1, err := mapping.DecodedAll(in.Commits)
+	if err != nil {
+		return backup.UploadStatus{}, err
 	}
 
 	return backup.UploadStatus{
@@ -136,11 +145,11 @@ func (m MapperImpl) FromUploadStatus(in *proto.UploadStatus) backup.UploadStatus
 		BytesTotal:     in.BytesTotal,
 		Error:          in.Error,
 		Phase:          in.Phase,
-		Commit:         in.Commit,
-		Commits:        in.Commits,
+		Commit:         tmp0,
+		Commits:        tmp1,
 		Missing:        in.Missing,
 		CommitsMissing: mapping.FromMissingRefs(in.CommitsMissing),
-	}
+	}, nil
 }
 
 func (m MapperImpl) ReportSchedule(in schedule.Report) *proto.ReportScheduleRequest {
@@ -211,7 +220,16 @@ func (m MapperImpl) StorePolicy(in *storekey.Policy) *proto.StorePolicy {
 	}
 }
 
-func (m MapperImpl) UploadStatus(in backup.UploadStatus) *proto.UploadStatus {
+func (m MapperImpl) UploadStatus(in backup.UploadStatus) (*proto.UploadStatus, error) {
+	tmp0, err := mapping.Encoded(in.Commit)
+	if err != nil {
+		return nil, err
+	}
+
+	tmp1, err := mapping.EncodedAll(in.Commits)
+	if err != nil {
+		return nil, err
+	}
 
 	return &proto.UploadStatus{
 		UploadId:       in.ID,
@@ -221,13 +239,13 @@ func (m MapperImpl) UploadStatus(in backup.UploadStatus) *proto.UploadStatus {
 		BytesTotal:     in.BytesTotal,
 		Error:          in.Error,
 		Stored:         in.Stored,
-		Commit:         in.Commit,
+		Commit:         tmp0,
 		Missing:        in.Missing,
 		Phase:          in.Phase,
 		ObjectsTotal:   in.ObjectsTotal,
-		Commits:        in.Commits,
+		Commits:        tmp1,
 		CommitsMissing: mapping.MissingRefs(in.CommitsMissing),
-	}
+	}, nil
 }
 
 type MapperImpl struct{}

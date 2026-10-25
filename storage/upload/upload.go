@@ -19,7 +19,7 @@ import (
 )
 
 // magic starts every upload file.
-const magic = "goback-upload/1\n"
+const magic = "goback-upload/2\n"
 
 // MaxObject is the largest object an upload file holds.
 const MaxObject = 32 << 20
@@ -27,8 +27,8 @@ const MaxObject = 32 << 20
 // ErrInvalid is an upload file that can't be read.
 var ErrInvalid = errors.New("invalid upload file")
 
-// Writer writes an upload file: each object as a varint of its length and
-// its bytes.
+// Writer writes an upload file: each object as it travels, a proto.Stored,
+// as a varint of its length and its bytes.
 type Writer struct {
 	w io.Writer
 	n int64
@@ -44,7 +44,12 @@ func NewWriter(w io.Writer) (*Writer, error) {
 // Write appends obj, which must come after the objects of the file it
 // references.
 func (w *Writer) Write(obj *proto.Object) error {
-	data, err := gproto.Marshal(obj)
+	stored, err := obj.Encoded()
+	if err != nil {
+		return err
+	}
+
+	data, err := gproto.Marshal(stored)
 	if err != nil {
 		return err
 	}
@@ -116,9 +121,14 @@ func (r *Reader) Next() (*proto.Object, error) {
 
 	r.read += int64(uvarintLen(size)) + int64(size)
 
-	obj := &proto.Object{}
-	if err := gproto.Unmarshal(data, obj); err != nil {
+	stored := &proto.Stored{}
+	if err := gproto.Unmarshal(data, stored); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+
+	obj, err := stored.Object()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 
 	return obj, nil

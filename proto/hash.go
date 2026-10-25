@@ -70,10 +70,11 @@ func HashPayload(t ObjectType, payload []byte) *Ref {
 // type, so no sealed ref equals a plaintext one.
 const sealedTag = "sealed blob"
 
-// Ref is the ref a sealed blob is stored under: HashPayload's form under
-// its own tag over uvarint(len(key_id)) || key_id || uvarint(compression)
-// || data.
-func (s *Sealed) Ref() *Ref {
+// SealedRef is the ref a sealed blob is stored under: HashPayload's form
+// under its own tag over uvarint(len(key_id)) || key_id ||
+// uvarint(compression) || data. A plaintext object's ref is that of the
+// object Object decodes.
+func (s *Stored) SealedRef() *Ref {
 	prefix := protowire.AppendVarint(nil, uint64(len(s.GetKeyId())))
 	prefix = append(prefix, s.GetKeyId()...)
 	prefix = protowire.AppendVarint(prefix, uint64(s.GetCompression()))
@@ -120,8 +121,8 @@ func (r *Ref) Valid() bool {
 // Ref computes the object's ref. It panics on an object that cannot be
 // canonically encoded; use Canonical to get the error instead.
 func (o *Object) Ref() *Ref {
-	if sealed := o.GetSealed(); sealed != nil {
-		return sealed.Ref()
+	if sealed := o.Sealed(); sealed != nil {
+		return sealed.SealedRef()
 	}
 
 	payload, err := o.Canonical()
@@ -141,8 +142,8 @@ func (o *Object) Verify(ref *Ref) error {
 	}
 
 	got := HashPayload(o.Type(), payload)
-	if sealed := o.GetSealed(); sealed != nil {
-		got = sealed.Ref()
+	if sealed := o.Sealed(); sealed != nil {
+		got = sealed.SealedRef()
 	}
 
 	if !got.Equal(ref) {
@@ -188,22 +189,25 @@ func VerifyStored(hdr *ObjectHeader, stored []byte) error {
 	return err
 }
 
-// ObjectFromStored decodes stored bytes after VerifyStored. A sealed object
-// comes back as is, for the holder of the key to open.
+// ObjectFromStored decodes stored bytes after VerifyStored, keeping them as
+// the object's Stored. A sealed object comes back as is, for the holder of
+// the key to open.
 func ObjectFromStored(hdr *ObjectHeader, stored []byte) (*Object, error) {
 	err := VerifyStored(hdr, stored)
 	if err != nil {
 		return nil, err
 	}
 
+	as := &Stored{
+		Type:        hdr.Type,
+		Data:        stored,
+		Compression: hdr.Compression,
+		Encryption:  hdr.Encryption,
+		KeyId:       hdr.KeyId,
+	}
+
 	if hdr.Encryption != Encryption_PLAINTEXT {
-		return &Object{Object: &Object_Sealed{Sealed: &Sealed{
-			Type:        hdr.Type,
-			Data:        stored,
-			Compression: hdr.Compression,
-			Encryption:  hdr.Encryption,
-			KeyId:       hdr.KeyId,
-		}}, KeyId: hdr.KeyId}, nil
+		return &Object{Stored: as, KeyId: hdr.KeyId}, nil
 	}
 
 	obj, err := NewVerifiedObject(stored, hdr.Compression, hdr.Type, hdr.Ref)
@@ -211,22 +215,86 @@ func ObjectFromStored(hdr *ObjectHeader, stored []byte) (*Object, error) {
 		return nil, err
 	}
 
-	obj.KeyId = hdr.KeyId
+	obj.KeyId, obj.Stored = hdr.KeyId, as
 
 	return obj, nil
 }
 
+// Object decodes the object s holds, refusing with ErrInvalidObject one
+// that does not decompress within the bound Decode keeps or whose payload
+// is not its canonical encoding. A sealed blob comes back as is, for the
+// holder of the key to open. The object keeps s as its Stored.
+func (s *Stored) Object() (*Object, error) {
+	if s == nil {
+		return nil, invalid("empty object")
+	}
+
+	if s.Encryption != Encryption_PLAINTEXT {
+		obj := &Object{Stored: s, KeyId: s.KeyId}
+		if err := obj.Validate(); err != nil {
+			return nil, err
+		}
+
+		return obj, nil
+	}
+
+	if err := noUnknown(s); err != nil {
+		return nil, err
+	}
+
+	payload, err := decode(s.Data, s.Compression)
+	if err != nil {
+		return nil, invalid("%s object: %v", s.Type, err)
+	}
+
+	obj, err := NewObjectFromPayload(payload, s.Type)
+	if err != nil {
+		return nil, invalid("%s object: %v", s.Type, err)
+	}
+
+	canonical, err := obj.Canonical()
+	if err != nil {
+		return nil, err
+	}
+
+	if !bytes.Equal(canonical, payload) {
+		return nil, invalid("%s object is not in its canonical encoding", s.Type)
+	}
+
+	obj.KeyId, obj.Stored = s.KeyId, s
+
+	return obj, nil
+}
+
+// Encoded is the object as a store keeps it and as it travels: its Stored
+// when it has one, and otherwise its payload compressed with Encode.
+func (o *Object) Encoded() (*Stored, error) {
+	if stored := o.GetStored(); stored != nil {
+		return stored, nil
+	}
+
+	payload, err := o.Canonical()
+	if err != nil {
+		return nil, err
+	}
+
+	data, compression := Encode(payload)
+
+	return &Stored{Type: o.Type(), Data: data, Compression: compression, KeyId: o.GetKeyId()}, nil
+}
+
 // HeaderFor builds the archive header of an object and returns the bytes to
-// store: sealed data as is, anything else compressed.
+// store: those of its Stored as they are, or its payload compressed when it
+// has none.
 func HeaderFor(o *Object) (*ObjectHeader, []byte, error) {
 	payload, err := o.Canonical()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if sealed := o.GetSealed(); sealed != nil {
+	if sealed := o.Sealed(); sealed != nil {
 		return &ObjectHeader{
-			Ref:         sealed.Ref(),
+			Ref:         sealed.SealedRef(),
 			Type:        sealed.Type,
 			Compression: sealed.Compression,
 			Encryption:  sealed.Encryption,
@@ -235,14 +303,18 @@ func HeaderFor(o *Object) (*ObjectHeader, []byte, error) {
 		}, sealed.Data, nil
 	}
 
-	stored, compression := Encode(payload)
+	stored := o.GetStored()
+	if stored == nil {
+		data, compression := Encode(payload)
+		stored = &Stored{Data: data, Compression: compression}
+	}
 
 	hdr := &ObjectHeader{
 		Ref:         HashPayload(o.Type(), payload),
 		Type:        o.Type(),
-		Compression: compression,
+		Compression: stored.Compression,
 		KeyId:       o.KeyId,
-		StoredHash:  StoredHash(stored),
+		StoredHash:  StoredHash(stored.Data),
 	}
 
 	// a commit or pin entered the system when the server received it, and
@@ -251,7 +323,7 @@ func HeaderFor(o *Object) (*ObjectHeader, []byte, error) {
 		hdr.Timestamp = timestamppb.New(time.Unix(0, ns))
 	}
 
-	return hdr, stored, nil
+	return hdr, stored.Data, nil
 }
 
 // ReceivedAtNs is the server receipt time of a commit or pin, 0 for every
@@ -268,14 +340,17 @@ func (o *Object) ReceivedAtNs() int64 {
 }
 
 // Stamp records the server receipt time on a commit or pin, and the set id
-// on a commit. It does nothing for other objects.
+// on a commit, dropping the Stored they came with. It does nothing for
+// other objects.
 func (o *Object) Stamp(setID uint64, receivedAt time.Time) {
 	switch t := o.GetObject().(type) {
 	case *Object_Commit:
 		t.Commit.SetId = setID
 		t.Commit.ReceivedAtNs = receivedAt.UnixNano()
+		o.Stored = nil
 	case *Object_Pin:
 		t.Pin.ReceivedAtNs = receivedAt.UnixNano()
+		o.Stored = nil
 	}
 }
 
@@ -286,10 +361,18 @@ func (o *Object) Validate() error {
 }
 
 // Canonical returns the payload that is hashed and stored for the object:
-// the raw chunk for a blob, and the canonical protowire encoding of the
-// inner message for everything else.
+// the raw chunk for a blob, the sealed bytes of a sealed blob, and the
+// canonical protowire encoding of the inner message for everything else.
 func (o *Object) Canonical() ([]byte, error) {
 	if err := noUnknown(o); err != nil {
+		return nil, err
+	}
+
+	if o.GetObject() == nil {
+		return o.GetStored().sealedPayload()
+	}
+
+	if err := o.storedAlike(); err != nil {
 		return nil, err
 	}
 
@@ -299,20 +382,6 @@ func (o *Object) Canonical() ([]byte, error) {
 			return nil, err
 		}
 		return t.Blob.GetData(), nil
-	case *Object_Sealed:
-		if err := noUnknown(t.Sealed); err != nil {
-			return nil, err
-		}
-		if len(t.Sealed.KeyId) == 0 {
-			return nil, invalid("sealed object without a key id")
-		}
-		if t.Sealed.Encryption == Encryption_PLAINTEXT {
-			return nil, invalid("sealed object without an encryption mode")
-		}
-		if t.Sealed.Type != ObjectType_BLOB {
-			return nil, invalid("sealed %s object: only a blob is sealed", t.Sealed.Type)
-		}
-		return t.Sealed.GetData(), nil
 	case *Object_Commit:
 		return canonicalCommit(t.Commit)
 	case *Object_Tree:
@@ -326,6 +395,49 @@ func (o *Object) Canonical() ([]byte, error) {
 	default:
 		return nil, invalid("empty object")
 	}
+}
+
+// sealedPayload is the payload of the sealed blob s holds.
+func (s *Stored) sealedPayload() ([]byte, error) {
+	switch {
+	case s == nil:
+		return nil, invalid("empty object")
+	case s.Encryption == Encryption_PLAINTEXT:
+		return nil, invalid("%s object not decoded", s.Type)
+	}
+
+	if err := noUnknown(s); err != nil {
+		return nil, err
+	}
+
+	if len(s.KeyId) == 0 {
+		return nil, invalid("sealed object without a key id")
+	}
+
+	if s.Type != ObjectType_BLOB {
+		return nil, invalid("sealed %s object: only a blob is sealed", s.Type)
+	}
+
+	return s.Data, nil
+}
+
+// storedAlike refuses a decoded object whose Stored holds another kind of
+// object or names another key.
+func (o *Object) storedAlike() error {
+	stored := o.GetStored()
+	if stored == nil {
+		return nil
+	}
+
+	if err := noUnknown(stored); err != nil {
+		return err
+	}
+
+	if stored.Encryption != Encryption_PLAINTEXT || stored.Type != o.Type() || !bytes.Equal(stored.KeyId, o.KeyId) {
+		return invalid("%s object stored as a %s %s object", o.Type(), stored.Encryption, stored.Type)
+	}
+
+	return nil
 }
 
 // NewObjectFromPayload decodes a stored payload of the given type.

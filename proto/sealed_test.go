@@ -52,8 +52,8 @@ func TestCanonicalGoldenVectorsEncryption(t *testing.T) {
 	}
 }
 
-func sealedFixture() *Sealed {
-	return &Sealed{
+func sealedFixture() *Stored {
+	return &Stored{
 		Type:        ObjectType_BLOB,
 		Data:        []byte("ciphertext"),
 		Compression: Compression_NONE,
@@ -94,10 +94,10 @@ func TestASealedRefHashesTheKeyIDTheCodecAndTheSealedBytes(t *testing.T) {
 	require.Equal(t, sum[:], ref.Hash)
 	require.NoError(t, NewObject(sealed).Verify(ref))
 
-	for name, change := range map[string]func(*Sealed){
-		"key id":      func(s *Sealed) { s.KeyId = []byte("keyid124") },
-		"compression": func(s *Sealed) { s.Compression = Compression_ZSTD },
-		"data":        func(s *Sealed) { s.Data = []byte("ciphertexu") },
+	for name, change := range map[string]func(*Stored){
+		"key id":      func(s *Stored) { s.KeyId = []byte("keyid124") },
+		"compression": func(s *Stored) { s.Compression = Compression_ZSTD },
+		"data":        func(s *Stored) { s.Data = []byte("ciphertexu") },
 	} {
 		other := sealedFixture()
 		change(other)
@@ -113,7 +113,7 @@ func TestSealedStoredRoundTrip(t *testing.T) {
 
 	hdr, stored, err := HeaderFor(obj)
 	require.NoError(t, err)
-	require.Equal(t, obj.GetSealed().Data, stored, "sealed bytes are stored as they arrive")
+	require.Equal(t, obj.Sealed().Data, stored, "sealed bytes are stored as they arrive")
 	require.Equal(t, Encryption_SEALED, hdr.Encryption)
 	require.Equal(t, []byte("keyid123"), hdr.KeyId)
 	require.Equal(t, StoredHash(stored), hdr.StoredHash)
@@ -127,11 +127,11 @@ func TestSealedStoredRoundTrip(t *testing.T) {
 
 	back, err := ObjectFromStored(hdr, stored)
 	require.NoError(t, err)
-	require.NotNil(t, back.GetSealed())
+	require.NotNil(t, back.Sealed())
 	require.True(t, back.Ref().Equal(obj.Ref()))
-	require.Equal(t, obj.GetSealed().Data, back.GetSealed().Data)
-	require.Equal(t, Encryption_SEALED, back.GetSealed().Encryption)
-	require.Equal(t, []byte("keyid123"), back.GetSealed().KeyId)
+	require.Equal(t, obj.Sealed().Data, back.Sealed().Data)
+	require.Equal(t, Encryption_SEALED, back.Sealed().Encryption)
+	require.Equal(t, []byte("keyid123"), back.Sealed().KeyId)
 	require.Equal(t, []byte("keyid123"), back.KeyId)
 
 	_, err = ObjectFromStored(hdr, corrupt)

@@ -55,17 +55,20 @@ message ObjectHeader {
   bytes at_rest_key_id = 12;
 }
 
-// Sealed carries a blob that the client encrypted. Its ref is the hash of
-// its key id, codec and sealed bytes, which the server checks like any
-// other object's.
-message Sealed {
+// Stored is an object as a store keeps it and as it travels: its payload
+// compressed with compression and, unless encryption is PLAINTEXT, then
+// sealed. A plaintext object's ref is the ref of the payload data
+// decompresses to; a sealed blob's is the hash of its key id, codec and
+// sealed bytes.
+message Stored {
   reserved 1;
   reserved "ref";
   ObjectType type = 2;
   bytes data = 3;
-  // the codec applied before encryption
   Compression compression = 4;
   Encryption encryption = 5;
+  // the store key a sealed blob, a tree's names or a file's part keys are
+  // encrypted under
   bytes key_id = 6;
 }
 
@@ -75,12 +78,15 @@ message Object {
     Tree tree = 2;
     File file = 3;
     Blob blob = 4;
-    Sealed sealed = 5;
     Pin pin = 6;
     Policy policy = 7;
   }
 
   // the store key under which a tree's names or a file's part keys are
-  // encrypted; transport only, never part of the hashed payload
+  // encrypted; never part of the hashed payload
   bytes key_id = 10;
+  // the object as a store keeps it: all there is of a sealed blob; beside
+  // the decoded object, what one that was received or read came as, which
+  // a store keeps and serves as it is
+  Stored stored = 11;
 }

@@ -29,16 +29,16 @@ func testSealedStore(t *testing.T, store backup.ObjectStore, read func(context.C
 
 	require.NoError(t, store.Put(ctx, obj))
 
-	got, err := read(ctx, sealed.Ref())
+	got, err := read(ctx, sealed.SealedRef())
 	require.NoError(t, err)
-	require.NotNil(t, got.GetSealed())
-	require.Equal(t, sealed.Data, got.GetSealed().Data)
-	require.Equal(t, sealed.Encryption, got.GetSealed().Encryption)
-	require.Equal(t, sealed.KeyId, got.GetSealed().KeyId)
-	require.Equal(t, sealed.Compression, got.GetSealed().Compression)
-	require.True(t, got.Ref().Equal(sealed.Ref()))
+	require.NotNil(t, got.Sealed())
+	require.Equal(t, sealed.Data, got.Sealed().Data)
+	require.Equal(t, sealed.Encryption, got.Sealed().Encryption)
+	require.Equal(t, sealed.KeyId, got.Sealed().KeyId)
+	require.Equal(t, sealed.Compression, got.Sealed().Compression)
+	require.True(t, got.Ref().Equal(sealed.SealedRef()))
 
-	opened, err := backup.OpenBlob(key, got.GetSealed())
+	opened, err := backup.OpenBlob(key, got.Sealed())
 	require.NoError(t, err)
 	require.Equal(t, []byte("secret save data"), opened)
 }
@@ -102,7 +102,7 @@ func TestASealedBlobFiledUnderAnotherRefIsRefused(t *testing.T) {
 	honest := proto.NewObject(&proto.Blob{Data: []byte("a popular server jar")})
 	junk := proto.NewObject(backup.SealBlob(key, []byte("junk")))
 
-	_, err = client.store.Put(client.outgoing(ctx), &proto.PutRequest{Object: junk, Ref: honest.Ref()})
+	_, err = client.store.Put(client.outgoing(ctx), &proto.PutRequest{Object: junk.GetStored(), Ref: honest.Ref()})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 
 	missing, err := client.Missing(ctx, []*proto.Ref{honest.Ref()})

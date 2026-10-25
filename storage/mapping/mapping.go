@@ -40,11 +40,15 @@ type Mapper interface {
 	FromRetentionBracket(in *proto.RetentionBracket) retention.Bracket
 
 	// field:UploadId from:"ID"
+	// field:Commit using:"Encoded"
+	// field:Commits using:"EncodedAll"
 	// field:CommitsMissing using:"MissingRefs"
-	UploadStatus(in backup.UploadStatus) *proto.UploadStatus
+	UploadStatus(in backup.UploadStatus) (*proto.UploadStatus, error)
 	// field:ID from:"UploadId"
+	// field:Commit using:"Decoded"
+	// field:Commits using:"DecodedAll"
 	// field:CommitsMissing using:"FromMissingRefs"
-	FromUploadStatus(in *proto.UploadStatus) backup.UploadStatus
+	FromUploadStatus(in *proto.UploadStatus) (backup.UploadStatus, error)
 
 	// field:AgentId from:"Agent"
 	ReportSchedule(in schedule.Report) *proto.ReportScheduleRequest
@@ -61,6 +65,62 @@ type Mapper interface {
 	// field:Jitter from:"JitterSeconds" using:"Duration"
 	// field:CommitEvery from:"CommitEverySeconds" using:"Duration"
 	FromSetSchedule(in *proto.SetSchedule) schedule.Expectation
+}
+
+// Encoded is an object as the store service carries it, nil for none.
+func Encoded(object *proto.Object) (*proto.Stored, error) {
+	if object == nil {
+		return nil, nil
+	}
+
+	return object.Encoded()
+}
+
+// EncodedAll is Encoded of each of objects.
+func EncodedAll(objects []*proto.Object) ([]*proto.Stored, error) {
+	if objects == nil {
+		return nil, nil
+	}
+
+	out := make([]*proto.Stored, len(objects))
+	for i, object := range objects {
+		stored, err := object.Encoded()
+		if err != nil {
+			return nil, err
+		}
+
+		out[i] = stored
+	}
+
+	return out, nil
+}
+
+// Decoded is Encoded's inverse.
+func Decoded(stored *proto.Stored) (*proto.Object, error) {
+	if stored == nil {
+		return nil, nil
+	}
+
+	return stored.Object()
+}
+
+// DecodedAll is EncodedAll's inverse.
+func DecodedAll(stored []*proto.Stored) ([]*proto.Object, error) {
+	if stored == nil {
+		return nil, nil
+	}
+
+	out := make([]*proto.Object, len(stored))
+	for i, s := range stored {
+		object, err := s.Object()
+		if err != nil {
+			return nil, err
+		}
+
+		out[i] = object
+	}
+
+	return out, nil
 }
 
 // MissingRefs is what each of several commits lacks, as the store service

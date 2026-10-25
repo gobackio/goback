@@ -126,7 +126,7 @@ func TestACommitWaitsForTheArchiveAnotherProcessHoldsOpen(t *testing.T) {
 
 	got, err := b.Get(t.Context(), blob.Ref())
 	require.NoError(t, err, "committed, so readable without the session")
-	require.Equal(t, blob.Bytes(), got.Bytes())
+	require.Equal(t, plain(blob), plain(got))
 }
 
 // An archive held open past its claim belongs to a process that died or
@@ -156,7 +156,7 @@ func TestACommitRefusesWhatALapsedArchiveHeldUntilItIsStoredAgain(t *testing.T) 
 
 	got, err := b.Get(t.Context(), blob.Ref())
 	require.NoError(t, err)
-	require.Equal(t, blob.Bytes(), got.Bytes())
+	require.Equal(t, plain(blob), plain(got))
 }
 
 func TestACommitOnTheProcessWhoseOwnArchiveLapsedRefusesWhatItHeld(t *testing.T) {

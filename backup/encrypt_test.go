@@ -109,7 +109,7 @@ func TestWalkerWithKeySealsNamesAndContents(t *testing.T) {
 	for _, obj := range f.store.objects {
 		switch obj.Type() {
 		case proto.ObjectType_BLOB:
-			require.NotNil(t, obj.GetSealed(), "every blob is sealed")
+			require.NotNil(t, obj.Sealed(), "every blob is sealed")
 		}
 	}
 	f.store.mtx.RUnlock()

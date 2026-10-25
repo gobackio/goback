@@ -44,10 +44,10 @@ func (x ObjectType) Metadata() bool {
 	return false
 }
 
-// Type is the object's type; a sealed object reports the type it carries,
-// an empty wrapper INVALID.
+// Type is the object's type; one that is not decoded, such as a sealed
+// blob, reports the type its Stored names, an empty wrapper INVALID.
 func (o *Object) Type() ObjectType {
-	switch t := o.GetObject().(type) {
+	switch o.GetObject().(type) {
 	case *Object_Commit:
 		return ObjectType_COMMIT
 	case *Object_Tree:
@@ -56,25 +56,32 @@ func (o *Object) Type() ObjectType {
 		return ObjectType_BLOB
 	case *Object_File:
 		return ObjectType_FILE
-	case *Object_Sealed:
-		return t.Sealed.GetType()
 	case *Object_Pin:
 		return ObjectType_PIN
 	case *Object_Policy:
 		return ObjectType_POLICY
 	default:
-		return ObjectType_INVALID
+		return o.GetStored().GetType()
 	}
 }
 
-// Bytes marshals the Object wrapper; it is a transport encoding, not the
+// Sealed is the Stored of a sealed object, nil for any other.
+func (o *Object) Sealed() *Stored {
+	if stored := o.GetStored(); stored.GetEncryption() != Encryption_PLAINTEXT {
+		return stored
+	}
+
+	return nil
+}
+
+// Bytes marshals the Object wrapper, its Stored included; it is not the
 // hashed payload (see Canonical).
 func (o *Object) Bytes() []byte {
 	return Bytes(o)
 }
 
-// NewObject wraps a Commit, Tree, Blob, File, Sealed, Pin or Policy; it panics on
-// anything else.
+// NewObject wraps a Commit, Tree, Blob, File, Pin or Policy, or the Stored
+// of a sealed blob; it panics on anything else.
 func NewObject(in interface{}) *Object {
 	var out isObject_Object
 
@@ -87,8 +94,8 @@ func NewObject(in interface{}) *Object {
 		out = &Object_Blob{t}
 	case *File:
 		out = &Object_File{t}
-	case *Sealed:
-		out = &Object_Sealed{t}
+	case *Stored:
+		return &Object{Stored: t}
 	case *Pin:
 		out = &Object_Pin{t}
 	case *Policy:
@@ -105,13 +112,6 @@ func NewObjectHeaderFromBytes(bytes []byte) (*ObjectHeader, error) {
 	hdr := new(ObjectHeader)
 
 	return hdr, pb.Unmarshal(bytes, hdr)
-}
-
-// NewObjectFromBytes decodes an Object wrapper written by Object.Bytes.
-func NewObjectFromBytes(bytes []byte) (*Object, error) {
-	obj := new(Object)
-
-	return obj, pb.Unmarshal(bytes, obj)
 }
 
 // GetFileInfo converts stat data into a FileInfo. Owner names and the

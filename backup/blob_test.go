@@ -17,8 +17,8 @@ func TestASealedBlobIsCompressedAndNamedByItsKey(t *testing.T) {
 
 	sealed := SealBlob(key, data)
 	require.Equal(t, key.ID(), sealed.KeyId)
-	require.True(t, BlobRef(key, data).Equal(sealed.Ref()))
-	require.True(t, sealed.Ref().Equal(SealBlob(key, data).Ref()), "a chunk seals to one ref under one key")
+	require.True(t, BlobRef(key, data).Equal(sealed.SealedRef()))
+	require.True(t, sealed.SealedRef().Equal(SealBlob(key, data).SealedRef()), "a chunk seals to one ref under one key")
 	require.Less(t, len(sealed.Data), len(data), "compressible data is compressed before sealing")
 
 	opened, err := OpenBlob(key, sealed)
@@ -35,12 +35,12 @@ func TestASealedBlobDoesNotOpenUnderAnotherKey(t *testing.T) {
 	require.NoError(t, err)
 	_, err = OpenBlob(other, sealed)
 	require.ErrorIs(t, err, storekey.ErrWrongKey)
-	require.False(t, BlobRef(other, []byte("one")).Equal(sealed.Ref()), "refs are private to their key")
+	require.False(t, BlobRef(other, []byte("one")).Equal(sealed.SealedRef()), "refs are private to their key")
 }
 
 func TestASealedObjectReferencesNothing(t *testing.T) {
 	for _, kind := range []proto.ObjectType{proto.ObjectType_COMMIT, proto.ObjectType_TREE, proto.ObjectType_FILE, proto.ObjectType_PIN} {
-		sealed := proto.NewObject(&proto.Sealed{Type: kind, Data: []byte("junk"), Encryption: proto.Encryption_SEALED, KeyId: []byte{0xba, 0xd0}})
+		sealed := proto.NewObject(&proto.Stored{Type: kind, Data: []byte("junk"), Encryption: proto.Encryption_SEALED, KeyId: []byte{0xba, 0xd0}})
 		require.Empty(t, References(sealed), kind.String())
 	}
 }

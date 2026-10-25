@@ -550,8 +550,8 @@ func (rs *resealer) rewriteObject(ctx context.Context, ref *proto.Ref) (*proto.R
 	}
 
 	switch {
-	case obj.GetSealed() != nil:
-		next, err := rs.blob(ctx, ref, obj.GetSealed())
+	case obj.Sealed() != nil:
+		next, err := rs.blob(ctx, ref, obj.Sealed())
 		return next, true, err
 	case obj.GetBlob() != nil:
 		return ref, true, nil
@@ -647,8 +647,8 @@ func (rs *resealer) file(ctx context.Context, ref *proto.Ref, obj *proto.Object)
 		return nil, fmt.Errorf("part %x: %w", parts[first].Ref.Hash, err)
 	}
 
-	sealed := probe.GetSealed()
-	if sealed == nil || sealed.Ref().Equal(parts[first].Ref) {
+	sealed := probe.Sealed()
+	if sealed == nil || sealed.SealedRef().Equal(parts[first].Ref) {
 		return ref, nil
 	}
 
@@ -685,8 +685,8 @@ func (rs *resealer) file(ctx context.Context, ref *proto.Ref, obj *proto.Object)
 
 // blob seals a PRF-named blob again under the ref of its sealed bytes,
 // once it opened it bound to ref and found its plaintext names ref.
-func (rs *resealer) blob(ctx context.Context, ref *proto.Ref, sealed *proto.Sealed) (*proto.Ref, error) {
-	if sealed.Ref().Equal(ref) {
+func (rs *resealer) blob(ctx context.Context, ref *proto.Ref, sealed *proto.Stored) (*proto.Ref, error) {
+	if sealed.SealedRef().Equal(ref) {
 		return ref, nil
 	}
 

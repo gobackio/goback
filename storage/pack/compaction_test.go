@@ -67,7 +67,7 @@ func TestARewriteLooksEachObjectUpOncePerChunk(t *testing.T) {
 
 			got, err := store.Get(context.Background(), object.Ref())
 			require.NoError(t, err)
-			require.Equal(t, object.Bytes(), got.Bytes())
+			require.Equal(t, plain(object), plain(got))
 		}
 
 		require.NoError(t, store.Close())
@@ -166,7 +166,7 @@ func TestCompactionMergesOnlySmallArchivesAndNeverItsOwnOutput(t *testing.T) {
 	for _, object := range objects {
 		got, err := store.Get(context.Background(), object.Ref())
 		require.NoError(t, err)
-		require.Equal(t, object.Bytes(), got.Bytes())
+		require.Equal(t, plain(object), plain(got))
 	}
 }
 
@@ -442,7 +442,7 @@ func TestARewriteRetiresItsInputsTogetherOrNotAtAll(t *testing.T) {
 			for _, object := range objects {
 				got, err := store.Get(context.Background(), object.Ref())
 				require.NoError(t, err)
-				require.Equal(t, object.Bytes(), got.Bytes())
+				require.Equal(t, plain(object), plain(got))
 			}
 		})
 	}
@@ -631,7 +631,7 @@ func TestTwoProcessesCompactingOneStoreKeepEveryObjectAndRetireEachArchiveOnce(t
 			for i, object := range objects {
 				got, err := fresh.Get(context.Background(), object.Ref())
 				require.NoError(t, err, "object %d", i)
-				require.Equal(t, object.Bytes(), got.Bytes(), "object %d", i)
+				require.Equal(t, plain(object), plain(got), "object %d", i)
 			}
 		})
 	}

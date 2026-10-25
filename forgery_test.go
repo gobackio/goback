@@ -42,7 +42,7 @@ func TestAPlaintextAgentNeverDedupsAgainstASealedForgeryOfItsContent(t *testing.
 	honest := proto.NewObject(&proto.Blob{Data: []byte("a popular server jar")})
 	empty := proto.NewObject(&proto.Tree{})
 
-	junk := proto.NewObject(&proto.Sealed{Type: proto.ObjectType_BLOB, Data: []byte("junk"), Encryption: proto.Encryption_SEALED, KeyId: []byte{0xba, 0xd0}})
+	junk := proto.NewObject(&proto.Stored{Type: proto.ObjectType_BLOB, Data: []byte("junk"), Encryption: proto.Encryption_SEALED, KeyId: []byte{0xba, 0xd0}})
 
 	sctx, err := client.BeginSession(ctx, &backup.Session{Set: "evil"})
 	require.NoError(t, err)

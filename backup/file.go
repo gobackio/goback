@@ -255,7 +255,7 @@ func (bfw *fileWriter) seal(chunk []byte) (*proto.Object, *proto.Ref) {
 
 	sealed := SealBlob(bfw.key, chunk)
 
-	return proto.NewObject(sealed), sealed.Ref()
+	return proto.NewObject(sealed), sealed.SealedRef()
 }
 
 // upload stores a blob in the background unless another file of the run
@@ -963,8 +963,8 @@ func (bfr *fileReader) openPart(index int, part *proto.FilePart, obj *proto.Obje
 	var err error
 
 	switch {
-	case obj.GetSealed() != nil:
-		if !obj.GetSealed().Ref().Equal(part.Ref) {
+	case obj.Sealed() != nil:
+		if !obj.Sealed().SealedRef().Equal(part.Ref) {
 			return nil, errors.Errorf("part %d (%x) of file %x does not hash to its ref", index, part.Ref.Hash, bfr.fileRef())
 		}
 
@@ -972,7 +972,7 @@ func (bfr *fileReader) openPart(index int, part *proto.FilePart, obj *proto.Obje
 			return nil, errors.Wrapf(storekey.ErrNoKey, "part %d (%x) of file %x", index, part.Ref.Hash, bfr.fileRef())
 		}
 
-		data, err = OpenBlob(bfr.key, obj.GetSealed())
+		data, err = OpenBlob(bfr.key, obj.Sealed())
 		if err != nil {
 			return nil, errors.Wrapf(err, "part %d (%x) of file %x", index, part.Ref.Hash, bfr.fileRef())
 		}

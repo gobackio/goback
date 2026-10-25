@@ -78,11 +78,11 @@ func TestATypedWalkReadsOnlyTheObjectsOfItsType(t *testing.T) {
 
 	var want, walked []string
 	for _, pin := range pins {
-		want = append(want, string(pin.Bytes()))
+		want = append(want, string(plain(pin)))
 	}
 
 	err = store.Walk(ctx, true, proto.ObjectType_PIN, func(obj *proto.Object) error {
-		walked = append(walked, string(obj.Bytes()))
+		walked = append(walked, string(plain(obj)))
 		return nil
 	})
 	require.NoError(t, err)

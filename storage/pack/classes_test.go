@@ -274,7 +274,7 @@ func TestCompactionWritesBlobsApartFromTheRest(t *testing.T) {
 	for _, object := range objects {
 		got, err := store.Get(ctx, object.Ref())
 		require.NoError(t, err)
-		require.Equal(t, object.Bytes(), got.Bytes())
+		require.Equal(t, plain(object), plain(got))
 	}
 }
 

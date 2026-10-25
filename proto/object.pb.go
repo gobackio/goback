@@ -271,35 +271,38 @@ func (x *ObjectHeader) GetAtRestKeyId() []byte {
 	return nil
 }
 
-// Sealed carries a blob that the client encrypted. Its ref is the hash of
-// its key id, codec and sealed bytes, which the server checks like any
-// other object's.
-type Sealed struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Type  ObjectType             `protobuf:"varint,2,opt,name=type,proto3,enum=proto.ObjectType" json:"type,omitempty"`
-	Data  []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
-	// the codec applied before encryption
-	Compression   Compression `protobuf:"varint,4,opt,name=compression,proto3,enum=proto.Compression" json:"compression,omitempty"`
-	Encryption    Encryption  `protobuf:"varint,5,opt,name=encryption,proto3,enum=proto.Encryption" json:"encryption,omitempty"`
-	KeyId         []byte      `protobuf:"bytes,6,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+// Stored is an object as a store keeps it and as it travels: its payload
+// compressed with compression and, unless encryption is PLAINTEXT, then
+// sealed. A plaintext object's ref is the ref of the payload data
+// decompresses to; a sealed blob's is the hash of its key id, codec and
+// sealed bytes.
+type Stored struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Type        ObjectType             `protobuf:"varint,2,opt,name=type,proto3,enum=proto.ObjectType" json:"type,omitempty"`
+	Data        []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	Compression Compression            `protobuf:"varint,4,opt,name=compression,proto3,enum=proto.Compression" json:"compression,omitempty"`
+	Encryption  Encryption             `protobuf:"varint,5,opt,name=encryption,proto3,enum=proto.Encryption" json:"encryption,omitempty"`
+	// the store key a sealed blob, a tree's names or a file's part keys are
+	// encrypted under
+	KeyId         []byte `protobuf:"bytes,6,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *Sealed) Reset() {
-	*x = Sealed{}
+func (x *Stored) Reset() {
+	*x = Stored{}
 	mi := &file_object_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *Sealed) String() string {
+func (x *Stored) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*Sealed) ProtoMessage() {}
+func (*Stored) ProtoMessage() {}
 
-func (x *Sealed) ProtoReflect() protoreflect.Message {
+func (x *Stored) ProtoReflect() protoreflect.Message {
 	mi := &file_object_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -311,40 +314,40 @@ func (x *Sealed) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Sealed.ProtoReflect.Descriptor instead.
-func (*Sealed) Descriptor() ([]byte, []int) {
+// Deprecated: Use Stored.ProtoReflect.Descriptor instead.
+func (*Stored) Descriptor() ([]byte, []int) {
 	return file_object_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *Sealed) GetType() ObjectType {
+func (x *Stored) GetType() ObjectType {
 	if x != nil {
 		return x.Type
 	}
 	return ObjectType_INVALID
 }
 
-func (x *Sealed) GetData() []byte {
+func (x *Stored) GetData() []byte {
 	if x != nil {
 		return x.Data
 	}
 	return nil
 }
 
-func (x *Sealed) GetCompression() Compression {
+func (x *Stored) GetCompression() Compression {
 	if x != nil {
 		return x.Compression
 	}
 	return Compression_NONE
 }
 
-func (x *Sealed) GetEncryption() Encryption {
+func (x *Stored) GetEncryption() Encryption {
 	if x != nil {
 		return x.Encryption
 	}
 	return Encryption_PLAINTEXT
 }
 
-func (x *Sealed) GetKeyId() []byte {
+func (x *Stored) GetKeyId() []byte {
 	if x != nil {
 		return x.KeyId
 	}
@@ -359,13 +362,16 @@ type Object struct {
 	//	*Object_Tree
 	//	*Object_File
 	//	*Object_Blob
-	//	*Object_Sealed
 	//	*Object_Pin
 	//	*Object_Policy
 	Object isObject_Object `protobuf_oneof:"object"`
 	// the store key under which a tree's names or a file's part keys are
-	// encrypted; transport only, never part of the hashed payload
-	KeyId         []byte `protobuf:"bytes,10,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	// encrypted; never part of the hashed payload
+	KeyId []byte `protobuf:"bytes,10,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	// the object as a store keeps it: all there is of a sealed blob; beside
+	// the decoded object, what one that was received or read came as, which
+	// a store keeps and serves as it is
+	Stored        *Stored `protobuf:"bytes,11,opt,name=stored,proto3" json:"stored,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -443,15 +449,6 @@ func (x *Object) GetBlob() *Blob {
 	return nil
 }
 
-func (x *Object) GetSealed() *Sealed {
-	if x != nil {
-		if x, ok := x.Object.(*Object_Sealed); ok {
-			return x.Sealed
-		}
-	}
-	return nil
-}
-
 func (x *Object) GetPin() *Pin {
 	if x != nil {
 		if x, ok := x.Object.(*Object_Pin); ok {
@@ -477,6 +474,13 @@ func (x *Object) GetKeyId() []byte {
 	return nil
 }
 
+func (x *Object) GetStored() *Stored {
+	if x != nil {
+		return x.Stored
+	}
+	return nil
+}
+
 type isObject_Object interface {
 	isObject_Object()
 }
@@ -497,10 +501,6 @@ type Object_Blob struct {
 	Blob *Blob `protobuf:"bytes,4,opt,name=blob,proto3,oneof"`
 }
 
-type Object_Sealed struct {
-	Sealed *Sealed `protobuf:"bytes,5,opt,name=sealed,proto3,oneof"`
-}
-
 type Object_Pin struct {
 	Pin *Pin `protobuf:"bytes,6,opt,name=pin,proto3,oneof"`
 }
@@ -516,8 +516,6 @@ func (*Object_Tree) isObject_Object() {}
 func (*Object_File) isObject_Object() {}
 
 func (*Object_Blob) isObject_Object() {}
-
-func (*Object_Sealed) isObject_Object() {}
 
 func (*Object_Pin) isObject_Object() {}
 
@@ -551,25 +549,25 @@ const file_object_proto_rawDesc = "" +
 	"storedHash\x12\x14\n" +
 	"\x05erase\x18\v \x01(\bR\x05erase\x12#\n" +
 	"\x0eat_rest_key_id\x18\f \x01(\fR\vatRestKeyId\"\xce\x01\n" +
-	"\x06Sealed\x12%\n" +
+	"\x06Stored\x12%\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x11.proto.ObjectTypeR\x04type\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x124\n" +
 	"\vcompression\x18\x04 \x01(\x0e2\x12.proto.CompressionR\vcompression\x121\n" +
 	"\n" +
 	"encryption\x18\x05 \x01(\x0e2\x11.proto.EncryptionR\n" +
 	"encryption\x12\x15\n" +
-	"\x06key_id\x18\x06 \x01(\fR\x05keyIdJ\x04\b\x01\x10\x02R\x03ref\"\xad\x02\n" +
+	"\x06key_id\x18\x06 \x01(\fR\x05keyIdJ\x04\b\x01\x10\x02R\x03ref\"\xab\x02\n" +
 	"\x06Object\x12'\n" +
 	"\x06commit\x18\x01 \x01(\v2\r.proto.CommitH\x00R\x06commit\x12!\n" +
 	"\x04tree\x18\x02 \x01(\v2\v.proto.TreeH\x00R\x04tree\x12!\n" +
 	"\x04file\x18\x03 \x01(\v2\v.proto.FileH\x00R\x04file\x12!\n" +
-	"\x04blob\x18\x04 \x01(\v2\v.proto.BlobH\x00R\x04blob\x12'\n" +
-	"\x06sealed\x18\x05 \x01(\v2\r.proto.SealedH\x00R\x06sealed\x12\x1e\n" +
+	"\x04blob\x18\x04 \x01(\v2\v.proto.BlobH\x00R\x04blob\x12\x1e\n" +
 	"\x03pin\x18\x06 \x01(\v2\n" +
 	".proto.PinH\x00R\x03pin\x12'\n" +
 	"\x06policy\x18\a \x01(\v2\r.proto.PolicyH\x00R\x06policy\x12\x15\n" +
 	"\x06key_id\x18\n" +
-	" \x01(\fR\x05keyIdB\b\n" +
+	" \x01(\fR\x05keyId\x12%\n" +
+	"\x06stored\x18\v \x01(\v2\r.proto.StoredR\x06storedB\b\n" +
 	"\x06object*g\n" +
 	"\n" +
 	"ObjectType\x12\v\n" +
@@ -605,7 +603,7 @@ var file_object_proto_goTypes = []any{
 	(ObjectType)(0),               // 0: proto.ObjectType
 	(Compression)(0),              // 1: proto.Compression
 	(*ObjectHeader)(nil),          // 2: proto.ObjectHeader
-	(*Sealed)(nil),                // 3: proto.Sealed
+	(*Stored)(nil),                // 3: proto.Stored
 	(*Object)(nil),                // 4: proto.Object
 	(*Ref)(nil),                   // 5: proto.Ref
 	(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
@@ -625,16 +623,16 @@ var file_object_proto_depIdxs = []int32{
 	0,  // 4: proto.ObjectHeader.type:type_name -> proto.ObjectType
 	5,  // 5: proto.ObjectHeader.tombstone_for:type_name -> proto.Ref
 	7,  // 6: proto.ObjectHeader.encryption:type_name -> proto.Encryption
-	0,  // 7: proto.Sealed.type:type_name -> proto.ObjectType
-	1,  // 8: proto.Sealed.compression:type_name -> proto.Compression
-	7,  // 9: proto.Sealed.encryption:type_name -> proto.Encryption
+	0,  // 7: proto.Stored.type:type_name -> proto.ObjectType
+	1,  // 8: proto.Stored.compression:type_name -> proto.Compression
+	7,  // 9: proto.Stored.encryption:type_name -> proto.Encryption
 	8,  // 10: proto.Object.commit:type_name -> proto.Commit
 	9,  // 11: proto.Object.tree:type_name -> proto.Tree
 	10, // 12: proto.Object.file:type_name -> proto.File
 	11, // 13: proto.Object.blob:type_name -> proto.Blob
-	3,  // 14: proto.Object.sealed:type_name -> proto.Sealed
-	12, // 15: proto.Object.pin:type_name -> proto.Pin
-	13, // 16: proto.Object.policy:type_name -> proto.Policy
+	12, // 14: proto.Object.pin:type_name -> proto.Pin
+	13, // 15: proto.Object.policy:type_name -> proto.Policy
+	3,  // 16: proto.Object.stored:type_name -> proto.Stored
 	17, // [17:17] is the sub-list for method output_type
 	17, // [17:17] is the sub-list for method input_type
 	17, // [17:17] is the sub-list for extension type_name
@@ -660,7 +658,6 @@ func file_object_proto_init() {
 		(*Object_Tree)(nil),
 		(*Object_File)(nil),
 		(*Object_Blob)(nil),
-		(*Object_Sealed)(nil),
 		(*Object_Pin)(nil),
 		(*Object_Policy)(nil),
 	}

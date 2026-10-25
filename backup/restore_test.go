@@ -918,7 +918,7 @@ func TestAPartSealedAsAnotherRefIsRefused(t *testing.T) {
 	other := SealBlob(key, []byte("some other part"))
 
 	reader := newFileReader(context.Background(), newMemStore(), &proto.File{}, key)
-	filePart := &proto.FilePart{Length: 8, Ref: part.Ref()}
+	filePart := &proto.FilePart{Length: 8, Ref: part.SealedRef()}
 
 	_, err := reader.openPart(0, filePart, proto.NewObject(part))
 	require.NoError(t, err)

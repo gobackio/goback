@@ -294,8 +294,8 @@ func (f *resealFixture) read(t *testing.T, ref *proto.Ref) map[string][]byte {
 		obj, err := f.store.Get(ctx, ref)
 		require.NoError(t, err)
 
-		if sealed := obj.GetSealed(); sealed != nil {
-			require.True(t, sealed.Ref().Equal(ref), "blob %x is still PRF-named", ref.Hash)
+		if sealed := obj.Sealed(); sealed != nil {
+			require.True(t, sealed.SealedRef().Equal(ref), "blob %x is still PRF-named", ref.Hash)
 		}
 
 		for _, below := range backup.References(obj) {
@@ -351,7 +351,7 @@ func TestResealPutsEveryCommitUnderBlobsItsSealedBytesName(t *testing.T) {
 
 	distinct := map[string]bool{}
 	for _, ref := range f.first.written {
-		if obj, err := f.store.Get(ctx, ref); err == nil && obj.GetSealed() != nil {
+		if obj, err := f.store.Get(ctx, ref); err == nil && obj.Sealed() != nil {
 			distinct[string(ref.Hash)] = true
 		}
 	}

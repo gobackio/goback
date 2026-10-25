@@ -542,7 +542,7 @@ func (ps *PackStorage) PutCommits(ctx context.Context, commits []*proto.Object) 
 	for _, object := range commits {
 		commit := object.GetCommit()
 		if prev := before[commit.GetSetId()]; prev != nil && commit.GetParent() == nil {
-			commit.Parent = prev.Ref()
+			commit.Parent, object.Stored = prev.Ref(), nil
 		}
 
 		if err := ps.lossMarked(ctx, object); err != nil {

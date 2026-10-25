@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gobackio/goback/proto"
+
+	pb "google.golang.org/protobuf/proto"
 )
 
 // Cache is one store's blob directory. It is safe for concurrent use by
@@ -48,13 +50,16 @@ func (c *Cache) Get(ref *proto.Ref) (*proto.Object, bool) {
 		return nil, false
 	}
 
-	obj, err := proto.NewObjectFromBytes(data)
+	stored := &proto.Stored{}
+	err = pb.Unmarshal(data, stored)
+
+	var obj *proto.Object
 	if err == nil {
-		var hdr *proto.ObjectHeader
-		hdr, _, err = proto.HeaderFor(obj)
-		if err == nil && !hdr.Ref.Equal(ref) {
-			err = proto.ErrRefMismatch
-		}
+		obj, err = stored.Object()
+	}
+
+	if err == nil {
+		err = obj.Verify(ref)
 	}
 
 	if err != nil {
@@ -80,12 +85,17 @@ func (c *Cache) Put(ref *proto.Ref, obj *proto.Object) error {
 		return err
 	}
 
+	stored, err := obj.Encoded()
+	if err != nil {
+		return err
+	}
+
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".put-*")
 	if err != nil {
 		return err
 	}
 
-	_, err = tmp.Write(obj.Bytes())
+	_, err = tmp.Write(proto.Bytes(stored))
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
 	}

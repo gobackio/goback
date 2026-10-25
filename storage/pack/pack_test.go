@@ -19,6 +19,16 @@ const numObjects = 1000
 // average size of objects
 const ObjectSize = 1024 * 8
 
+// plain is obj marshaled without the Stored a decoded object read back
+// carries.
+func plain(obj *proto.Object) []byte {
+	if obj.GetObject() == nil {
+		return obj.Bytes()
+	}
+
+	return proto.Bytes(&proto.Object{Object: obj.Object, KeyId: obj.KeyId})
+}
+
 func makeRef() *proto.Ref {
 	hash := make([]byte, proto.HashSize)
 	_, err := rand.Read(hash)
@@ -86,9 +96,9 @@ func TestPack(t *testing.T) {
 				t.Fatalf("Couldn't find expected object %x", original.Ref().Hash)
 			}
 
-			if !bytes.Equal(object.Bytes(), original.Bytes()) {
-				t.Logf("Original %x", original.Bytes())
-				t.Logf("Stored %x", object.Bytes())
+			if !bytes.Equal(plain(object), plain(original)) {
+				t.Logf("Original %x", plain(original))
+				t.Logf("Stored %x", plain(object))
 				t.Fatalf("Object read back incorrectly")
 			}
 		}
@@ -248,7 +258,7 @@ func TestPackCompaction(t *testing.T) {
 
 		object, err := store.Get(context.Background(), original.Ref())
 		require.NoError(t, err, "object %x after compaction", original.Ref().Hash)
-		require.True(t, bytes.Equal(object.Bytes(), original.Bytes()))
+		require.True(t, bytes.Equal(plain(object), plain(original)))
 
 		loc, err := index.LocateObject(original.Ref(), Scope{})
 		require.NoError(t, err)
@@ -297,7 +307,7 @@ func TestParallelCompactionKeepsOneCopyOfAnObjectSeveralArchivesHold(t *testing.
 
 		object, err := store.Get(context.Background(), ref)
 		require.NoError(t, err)
-		require.Equal(t, objects[i].Bytes(), object.Bytes())
+		require.Equal(t, plain(objects[i]), plain(object))
 	}
 
 	require.NoError(t, store.Close())

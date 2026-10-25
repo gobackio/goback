@@ -341,7 +341,12 @@ func (r *Client) GetTree(ctx context.Context, ref *proto.Ref, maxDepth uint32) (
 
 	err = receive(stream, func(resp *proto.GetTreeResponse) error {
 		if len(resp.GetRuns()) == 0 {
-			return keep(nil, resp.Object)
+			obj, err := resp.GetObject().Object()
+			if err != nil {
+				return fmt.Errorf("tree below %x: %w", ref.GetHash(), err)
+			}
+
+			return keep(nil, obj)
 		}
 
 		for _, run := range resp.GetRuns() {
@@ -421,13 +426,12 @@ var _ backup.CommitBatcher = (*Client)(nil)
 // place as the server stored it. A server that takes one commit per
 // session answers backup.ErrNotImplemented.
 func (r *Client) PutCommits(ctx context.Context, commits []*proto.Object) error {
-	for _, commit := range commits {
-		if err := commit.Validate(); err != nil {
-			return err
-		}
+	encoded, err := mapping.EncodedAll(commits)
+	if err != nil {
+		return err
 	}
 
-	resp, err := r.store.PutCommits(r.outgoing(ctx), &proto.PutCommitsRequest{Commits: commits})
+	resp, err := r.store.PutCommits(r.outgoing(ctx), &proto.PutCommitsRequest{Commits: encoded})
 	if err := fromWriteStatus(err); err != nil {
 		return err
 	}
@@ -440,11 +444,16 @@ func (r *Client) PutCommits(ctx context.Context, commits []*proto.Object) error 
 		return fmt.Errorf("put %d commits, the store answered with %d", len(commits), len(resp.GetCommits()))
 	}
 
+	stored, err := mapping.DecodedAll(resp.GetCommits())
+	if err != nil {
+		return err
+	}
+
 	// the server assigned the receipt times and set ids; the caller's
 	// objects must hash to the stored refs
-	for i, stored := range resp.GetCommits() {
+	for i, commit := range stored {
 		pb.Reset(commits[i])
-		pb.Merge(commits[i], stored)
+		pb.Merge(commits[i], commit)
 	}
 
 	return nil
@@ -458,27 +467,32 @@ func (r *Client) PutFile(ctx context.Context, object *proto.Object, assumed []*p
 func (r *Client) put(ctx context.Context, object *proto.Object, assumed []*proto.Ref) ([]*proto.Ref, error) {
 	ctx = r.outgoing(ctx)
 
-	err := object.Validate()
+	encoded, err := object.Encoded()
 	if err != nil {
 		return nil, err
 	}
 
-	request := &proto.PutRequest{Object: object, AssumedRefs: assumed}
+	request := &proto.PutRequest{Object: encoded, AssumedRefs: assumed}
 	stamped := object.GetCommit() != nil || object.GetPin() != nil
 	if !stamped {
 		request.Ref = object.Ref()
 	}
 
 	resp, err := r.store.Put(ctx, request)
-	if err == nil && stamped && resp.GetObject() != nil {
+	if err := fromWriteStatus(err); err != nil {
+		return nil, err
+	}
+
+	if stamped && resp.GetObject() != nil {
+		stored, err := resp.GetObject().Object()
+		if err != nil {
+			return nil, err
+		}
+
 		// the server assigned the receipt time and set id; the caller's
 		// object must hash to the stored ref
 		pb.Reset(object)
-		pb.Merge(object, resp.Object)
-	}
-
-	if err := fromWriteStatus(err); err != nil {
-		return nil, err
+		pb.Merge(object, stored)
 	}
 
 	return resp.Missing, nil
@@ -531,10 +545,9 @@ const putObjectsMessage = 2 << 20
 
 // PutObjects implements backup.Batcher in one stream.
 func (r *Client) PutObjects(ctx context.Context, objects []*proto.Object) error {
-	for _, object := range objects {
-		if err := object.Validate(); err != nil {
-			return err
-		}
+	encoded, err := mapping.EncodedAll(objects)
+	if err != nil {
+		return err
 	}
 
 	ctx, cancel := context.WithCancel(r.outgoing(ctx))
@@ -546,7 +559,7 @@ func (r *Client) PutObjects(ctx context.Context, objects []*proto.Object) error 
 	}
 
 	var (
-		batch []*proto.Object
+		batch []*proto.Stored
 		size  int
 	)
 
@@ -557,7 +570,7 @@ func (r *Client) PutObjects(ctx context.Context, objects []*proto.Object) error 
 		return err
 	}
 
-	for _, object := range objects {
+	for _, object := range encoded {
 		n := pb.Size(object)
 		if size > 0 && size+n > putObjectsMessage {
 			// the server's answer, which CloseAndRecv reads, says why a
@@ -649,10 +662,10 @@ func (r *Client) sendUpload(ctx context.Context, id string, file io.Reader, size
 	}
 
 	if resp.GetStatus() != nil {
-		status := m.FromUploadStatus(resp.GetStatus())
+		status, err := m.FromUploadStatus(resp.GetStatus())
 		status.ID = id
 
-		return status, nil
+		return status, err
 	}
 
 	return backup.UploadStatus{
@@ -711,7 +724,9 @@ func (r *Client) UploadStatus(ctx context.Context, ids []string) ([]backup.Uploa
 
 	statuses := make([]backup.UploadStatus, len(ids))
 	for i, up := range resp.GetUploads() {
-		statuses[i] = m.FromUploadStatus(up)
+		if statuses[i], err = m.FromUploadStatus(up); err != nil {
+			return nil, err
+		}
 	}
 
 	return statuses, nil
@@ -810,11 +825,22 @@ func (r *Client) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error)
 		return nil, backup.ErrNotFound
 	}
 
-	if err := resp.GetObject().Verify(ref); err != nil {
+	return verified(resp.GetObject(), ref)
+}
+
+// verified is the object stored holds, refused unless it is the one ref
+// names.
+func verified(stored *proto.Stored, ref *proto.Ref) (*proto.Object, error) {
+	object, err := stored.Object()
+	if err != nil {
+		return nil, fmt.Errorf("object %x: %w", ref.GetHash(), err)
+	}
+
+	if err := object.Verify(ref); err != nil {
 		return nil, err
 	}
 
-	return resp.GetObject(), nil
+	return object, nil
 }
 
 // fetch follows a location and decodes the record it yields, refusing an
@@ -1088,7 +1114,12 @@ func (r *Client) ReadParts(ctx context.Context, file *proto.Ref, skip []int, fn 
 
 	err = receive(stream, func(resp *proto.ReadFileResponse) error {
 		if len(resp.GetRuns()) == 0 {
-			return fn(int(resp.Index), resp.Object)
+			obj, err := resp.GetObject().Object()
+			if err != nil {
+				return fmt.Errorf("part %d of file %x: %w", resp.Index, file.GetHash(), err)
+			}
+
+			return fn(int(resp.Index), obj)
 		}
 
 		for _, run := range resp.GetRuns() {
@@ -1147,18 +1178,24 @@ func (r *Client) ReadFiles(ctx context.Context, files []backup.FileRead, objects
 
 			return rctx.Err()
 		case resp.GetPart():
-			return part(int(resp.File), int(resp.Index), resp.Object)
+			obj, err := resp.GetObject().Object()
+			if err != nil {
+				return fmt.Errorf("part %d of file %d: %w", resp.Index, resp.File, err)
+			}
+
+			return part(int(resp.File), int(resp.Index), obj)
 		}
 
 		if int(resp.File) >= len(files) {
 			return fmt.Errorf("%w: ReadFiles answered file %d of %d", proto.ErrInvalidObject, resp.File, len(files))
 		}
 
-		if err := resp.GetObject().Verify(files[resp.File].Ref); err != nil {
+		obj, err := verified(resp.GetObject(), files[resp.File].Ref)
+		if err != nil {
 			return err
 		}
 
-		return object(int(resp.File), resp.Object)
+		return object(int(resp.File), obj)
 	})
 	if err != nil {
 		cancel()
@@ -1379,22 +1416,59 @@ func (r *Server) CommitInfo(ctx context.Context, request *proto.CommitInfoReques
 
 // Put implements proto.StoreServer.
 func (r *Server) Put(ctx context.Context, request *proto.PutRequest) (*proto.PutResponse, error) {
-	receipt, err := r.store.Put(ctx, Upload{Object: request.GetObject(), Ref: request.Ref, Assumed: request.AssumedRefs})
+	objects, err := received(request.GetObject())
 	if err != nil {
 		return nil, ToStatus(err)
 	}
 
-	return &proto.PutResponse{Ref: receipt.Ref, Object: receipt.Object, Missing: receipt.Missing}, nil
+	receipt, err := r.store.Put(ctx, Upload{Object: objects[0], Ref: request.Ref, Assumed: request.AssumedRefs})
+	if err != nil {
+		return nil, ToStatus(err)
+	}
+
+	stored, err := mapping.Encoded(receipt.Object)
+	if err != nil {
+		return nil, ToStatus(err)
+	}
+
+	return &proto.PutResponse{Ref: receipt.Ref, Object: stored, Missing: receipt.Missing}, nil
+}
+
+// received decodes the objects a client sent; each keeps what it came as
+// for its Stored.
+func received(stored ...*proto.Stored) ([]*proto.Object, error) {
+	objects := make([]*proto.Object, len(stored))
+
+	for i, s := range stored {
+		object, err := s.Object()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		}
+
+		objects[i] = object
+	}
+
+	return objects, nil
 }
 
 // PutCommits implements proto.StoreServer.
 func (r *Server) PutCommits(ctx context.Context, request *proto.PutCommitsRequest) (*proto.PutCommitsResponse, error) {
-	receipt, err := r.store.PutCommits(ctx, request.GetCommits())
+	commits, err := received(request.GetCommits()...)
 	if err != nil {
 		return nil, ToStatus(err)
 	}
 
-	return &proto.PutCommitsResponse{Commits: receipt.Commits, Missing: mapping.MissingRefs(receipt.Missing)}, nil
+	receipt, err := r.store.PutCommits(ctx, commits)
+	if err != nil {
+		return nil, ToStatus(err)
+	}
+
+	stored, err := mapping.EncodedAll(receipt.Commits)
+	if err != nil {
+		return nil, ToStatus(err)
+	}
+
+	return &proto.PutCommitsResponse{Commits: stored, Missing: mapping.MissingRefs(receipt.Missing)}, nil
 }
 
 // Missing implements proto.StoreServer.
@@ -1422,7 +1496,12 @@ func (r *Server) PutObjects(stream proto.Store_PutObjectsServer) error {
 			return err
 		}
 
-		if err := r.store.PutObjects(stream.Context(), request.GetObjects()); err != nil {
+		objects, err := received(request.GetObjects()...)
+		if err != nil {
+			return ToStatus(err)
+		}
+
+		if err := r.store.PutObjects(stream.Context(), objects); err != nil {
 			return ToStatus(err)
 		}
 
@@ -1457,7 +1536,12 @@ func (r *Server) SendUpload(stream proto.Store_SendUploadServer) error {
 		return ToStatus(err)
 	}
 
-	return stream.SendAndClose(&proto.SendUploadResponse{Objects: sent.Objects, Stored: sent.Stored, Status: m.UploadStatus(sent)})
+	status, err := m.UploadStatus(sent)
+	if err != nil {
+		return ToStatus(err)
+	}
+
+	return stream.SendAndClose(&proto.SendUploadResponse{Objects: sent.Objects, Stored: sent.Stored, Status: status})
 }
 
 // uploadStream reads the bytes of a SendUpload stream.
@@ -1514,7 +1598,12 @@ func (r *Server) Get(ctx context.Context, request *proto.GetRequest) (*proto.Get
 		return nil, ToStatus(err)
 	}
 
-	return &proto.GetResponse{Body: &proto.GetResponse_Object{Object: object}}, nil
+	stored, err := object.Encoded()
+	if err != nil {
+		return nil, ToStatus(err)
+	}
+
+	return &proto.GetResponse{Body: &proto.GetResponse_Object{Object: stored}}, nil
 }
 
 // ReadFile streams a file's parts, as runs to fetch or as stored objects,

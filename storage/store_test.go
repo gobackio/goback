@@ -71,7 +71,7 @@ func TestStoreIsALibrary(t *testing.T) {
 	var parts []int
 	require.NoError(t, storeOf(first).ReadFile(first, file.Ref(), nil, func(resp *proto.ReadFileResponse) error {
 		parts = append(parts, int(resp.Index))
-		require.True(t, resp.Object.Ref().Equal(blob.Ref()))
+		require.True(t, decoded(t, resp.Object).Ref().Equal(blob.Ref()))
 		return nil
 	}))
 	require.Equal(t, []int{0}, parts)
@@ -173,7 +173,7 @@ func TestTreeWalksInOrderWhileReadingAhead(t *testing.T) {
 		var got []*proto.Ref
 		require.NoError(t, NewStore(index, nil).Tree(ctx, root, 2, func(resp *proto.GetTreeResponse) error {
 			require.Empty(t, resp.Runs, "trees are served")
-			require.True(t, resp.Object.Ref().Equal(resp.Ref))
+			require.True(t, decoded(t, resp.Object).Ref().Equal(resp.Ref))
 			got = append(got, resp.Ref)
 
 			return nil
@@ -191,7 +191,7 @@ func TestAStoreRefusesASealedObjectThatIsNotABlob(t *testing.T) {
 	store := NewStore(newMemIndex(), nil)
 
 	for _, kind := range []proto.ObjectType{proto.ObjectType_COMMIT, proto.ObjectType_TREE, proto.ObjectType_FILE, proto.ObjectType_PIN} {
-		sealed := proto.NewObject(&proto.Sealed{Type: kind, Data: []byte("junk"), Encryption: proto.Encryption_SEALED, KeyId: []byte{0xba, 0xd0}})
+		sealed := proto.NewObject(&proto.Stored{Type: kind, Data: []byte("junk"), Encryption: proto.Encryption_SEALED, KeyId: []byte{0xba, 0xd0}})
 
 		_, err := store.Put(ctx, Upload{Object: sealed})
 		require.ErrorIs(t, err, ErrInvalidRequest, kind.String())

@@ -328,8 +328,8 @@ func (s *Store) PutObjects(ctx context.Context, objects []*proto.Object) error {
 }
 
 // clearStamp removes a client-supplied set id, and a pin's receipt time,
-// so the index assigns its own. A commit's receipt time is the index's to
-// keep or replace.
+// so the index assigns its own, and with them the Stored they came as. A
+// commit's receipt time is the index's to keep or replace.
 func clearStamp(object *proto.Object) {
 	if commit := object.GetCommit(); commit != nil {
 		commit.SetId = 0
@@ -338,6 +338,8 @@ func clearStamp(object *proto.Object) {
 	if pin := object.GetPin(); pin != nil {
 		pin.ReceivedAtNs = 0
 	}
+
+	object.Stored = nil
 }
 
 func notFound(ref *proto.Ref) error {
@@ -448,7 +450,12 @@ func (s *Store) Tree(ctx context.Context, ref *proto.Ref, maxDepth uint32, fn fu
 				return fmt.Errorf("%w: object %x is not a tree", ErrInvalidRequest, next.ref.GetHash())
 			}
 
-			if err := fn(&proto.GetTreeResponse{Ref: next.ref, Object: objects[i]}); err != nil {
+			stored, err := objects[i].Encoded()
+			if err != nil {
+				return err
+			}
+
+			if err := fn(&proto.GetTreeResponse{Ref: next.ref, Object: stored}); err != nil {
 				return err
 			}
 
@@ -568,7 +575,12 @@ func (s *Store) ReadFile(ctx context.Context, ref *proto.Ref, skip []uint32, fn 
 
 		return fn(&proto.ReadFileResponse{Runs: runs})
 	}, func(p wantedPart, obj *proto.Object) error {
-		return fn(&proto.ReadFileResponse{Index: uint32(p.index), Object: obj})
+		stored, err := obj.Encoded()
+		if err != nil {
+			return err
+		}
+
+		return fn(&proto.ReadFileResponse{Index: uint32(p.index), Object: stored})
 	})
 	if err != nil {
 		return fmt.Errorf("file %x: %w", ref.GetHash(), err)
@@ -633,7 +645,12 @@ func (s *Store) ReadFiles(ctx context.Context, files []*proto.ReadFilesEntry, ob
 	}
 
 	for i, obj := range objects {
-		if err := fn(&proto.ReadFilesResponse{File: uint32(i), Object: obj}); err != nil {
+		stored, err := obj.Encoded()
+		if err != nil {
+			return err
+		}
+
+		if err := fn(&proto.ReadFilesResponse{File: uint32(i), Object: stored}); err != nil {
 			return err
 		}
 	}
@@ -682,7 +699,12 @@ func (s *Store) ReadFiles(ctx context.Context, files []*proto.ReadFilesEntry, ob
 
 		return fn(&proto.ReadFilesResponse{Runs: runs})
 	}, func(p wantedPart, obj *proto.Object) error {
-		return fn(&proto.ReadFilesResponse{File: uint32(p.file), Part: true, Index: uint32(p.index), Object: obj})
+		stored, err := obj.Encoded()
+		if err != nil {
+			return err
+		}
+
+		return fn(&proto.ReadFilesResponse{File: uint32(p.file), Part: true, Index: uint32(p.index), Object: stored})
 	})
 }
 

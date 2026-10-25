@@ -136,7 +136,7 @@ func (Period) EnumDescriptor() ([]byte, []int) {
 // Put(*proto.Object) error
 type PutRequest struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
-	Object *Object                `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
+	Object *Stored                `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
 	// the ref the client computed for object; the server rejects a mismatch
 	Ref *Ref `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
 	// for a file object: part refs the client did not upload because it
@@ -176,7 +176,7 @@ func (*PutRequest) Descriptor() ([]byte, []int) {
 	return file_api_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *PutRequest) GetObject() *Object {
+func (x *PutRequest) GetObject() *Stored {
 	if x != nil {
 		return x.Object
 	}
@@ -290,7 +290,7 @@ type PutObjectsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// objects to store as Put stores them, neither commits nor pins; an
 	// object may refer to objects of its own message and earlier ones
-	Objects       []*Object `protobuf:"bytes,1,rep,name=objects,proto3" json:"objects,omitempty"`
+	Objects       []*Stored `protobuf:"bytes,1,rep,name=objects,proto3" json:"objects,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -325,7 +325,7 @@ func (*PutObjectsRequest) Descriptor() ([]byte, []int) {
 	return file_api_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *PutObjectsRequest) GetObjects() []*Object {
+func (x *PutObjectsRequest) GetObjects() []*Stored {
 	if x != nil {
 		return x.Objects
 	}
@@ -707,7 +707,7 @@ type UploadStatus struct {
 	Error      string                 `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
 	Stored     int64                  `protobuf:"varint,7,opt,name=stored,proto3" json:"stored,omitempty"`
 	// the commit the file held, as the store stored it, once done
-	Commit *Object `protobuf:"bytes,8,opt,name=commit,proto3" json:"commit,omitempty"`
+	Commit *Stored `protobuf:"bytes,8,opt,name=commit,proto3" json:"commit,omitempty"`
 	// what the commit references that the store holds nowhere, when it
 	// failed for that; the session stays open to send them and the commit
 	// again
@@ -719,7 +719,7 @@ type UploadStatus struct {
 	ObjectsTotal int64  `protobuf:"varint,11,opt,name=objects_total,json=objectsTotal,proto3" json:"objects_total,omitempty"`
 	// every commit the file held, as the store stored them, in the file's
 	// order, once done; commit is the last of them
-	Commits []*Object `protobuf:"bytes,12,rep,name=commits,proto3" json:"commits,omitempty"`
+	Commits []*Stored `protobuf:"bytes,12,rep,name=commits,proto3" json:"commits,omitempty"`
 	// what each of the file's commits references that the store holds
 	// nowhere, in the file's order, when they failed for that; missing
 	// holds all of it
@@ -807,7 +807,7 @@ func (x *UploadStatus) GetStored() int64 {
 	return 0
 }
 
-func (x *UploadStatus) GetCommit() *Object {
+func (x *UploadStatus) GetCommit() *Stored {
 	if x != nil {
 		return x.Commit
 	}
@@ -835,7 +835,7 @@ func (x *UploadStatus) GetObjectsTotal() int64 {
 	return 0
 }
 
-func (x *UploadStatus) GetCommits() []*Object {
+func (x *UploadStatus) GetCommits() []*Stored {
 	if x != nil {
 		return x.Commits
 	}
@@ -899,7 +899,7 @@ func (x *MissingRefs) GetRefs() []*Ref {
 // come in the order they were taken.
 type PutCommitsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Commits       []*Object              `protobuf:"bytes,1,rep,name=commits,proto3" json:"commits,omitempty"`
+	Commits       []*Stored              `protobuf:"bytes,1,rep,name=commits,proto3" json:"commits,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -934,7 +934,7 @@ func (*PutCommitsRequest) Descriptor() ([]byte, []int) {
 	return file_api_proto_rawDescGZIP(), []int{13}
 }
 
-func (x *PutCommitsRequest) GetCommits() []*Object {
+func (x *PutCommitsRequest) GetCommits() []*Stored {
 	if x != nil {
 		return x.Commits
 	}
@@ -945,7 +945,7 @@ type PutCommitsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// the commits as stored, in the order sent, whose set ids and receipt
 	// times the server assigns; empty when missing is set
-	Commits []*Object `protobuf:"bytes,1,rep,name=commits,proto3" json:"commits,omitempty"`
+	Commits []*Stored `protobuf:"bytes,1,rep,name=commits,proto3" json:"commits,omitempty"`
 	// what each commit references that the store holds nowhere, in the
 	// order sent, when any commit does; then none was stored and the
 	// session stays open to send them and the commits again
@@ -984,7 +984,7 @@ func (*PutCommitsResponse) Descriptor() ([]byte, []int) {
 	return file_api_proto_rawDescGZIP(), []int{14}
 }
 
-func (x *PutCommitsResponse) GetCommits() []*Object {
+func (x *PutCommitsResponse) GetCommits() []*Stored {
 	if x != nil {
 		return x.Commits
 	}
@@ -1049,7 +1049,7 @@ type PutResponse struct {
 	Ref *Ref `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
 	// the object as stored, returned for commits and pins, whose set id and
 	// receipt time the server assigns
-	Object *Object `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
+	Object *Stored `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
 	// what the store does not hold of a file's assumed refs, or of what a
 	// commit's session references; when set the object was not stored and
 	// the client must upload them and put the object again
@@ -1095,7 +1095,7 @@ func (x *PutResponse) GetRef() *Ref {
 	return nil
 }
 
-func (x *PutResponse) GetObject() *Object {
+func (x *PutResponse) GetObject() *Stored {
 	if x != nil {
 		return x.Object
 	}
@@ -1204,7 +1204,7 @@ func (x *GetResponse) GetBody() isGetResponse_Body {
 	return nil
 }
 
-func (x *GetResponse) GetObject() *Object {
+func (x *GetResponse) GetObject() *Stored {
 	if x != nil {
 		if x, ok := x.Body.(*GetResponse_Object); ok {
 			return x.Object
@@ -1227,7 +1227,7 @@ type isGetResponse_Body interface {
 }
 
 type GetResponse_Object struct {
-	Object *Object `protobuf:"bytes,1,opt,name=object,proto3,oneof"`
+	Object *Stored `protobuf:"bytes,1,opt,name=object,proto3,oneof"`
 }
 
 type GetResponse_Location struct {
@@ -1380,7 +1380,7 @@ func (x *ReadFileRequest) GetSkipParts() []uint32 {
 type ReadFileResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Index         uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
-	Object        *Object                `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
+	Object        *Stored                `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
 	Runs          []*LocatedRun          `protobuf:"bytes,3,rep,name=runs,proto3" json:"runs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1423,7 +1423,7 @@ func (x *ReadFileResponse) GetIndex() uint32 {
 	return 0
 }
 
-func (x *ReadFileResponse) GetObject() *Object {
+func (x *ReadFileResponse) GetObject() *Stored {
 	if x != nil {
 		return x.Object
 	}
@@ -1676,7 +1676,7 @@ func (x *ReadFilesEntry) GetSkipParts() []uint32 {
 type ReadFilesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	File          uint32                 `protobuf:"varint,1,opt,name=file,proto3" json:"file,omitempty"`
-	Object        *Object                `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
+	Object        *Stored                `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
 	Part          bool                   `protobuf:"varint,3,opt,name=part,proto3" json:"part,omitempty"`
 	Index         uint32                 `protobuf:"varint,4,opt,name=index,proto3" json:"index,omitempty"`
 	Runs          []*LocatedRun          `protobuf:"bytes,5,rep,name=runs,proto3" json:"runs,omitempty"`
@@ -1721,7 +1721,7 @@ func (x *ReadFilesResponse) GetFile() uint32 {
 	return 0
 }
 
-func (x *ReadFilesResponse) GetObject() *Object {
+func (x *ReadFilesResponse) GetObject() *Stored {
 	if x != nil {
 		return x.Object
 	}
@@ -4184,7 +4184,7 @@ func (x *GetTreeRequest) GetMaxDepth() uint32 {
 type GetTreeResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Ref           *Ref                   `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
-	Object        *Object                `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
+	Object        *Stored                `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
 	Runs          []*LocatedRun          `protobuf:"bytes,3,rep,name=runs,proto3" json:"runs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4227,7 +4227,7 @@ func (x *GetTreeResponse) GetRef() *Ref {
 	return nil
 }
 
-func (x *GetTreeResponse) GetObject() *Object {
+func (x *GetTreeResponse) GetObject() *Stored {
 	if x != nil {
 		return x.Object
 	}
@@ -4422,7 +4422,7 @@ const file_api_proto_rawDesc = "" +
 	"tree.proto\x1a\fcommit.proto\x1a\x0epresence.proto\x1a\x0fretention.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x80\x01\n" +
 	"\n" +
 	"PutRequest\x12%\n" +
-	"\x06object\x18\x01 \x01(\v2\r.proto.ObjectR\x06object\x12\x1c\n" +
+	"\x06object\x18\x01 \x01(\v2\r.proto.StoredR\x06object\x12\x1c\n" +
 	"\x03ref\x18\x02 \x01(\v2\n" +
 	".proto.RefR\x03ref\x12-\n" +
 	"\fassumed_refs\x18\x03 \x03(\v2\n" +
@@ -4434,7 +4434,7 @@ const file_api_proto_rawDesc = "" +
 	"\amissing\x18\x01 \x03(\v2\n" +
 	".proto.RefR\amissing\"<\n" +
 	"\x11PutObjectsRequest\x12'\n" +
-	"\aobjects\x18\x01 \x03(\v2\r.proto.ObjectR\aobjects\",\n" +
+	"\aobjects\x18\x01 \x03(\v2\r.proto.StoredR\aobjects\",\n" +
 	"\x12PutObjectsResponse\x12\x16\n" +
 	"\x06stored\x18\x01 \x01(\x03R\x06stored\"(\n" +
 	"\x12BeginUploadRequest\x12\x12\n" +
@@ -4468,28 +4468,28 @@ const file_api_proto_rawDesc = "" +
 	"bytesTotal\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x12\x16\n" +
 	"\x06stored\x18\a \x01(\x03R\x06stored\x12%\n" +
-	"\x06commit\x18\b \x01(\v2\r.proto.ObjectR\x06commit\x12$\n" +
+	"\x06commit\x18\b \x01(\v2\r.proto.StoredR\x06commit\x12$\n" +
 	"\amissing\x18\t \x03(\v2\n" +
 	".proto.RefR\amissing\x12\x14\n" +
 	"\x05phase\x18\n" +
 	" \x01(\tR\x05phase\x12#\n" +
 	"\robjects_total\x18\v \x01(\x03R\fobjectsTotal\x12'\n" +
-	"\acommits\x18\f \x03(\v2\r.proto.ObjectR\acommits\x12;\n" +
+	"\acommits\x18\f \x03(\v2\r.proto.StoredR\acommits\x12;\n" +
 	"\x0fcommits_missing\x18\r \x03(\v2\x12.proto.MissingRefsR\x0ecommitsMissing\"-\n" +
 	"\vMissingRefs\x12\x1e\n" +
 	"\x04refs\x18\x01 \x03(\v2\n" +
 	".proto.RefR\x04refs\"<\n" +
 	"\x11PutCommitsRequest\x12'\n" +
-	"\acommits\x18\x01 \x03(\v2\r.proto.ObjectR\acommits\"k\n" +
+	"\acommits\x18\x01 \x03(\v2\r.proto.StoredR\acommits\"k\n" +
 	"\x12PutCommitsResponse\x12'\n" +
-	"\acommits\x18\x01 \x03(\v2\r.proto.ObjectR\acommits\x12,\n" +
+	"\acommits\x18\x01 \x03(\v2\r.proto.StoredR\acommits\x12,\n" +
 	"\amissing\x18\x02 \x03(\v2\x12.proto.MissingRefsR\amissing\"E\n" +
 	"\x14UploadStatusResponse\x12-\n" +
 	"\auploads\x18\x01 \x03(\v2\x13.proto.UploadStatusR\auploads\"x\n" +
 	"\vPutResponse\x12\x1c\n" +
 	"\x03ref\x18\x01 \x01(\v2\n" +
 	".proto.RefR\x03ref\x12%\n" +
-	"\x06object\x18\x02 \x01(\v2\r.proto.ObjectR\x06object\x12$\n" +
+	"\x06object\x18\x02 \x01(\v2\r.proto.StoredR\x06object\x12$\n" +
 	"\amissing\x18\x03 \x03(\v2\n" +
 	".proto.RefR\amissing\"*\n" +
 	"\n" +
@@ -4497,7 +4497,7 @@ const file_api_proto_rawDesc = "" +
 	"\x03ref\x18\x01 \x01(\v2\n" +
 	".proto.RefR\x03ref\"m\n" +
 	"\vGetResponse\x12'\n" +
-	"\x06object\x18\x01 \x01(\v2\r.proto.ObjectH\x00R\x06object\x12-\n" +
+	"\x06object\x18\x01 \x01(\v2\r.proto.StoredH\x00R\x06object\x12-\n" +
 	"\blocation\x18\x02 \x01(\v2\x0f.proto.LocationH\x00R\blocationB\x06\n" +
 	"\x04body\"\xfa\x01\n" +
 	"\bLocation\x12\x10\n" +
@@ -4516,7 +4516,7 @@ const file_api_proto_rawDesc = "" +
 	"skip_parts\x18\x02 \x03(\rR\tskipParts\"v\n" +
 	"\x10ReadFileResponse\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\rR\x05index\x12%\n" +
-	"\x06object\x18\x02 \x01(\v2\r.proto.ObjectR\x06object\x12%\n" +
+	"\x06object\x18\x02 \x01(\v2\r.proto.StoredR\x06object\x12%\n" +
 	"\x04runs\x18\x03 \x03(\v2\x11.proto.LocatedRunR\x04runs\"i\n" +
 	"\n" +
 	"LocatedRun\x12+\n" +
@@ -4537,7 +4537,7 @@ const file_api_proto_rawDesc = "" +
 	"skip_parts\x18\x02 \x03(\rR\tskipParts\"\x9f\x01\n" +
 	"\x11ReadFilesResponse\x12\x12\n" +
 	"\x04file\x18\x01 \x01(\rR\x04file\x12%\n" +
-	"\x06object\x18\x02 \x01(\v2\r.proto.ObjectR\x06object\x12\x12\n" +
+	"\x06object\x18\x02 \x01(\v2\r.proto.StoredR\x06object\x12\x12\n" +
 	"\x04part\x18\x03 \x01(\bR\x04part\x12\x14\n" +
 	"\x05index\x18\x04 \x01(\rR\x05index\x12%\n" +
 	"\x04runs\x18\x05 \x03(\v2\x11.proto.LocatedRunR\x04runs\"\x92\x01\n" +
@@ -4707,7 +4707,7 @@ const file_api_proto_rawDesc = "" +
 	"\x0fGetTreeResponse\x12\x1c\n" +
 	"\x03ref\x18\x01 \x01(\v2\n" +
 	".proto.RefR\x03ref\x12%\n" +
-	"\x06object\x18\x02 \x01(\v2\r.proto.ObjectR\x06object\x12%\n" +
+	"\x06object\x18\x02 \x01(\v2\r.proto.StoredR\x06object\x12%\n" +
 	"\x04runs\x18\x03 \x03(\v2\x11.proto.LocatedRunR\x04runs\"Z\n" +
 	"\x15ReportScheduleRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12&\n" +
@@ -4870,7 +4870,7 @@ var file_api_proto_goTypes = []any{
 	nil,                            // 80: proto.UploadLocation.HeaderEntry
 	nil,                            // 81: proto.Location.HeaderEntry
 	nil,                            // 82: proto.PinInfo.MetadataEntry
-	(*Object)(nil),                 // 83: proto.Object
+	(*Stored)(nil),                 // 83: proto.Stored
 	(*Ref)(nil),                    // 84: proto.Ref
 	(*timestamppb.Timestamp)(nil),  // 85: google.protobuf.Timestamp
 	(*TreeNode)(nil),               // 86: proto.TreeNode
@@ -4879,42 +4879,42 @@ var file_api_proto_goTypes = []any{
 	(*PresenceFilter)(nil),         // 89: proto.PresenceFilter
 }
 var file_api_proto_depIdxs = []int32{
-	83,  // 0: proto.PutRequest.object:type_name -> proto.Object
+	83,  // 0: proto.PutRequest.object:type_name -> proto.Stored
 	84,  // 1: proto.PutRequest.ref:type_name -> proto.Ref
 	84,  // 2: proto.PutRequest.assumed_refs:type_name -> proto.Ref
 	84,  // 3: proto.MissingRequest.refs:type_name -> proto.Ref
 	84,  // 4: proto.MissingResponse.missing:type_name -> proto.Ref
-	83,  // 5: proto.PutObjectsRequest.objects:type_name -> proto.Object
+	83,  // 5: proto.PutObjectsRequest.objects:type_name -> proto.Stored
 	9,   // 6: proto.BeginUploadResponse.location:type_name -> proto.UploadLocation
 	80,  // 7: proto.UploadLocation.header:type_name -> proto.UploadLocation.HeaderEntry
 	85,  // 8: proto.UploadLocation.expires:type_name -> google.protobuf.Timestamp
 	13,  // 9: proto.SendUploadResponse.status:type_name -> proto.UploadStatus
 	0,   // 10: proto.UploadStatus.state:type_name -> proto.UploadState
-	83,  // 11: proto.UploadStatus.commit:type_name -> proto.Object
+	83,  // 11: proto.UploadStatus.commit:type_name -> proto.Stored
 	84,  // 12: proto.UploadStatus.missing:type_name -> proto.Ref
-	83,  // 13: proto.UploadStatus.commits:type_name -> proto.Object
+	83,  // 13: proto.UploadStatus.commits:type_name -> proto.Stored
 	14,  // 14: proto.UploadStatus.commits_missing:type_name -> proto.MissingRefs
 	84,  // 15: proto.MissingRefs.refs:type_name -> proto.Ref
-	83,  // 16: proto.PutCommitsRequest.commits:type_name -> proto.Object
-	83,  // 17: proto.PutCommitsResponse.commits:type_name -> proto.Object
+	83,  // 16: proto.PutCommitsRequest.commits:type_name -> proto.Stored
+	83,  // 17: proto.PutCommitsResponse.commits:type_name -> proto.Stored
 	14,  // 18: proto.PutCommitsResponse.missing:type_name -> proto.MissingRefs
 	13,  // 19: proto.UploadStatusResponse.uploads:type_name -> proto.UploadStatus
 	84,  // 20: proto.PutResponse.ref:type_name -> proto.Ref
-	83,  // 21: proto.PutResponse.object:type_name -> proto.Object
+	83,  // 21: proto.PutResponse.object:type_name -> proto.Stored
 	84,  // 22: proto.PutResponse.missing:type_name -> proto.Ref
 	84,  // 23: proto.GetRequest.ref:type_name -> proto.Ref
-	83,  // 24: proto.GetResponse.object:type_name -> proto.Object
+	83,  // 24: proto.GetResponse.object:type_name -> proto.Stored
 	21,  // 25: proto.GetResponse.location:type_name -> proto.Location
 	81,  // 26: proto.Location.header:type_name -> proto.Location.HeaderEntry
 	85,  // 27: proto.Location.expires:type_name -> google.protobuf.Timestamp
 	84,  // 28: proto.ReadFileRequest.ref:type_name -> proto.Ref
-	83,  // 29: proto.ReadFileResponse.object:type_name -> proto.Object
+	83,  // 29: proto.ReadFileResponse.object:type_name -> proto.Stored
 	24,  // 30: proto.ReadFileResponse.runs:type_name -> proto.LocatedRun
 	21,  // 31: proto.LocatedRun.location:type_name -> proto.Location
 	25,  // 32: proto.LocatedRun.records:type_name -> proto.LocatedRecord
 	27,  // 33: proto.ReadFilesRequest.files:type_name -> proto.ReadFilesEntry
 	84,  // 34: proto.ReadFilesEntry.ref:type_name -> proto.Ref
-	83,  // 35: proto.ReadFilesResponse.object:type_name -> proto.Object
+	83,  // 35: proto.ReadFilesResponse.object:type_name -> proto.Stored
 	24,  // 36: proto.ReadFilesResponse.runs:type_name -> proto.LocatedRun
 	85,  // 37: proto.FileInfoRequest.notAfter:type_name -> google.protobuf.Timestamp
 	86,  // 38: proto.FileInfoResponse.files:type_name -> proto.TreeNode
@@ -4948,7 +4948,7 @@ var file_api_proto_depIdxs = []int32{
 	73,  // 66: proto.ListPinsResponse.pins:type_name -> proto.PinInfo
 	84,  // 67: proto.GetTreeRequest.ref:type_name -> proto.Ref
 	84,  // 68: proto.GetTreeResponse.ref:type_name -> proto.Ref
-	83,  // 69: proto.GetTreeResponse.object:type_name -> proto.Object
+	83,  // 69: proto.GetTreeResponse.object:type_name -> proto.Stored
 	24,  // 70: proto.GetTreeResponse.runs:type_name -> proto.LocatedRun
 	78,  // 71: proto.ReportScheduleRequest.sets:type_name -> proto.SetSchedule
 	2,   // 72: proto.Store.Put:input_type -> proto.PutRequest
