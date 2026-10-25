@@ -57,6 +57,9 @@ type CompactReport struct {
 	// Waiting is the generation whose published plan has not been
 	// rewritten yet; a compaction that waits does nothing else.
 	Waiting uint64
+	// Busy is set when another process holds the store's compaction; a
+	// compaction that finds it held does nothing else.
+	Busy bool
 	// Candidates counts the small committed archives Compact found, and
 	// CandidateBytes what they take up; it merges them only once they add
 	// up to a batch or are more than MinimumCandidates.
@@ -88,6 +91,10 @@ func (r *CompactReport) Summary() string {
 		return fmt.Sprintf("Compaction waits for the rewrite of generation %d", r.Waiting)
 	}
 
+	if r.Busy {
+		return "Compaction left to another process compacting the store"
+	}
+
 	if r.Rewritten == 0 {
 		return fmt.Sprintf("Compaction merged nothing: %d small archives (%s)", r.Candidates, humanize.Bytes(r.CandidateBytes))
 	}
@@ -104,7 +111,8 @@ func (r *CompactReport) Summary() string {
 // expected to die about the same time together, each too large to be
 // merged again unless the candidates held too little of it. While a
 // published plan waits for its rewrite it does nothing and names the plan's
-// generation in Waiting.
+// generation in Waiting, and while another process compacts the store it
+// does nothing and sets Busy.
 func (ps *PackStorage) Compact(ctx context.Context) (*CompactReport, error) {
 	started := time.Now()
 
@@ -120,26 +128,30 @@ func (ps *PackStorage) Compact(ctx context.Context) (*CompactReport, error) {
 		return &CompactReport{Waiting: pending[0], Duration: time.Since(started)}, nil
 	}
 
-	group := &compactionGroup{}
-
-	ps.mtx.RLock()
-	for _, candidate := range ps.archives {
-		candidate.mtx.RLock()
-		eligible := candidate.readOnly && candidate.state == ArchiveCommitted && candidate.size < ps.compaction.small()
-		candidate.mtx.RUnlock()
-
-		if !eligible {
-			continue
-		}
-
-		group.candidates = append(group.candidates, candidate)
-		group.total += candidate.size
+	group := ps.compactionCandidates()
+	if !ps.compaction.due(group) {
+		return &CompactReport{Candidates: len(group.candidates), CandidateBytes: group.total, Duration: time.Since(started)}, nil
 	}
-	ps.mtx.RUnlock()
 
+	lease, ctx, err := ps.leaseCompaction(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "leasing the compaction")
+	}
+
+	if lease == nil {
+		return &CompactReport{Busy: true, Duration: time.Since(started)}, nil
+	}
+	defer lease.release()
+
+	// another process may have compacted since this one loaded the archives
+	if err := ps.refreshArchives(); err != nil {
+		return nil, errors.Wrap(err, "refreshing the archives")
+	}
+
+	group = ps.compactionCandidates()
 	report := &CompactReport{Candidates: len(group.candidates), CandidateBytes: group.total}
 
-	if len(group.candidates) > ps.compaction.MinimumCandidates || group.total >= ps.compaction.batch() {
+	if ps.compaction.due(group) {
 		ps.logger.Info("compacting archives", "count", len(group.candidates), "size", humanize.Bytes(group.total))
 
 		group.progress = progress.Start(ctx, progress.OpCompact, progress.PhaseRewrite, int64(len(group.candidates)), int64(group.total))
@@ -158,6 +170,32 @@ func (ps *PackStorage) Compact(ctx context.Context) (*CompactReport, error) {
 	report.Duration = time.Since(started)
 
 	return report, nil
+}
+
+// compactionCandidates groups the small committed archives.
+func (ps *PackStorage) compactionCandidates() *compactionGroup {
+	group := &compactionGroup{}
+
+	ps.mtx.RLock()
+	defer ps.mtx.RUnlock()
+
+	for _, candidate := range ps.archives {
+		candidate.mtx.RLock()
+		eligible := candidate.readOnly && candidate.state == ArchiveCommitted && candidate.size < ps.compaction.small()
+		candidate.mtx.RUnlock()
+
+		if eligible {
+			group.candidates = append(group.candidates, candidate)
+			group.total += candidate.size
+		}
+	}
+
+	return group
+}
+
+// due reports whether the candidates are worth merging.
+func (c CompactionConfig) due(group *compactionGroup) bool {
+	return len(group.candidates) > c.MinimumCandidates || group.total >= c.batch()
 }
 
 // report fills in what the group's rewrite did.

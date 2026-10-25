@@ -5,9 +5,13 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gobackio/goback/proto"
 
@@ -545,4 +549,141 @@ func TestPrefetchHandsTheInputsOverInOrderWithinItsBudget(t *testing.T) {
 	input := <-prefetch(context.Background(), []*archive{large}, semaphore.NewWeighted(prefetchBytes))[0]
 	require.NoError(t, input.err)
 	require.Nil(t, input.data, "an input too large to read ahead is left to stream")
+}
+
+func TestTwoProcessesCompactingOneStoreKeepEveryObjectAndRetireEachArchiveOnce(t *testing.T) {
+	config := WithCompaction(CompactionConfig{Small: 64 << 10, Batch: 64 << 20, MinimumCandidates: 10})
+
+	for _, c := range []struct{ shared, inTurn bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		shared := c.shared
+
+		t.Run(fmt.Sprintf("shared=%v,inTurn=%v", c.shared, c.inTurn), func(t *testing.T) {
+			base := t.TempDir()
+			index := NewInMemoryIndex()
+
+			indexOf := func() ArchiveIndex {
+				if shared {
+					return index
+				}
+
+				return NewInMemoryIndex()
+			}
+
+			writer := newTestStore(t, base, WithArchiveIndex(index), config)
+			objects := makeTestData(t, 300)
+
+			for i := 0; i < len(objects); i += 3 {
+				for _, object := range objects[i : i+3] {
+					require.NoError(t, writer.Put(context.Background(), object))
+				}
+
+				require.NoError(t, writer.Flush())
+			}
+
+			require.NoError(t, writer.Close())
+
+			processes := []*PackStorage{newTestStore(t, base, WithArchiveIndex(indexOf()), config),
+				newTestStore(t, base, WithArchiveIndex(indexOf()), config)}
+
+			reports := make([]*CompactReport, len(processes))
+			errs := make([]error, len(processes))
+
+			if c.inTurn {
+				for i, process := range processes {
+					reports[i], errs[i] = process.Compact(context.Background())
+				}
+			} else {
+				start := make(chan struct{})
+
+				var wg sync.WaitGroup
+				for i, process := range processes {
+					wg.Go(func() {
+						<-start
+						reports[i], errs[i] = process.Compact(context.Background())
+					})
+				}
+
+				close(start)
+				wg.Wait()
+			}
+
+			for i, process := range processes {
+				require.NoError(t, errs[i])
+				require.NoError(t, process.Close())
+			}
+
+			require.Positive(t, reports[0].Rewritten+reports[1].Rewritten)
+
+			fresh := newTestStore(t, base, config)
+			defer fresh.Close()
+
+			retirements, err := fresh.retirements()
+			require.NoError(t, err)
+
+			times := make(map[string]int)
+			for _, r := range retirements {
+				for _, name := range r.Archives {
+					times[name]++
+				}
+			}
+
+			for name, n := range times {
+				require.Equal(t, 1, n, "%s is retired once", name)
+			}
+
+			for i, object := range objects {
+				got, err := fresh.Get(context.Background(), object.Ref())
+				require.NoError(t, err, "object %d", i)
+				require.Equal(t, object.Bytes(), got.Bytes(), "object %d", i)
+			}
+		})
+	}
+}
+
+func TestACompactionLeaseHeldElsewhereKeepsTheStoreUntilReleasedOrUnrenewed(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		data    []byte
+		age     time.Duration
+		compact bool
+	}{
+		{"held", leaseData(), 0, false},
+		{"unrenewed", leaseData(), compactionLeaseTTL + time.Minute, true},
+		{"released", leaseReleased, 0, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			base := t.TempDir()
+			store := newTestStore(t, base, WithCompaction(CompactionConfig{MinimumCandidates: 1}))
+			defer store.Close()
+
+			objects := makeTestData(t, 20)
+			for i := 0; i < len(objects); i += 5 {
+				for _, object := range objects[i : i+5] {
+					require.NoError(t, store.Put(context.Background(), object))
+				}
+
+				require.NoError(t, store.Flush())
+			}
+
+			require.NoError(t, store.storage.CreateNew(leaseName(7), c.data))
+			modified := time.Now().Add(-c.age)
+			require.NoError(t, os.Chtimes(filepath.Join(base, leaseName(7)), modified, modified))
+
+			report := compact(t, context.Background(), store)
+			require.Equal(t, !c.compact, report.Busy)
+			require.Equal(t, c.compact, report.Rewritten > 0)
+
+			leases, err := store.leases()
+			require.NoError(t, err)
+			require.Len(t, leases, 1, "a lease is kept until a newer one is stored")
+
+			if c.compact {
+				require.EqualValues(t, 8, leases[0].n)
+
+				held, err := store.held(leases[0])
+				require.NoError(t, err)
+				require.False(t, held, "the compaction released its lease")
+			}
+		})
+	}
 }

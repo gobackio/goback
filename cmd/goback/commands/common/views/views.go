@@ -248,6 +248,7 @@ type ReportView struct {
 // CompactView is a compaction report as JSON output shows it.
 type CompactView struct {
 	Waiting        uint64  `json:"waiting,omitempty"`
+	Busy           bool    `json:"busy,omitempty"`
 	Candidates     int     `json:"candidates"`
 	CandidateBytes uint64  `json:"candidate_bytes"`
 	Rewritten      int     `json:"rewritten"`

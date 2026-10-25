@@ -46,6 +46,7 @@ func (m MapperImpl) Compact(in *pack.CompactReport) views.CompactView {
 
 	return views.CompactView{
 		Waiting:        in.Waiting,
+		Busy:           in.Busy,
 		Candidates:     in.Candidates,
 		CandidateBytes: in.CandidateBytes,
 		Rewritten:      in.Rewritten,
