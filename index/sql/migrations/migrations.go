@@ -75,7 +75,7 @@ const lockTimeout = 5 * time.Minute
 // it applied in the atlas_schema_revisions table. A database that is up
 // to date is left alone. Concurrent callers take turns: an SQLite
 // migration is one write transaction, a Postgres one holds an advisory
-// lock.
+// lock on its schema.
 func Apply(ctx context.Context, db *sql.DB, dialect string) error {
 	dir, err := Dir(dialect)
 	if err != nil {
@@ -87,7 +87,8 @@ func Apply(ctx context.Context, db *sql.DB, dialect string) error {
 
 // ApplyDir is Apply for a schema that ships its own migrations: dir is
 // applied on top of whatever else the database holds, its history kept in
-// the table named table and its Postgres runs serialised under lock.
+// the table named table and its Postgres runs on one schema serialised
+// under lock.
 func ApplyDir(ctx context.Context, db *sql.DB, dialect string, dir migrate.Dir, table, lock string) error {
 	return applyDir(ctx, db, dialect, dir, table, lock, true)
 }
@@ -108,7 +109,13 @@ func applyDir(ctx context.Context, db *sql.DB, dialect string, dir migrate.Dir, 
 			return err
 		}
 
-		unlock, err := drv.(schema.Locker).Lock(ctx, lock, lockTimeout)
+		var current string
+		if err := db.QueryRowContext(ctx, `SELECT current_schema()`).Scan(&current); err != nil {
+			return fmt.Errorf("reading the current schema: %w", err)
+		}
+
+		// advisory locks span the database, which other schemas share
+		unlock, err := drv.(schema.Locker).Lock(ctx, lock+"."+current, lockTimeout)
 		if err != nil {
 			return fmt.Errorf("waiting for another migration: %w", err)
 		}

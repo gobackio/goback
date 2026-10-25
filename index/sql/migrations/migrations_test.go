@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/gobackio/goback/testing/testpg"
 
 	"ariga.io/atlas/sql/migrate"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
@@ -119,6 +123,63 @@ func TestApplyRebuildsTablesThatRowsReference(t *testing.T) {
 	var keys bool
 	require.NoError(t, db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&keys))
 	require.True(t, keys, "the connection gets its foreign keys back")
+}
+
+// dirOf is a migration directory of the files, by name.
+func dirOf(t *testing.T, files map[string]string) *migrate.MemDir {
+	t.Helper()
+
+	dir := &migrate.MemDir{}
+	for name, data := range files {
+		require.NoError(t, dir.WriteFile(name, []byte(data)))
+	}
+
+	sum, err := dir.Checksum()
+	require.NoError(t, err)
+	require.NoError(t, migrate.WriteSumFile(dir, sum))
+
+	return dir
+}
+
+// inSchema opens the Postgres database at dsn on a schema of its own.
+func inSchema(t *testing.T, dsn, name string) *sql.DB {
+	t.Helper()
+
+	db, err := sql.Open("pgx", dsn)
+	require.NoError(t, err)
+	_, err = db.Exec("CREATE SCHEMA " + name)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	db, err = sql.Open("pgx", dsn+"&search_path="+name)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	return db
+}
+
+func TestPostgresMigrationsOfTwoSchemasRunAtOnce(t *testing.T) {
+	dsn := testpg.Start(t)
+	ctx := context.Background()
+
+	slow, fast := inSchema(t, dsn, "slow"), inSchema(t, dsn, "fast")
+
+	started := make(chan error, 1)
+	go func() {
+		started <- ApplyDir(ctx, slow, Postgres, dirOf(t, map[string]string{"1_slow.sql": "SELECT pg_sleep(3);\n"}), "revisions", "lock")
+	}()
+
+	require.Eventually(t, func() bool {
+		var held int
+		require.NoError(t, fast.QueryRowContext(ctx, "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'").Scan(&held))
+		return held > 0
+	}, 10*time.Second, 10*time.Millisecond)
+
+	began := time.Now()
+	require.NoError(t, ApplyDir(ctx, fast, Postgres, dirOf(t, map[string]string{"1_fast.sql": "CREATE TABLE t (id int);\n"}), "revisions", "lock"))
+	require.Less(t, time.Since(began), 2*time.Second, "another schema's migration does not wait for this one")
+
+	require.NoError(t, <-started)
 }
 
 func TestApplyRefusesADirtyDatabase(t *testing.T) {
