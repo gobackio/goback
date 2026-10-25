@@ -88,9 +88,9 @@ type Repo struct {
 
 	settings Settings
 
-	keyOnce sync.Once
+	keyMu   sync.Mutex
+	keyRead bool
 	key     *storekey.Key
-	keyErr  error
 }
 
 // Open opens the store s names and its index.
@@ -132,30 +132,50 @@ func Open(ctx context.Context, s Settings) (*Repo, error) {
 
 // Key is the store key: loaded from Settings.StoreKey, else recovered with
 // Settings.Passphrase from the copy the store keeps escrowed, else nil for
-// a store written in the clear. It is read once, on the first call.
+// a store written in the clear. It is read on the first call that succeeds,
+// and kept from then on.
 func (r *Repo) Key(ctx context.Context) (*storekey.Key, error) {
-	r.keyOnce.Do(func() {
-		switch {
-		case r.settings.StoreKey != "":
-			r.key, r.keyErr = storekey.Load(r.settings.StoreKey)
-			if r.keyErr != nil {
-				r.keyErr = fmt.Errorf("loading the store key: %w", r.keyErr)
-			}
-		case r.settings.Passphrase != "":
-			escrow, ok := wrapped.Innermost(r.Store).(backup.EscrowLister)
-			if !ok {
-				r.keyErr = fmt.Errorf("store %T keeps no escrowed key", wrapped.Innermost(r.Store))
-				return
-			}
+	r.keyMu.Lock()
+	defer r.keyMu.Unlock()
 
-			r.key, r.keyErr = backup.RecoverKey(ctx, escrow, r.settings.Passphrase)
-			if r.keyErr != nil {
-				r.keyErr = fmt.Errorf("opening the escrowed store key: %w", r.keyErr)
-			}
+	if r.keyRead {
+		return r.key, nil
+	}
+
+	key, err := r.readKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	r.key, r.keyRead = key, true
+
+	return key, nil
+}
+
+func (r *Repo) readKey(ctx context.Context) (*storekey.Key, error) {
+	switch {
+	case r.settings.StoreKey != "":
+		key, err := storekey.Load(r.settings.StoreKey)
+		if err != nil {
+			return nil, fmt.Errorf("loading the store key: %w", err)
 		}
-	})
 
-	return r.key, r.keyErr
+		return key, nil
+	case r.settings.Passphrase != "":
+		escrow, ok := wrapped.Innermost(r.Store).(backup.EscrowLister)
+		if !ok {
+			return nil, fmt.Errorf("store %T keeps no escrowed key", wrapped.Innermost(r.Store))
+		}
+
+		key, err := backup.RecoverKey(ctx, escrow, r.settings.Passphrase)
+		if err != nil {
+			return nil, fmt.Errorf("opening the escrowed store key: %w", err)
+		}
+
+		return key, nil
+	}
+
+	return nil, nil
 }
 
 // StoreCache is the directory under Settings.CacheDir that holds this

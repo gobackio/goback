@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/storage"
 	"github.com/gobackio/goback/storage/pack"
 	"github.com/stretchr/testify/require"
@@ -207,4 +208,26 @@ func TestAStoreThatFailsToOpenIsClosedWithItsIndex(t *testing.T) {
 	require.ErrorContains(t, err, "503")
 	require.True(t, store.closed)
 	require.True(t, index.closed)
+}
+
+func TestAStoreKeyThatFailedToLoadIsReadAgain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.key")
+	repo := &Repo{settings: Settings{StoreKey: path}}
+
+	_, err := repo.Key(context.Background())
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	want, err := storekey.Generate("s1")
+	require.NoError(t, err)
+	require.NoError(t, want.Save(path))
+
+	got, err := repo.Key(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, want.ID(), got.ID())
+
+	require.NoError(t, os.Remove(path))
+
+	again, err := repo.Key(context.Background())
+	require.NoError(t, err)
+	require.Same(t, got, again, "a key read is kept")
 }
