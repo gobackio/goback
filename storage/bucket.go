@@ -92,15 +92,15 @@ func (s *bucketFile) ReadAt(buf []byte, offset int64) (int, error) {
 		return 0, errors.New("Read only supported for readonly files")
 	}
 
+	if offset < 0 {
+		return 0, errors.New("negative offset")
+	}
+
 	if offset >= s.attrs.Size {
 		return 0, io.EOF
 	}
 
-	length := int64(len(buf))
-
-	if offset+length >= s.attrs.Size {
-		length = s.attrs.Size - offset
-	}
+	length := min(int64(len(buf)), s.attrs.Size-offset)
 
 	reader, err := s.store.bucket.NewRangeReader(context.Background(), s.key, offset, length, nil)
 	if err != nil {
@@ -114,16 +114,30 @@ func (s *bucketFile) ReadAt(buf []byte, offset int64) (int, error) {
 	n, err := io.ReadFull(reader, buf[:length])
 	s.store.count(OpGet, int64(n))
 
+	if err == nil && n < len(buf) {
+		err = io.EOF
+	}
+
 	return n, err
 }
 
+// WriteTo writes the file from its position on to w, and moves the
+// position to the end of what it wrote.
 func (s *bucketFile) WriteTo(w io.Writer) (int64, error) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
 	if !s.readOnly {
 		return -1, errors.New("WriteTo only supported for readonly files")
 	}
 
-	reader, err := s.store.bucket.NewReader(context.Background(), s.key, nil)
+	if s.offset >= s.attrs.Size {
+		return 0, nil
+	}
 
+	s.closeStream()
+
+	reader, err := s.store.bucket.NewRangeReader(context.Background(), s.key, s.offset, s.attrs.Size-s.offset, nil)
 	if err != nil {
 		s.store.count(OpGet, 0)
 
@@ -133,6 +147,7 @@ func (s *bucketFile) WriteTo(w io.Writer) (int64, error) {
 	defer reader.Close()
 
 	n, err := io.Copy(w, reader)
+	s.offset += n
 	s.store.count(OpGet, n)
 
 	return n, err
@@ -154,9 +169,13 @@ func (s *bucketFile) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekCurrent:
 		position += offset
 	case io.SeekEnd:
-		position = s.attrs.Size - offset
+		position = s.attrs.Size + offset
 	default:
 		return 0, errors.New("invalid whence value")
+	}
+
+	if position < 0 {
+		return 0, errors.New("negative position")
 	}
 
 	if position != s.offset {
