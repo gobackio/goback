@@ -52,10 +52,12 @@ type scanJob struct {
 // tree however far ahead, holding what fits in the window and counting all
 // of it.
 type scanner struct {
-	ctx    context.Context
-	walker *Walker
-	fs     FS
-	window int
+	ctx     context.Context
+	cancel  context.CancelFunc
+	workers sync.WaitGroup
+	walker  *Walker
+	fs      FS
+	window  int
 
 	mtx     sync.Mutex
 	cond    sync.Cond
@@ -77,8 +79,11 @@ func newScanner(ctx context.Context, w *Walker, workers, window int) *scanner {
 		window = DefaultScanWindow
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+
 	s := &scanner{
 		ctx:     ctx,
+		cancel:  cancel,
 		walker:  w,
 		fs:      w.fs(),
 		window:  window,
@@ -90,23 +95,25 @@ func newScanner(ctx context.Context, w *Walker, workers, window int) *scanner {
 	s.cond.L = &s.mtx
 
 	for range workers {
-		go s.run(ctx)
+		s.workers.Go(func() { s.run(ctx) })
 	}
 
 	return s
 }
 
-// close drops what the read-ahead holds and stops its workers.
+// close drops what the read-ahead holds and stops its workers, returning
+// once none of them is listing any more.
 func (s *scanner) close() {
 	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
 	s.closed = true
 	s.pending = nil
 	s.ready = nil
 	s.held = 0
-
 	s.cond.Broadcast()
+	s.mtx.Unlock()
+
+	s.cancel()
+	s.workers.Wait()
 }
 
 func (s *scanner) run(ctx context.Context) {

@@ -818,7 +818,10 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 
 	results := make([]*proto.TreeNode, len(entries))
 	changed := false
-	group, groupCtx := errgroup.WithContext(ctx)
+	group, groupCtx, stop := newGroup(ctx)
+	// whatever the loop leaves running when it returns early is stopped
+	// before walkDir returns
+	defer func() { stop() }()
 	var mtx sync.Mutex
 
 	markChanged := func() {
@@ -900,8 +903,10 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 					return walk(dirCtx)
 				})
 			default:
-				if err := walk(ctx); err != nil {
-					return nil, false, err
+				if err := walk(groupCtx); err != nil {
+					// a sibling's failure, which cancelled this walk, goes first
+					group.Go(func() error { return err })
+					return nil, false, group.Wait()
 				}
 			}
 
@@ -1008,7 +1013,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 			}
 
 			ctx = w.session
-			group, groupCtx = errgroup.WithContext(ctx)
+			group, groupCtx, stop = newGroup(ctx)
 		}
 	}
 
@@ -1042,6 +1047,18 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, parent []byte, ba
 	}
 
 	return SortNodes(nodes), changed, nil
+}
+
+// newGroup is an errgroup under ctx and a stop that cancels what it runs
+// and waits for it.
+func newGroup(ctx context.Context) (*errgroup.Group, context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	group, groupCtx := errgroup.WithContext(ctx)
+
+	return group, groupCtx, func() {
+		cancel()
+		_ = group.Wait()
+	}
 }
 
 // walkSubdir walks Root as the directory Subdir of the root, whose other

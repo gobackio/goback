@@ -2,11 +2,15 @@ package backup
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,11 +23,17 @@ type hookFS struct {
 	beforeOpen    func(path string)
 	beforeReadDir func(dir string)
 	afterReadDir  func(dir string)
-	// failRead holds the error every read of a file of that name fails with
-	failRead map[string]error
+	// failRead and failReadDir hold the error every read of a file, or
+	// listing of a directory, of that name fails with
+	failRead    map[string]error
+	failReadDir map[string]error
+	// calls counts opens and listings, and listing those under way
+	calls, listing atomic.Int64
 }
 
 func (h *hookFS) Open(ctx context.Context, path string) (File, error) {
+	h.calls.Add(1)
+
 	if h.beforeOpen != nil {
 		h.beforeOpen(path)
 	}
@@ -45,8 +55,16 @@ type failingFile struct {
 func (f failingFile) Read([]byte) (int, error) { return 0, f.err }
 
 func (h *hookFS) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
+	h.calls.Add(1)
+	h.listing.Add(1)
+	defer h.listing.Add(-1)
+
 	if h.beforeReadDir != nil {
 		h.beforeReadDir(dir)
+	}
+
+	if err := h.failReadDir[filepath.Base(dir)]; err != nil {
+		return nil, err
 	}
 
 	entries, err := h.LocalFS.ReadDir(ctx, dir)
@@ -152,4 +170,49 @@ func TestAFileThatFailsToReadKeepsItsPreviousVersion(t *testing.T) {
 	require.EqualValues(t, 1, second.Unreadable)
 	require.True(t, second.Dirty())
 	require.True(t, f.tree(second.Commit.Tree)["bad.bin"].Ref.Equal(before["bad.bin"].Ref))
+}
+
+// slowTree writes dirs directories of root, each holding a file and a
+// directory holding another, and returns a hookFS whose listings of them
+// take a while and whose listing of zfail, which it writes too, fails.
+func slowTree(f *walkerFixture, dirs int) *hookFS {
+	for i := range dirs {
+		f.write(fmt.Sprintf("slow%02d/file.txt", i), []byte("content"))
+		f.write(fmt.Sprintf("slow%02d/inner/file.txt", i), []byte("content"))
+	}
+	f.write("zfail/file.txt", []byte("content"))
+
+	return &hookFS{
+		beforeReadDir: func(dir string) {
+			if strings.HasPrefix(filepath.Base(dir), "slow") || filepath.Base(dir) == "inner" {
+				time.Sleep(100 * time.Millisecond)
+			}
+		},
+		failReadDir: map[string]error{"zfail": errors.New("the medium is gone")},
+	}
+}
+
+func TestAFailedWalkStopsWhatItsDirectoriesStartedBeforeItReturns(t *testing.T) {
+	f := newWalkerFixture(t)
+	fsys := slowTree(f, dirWalkers)
+	f.walker.FS = fsys
+	f.walker.ScanWorkers = -1
+
+	_, err := f.walker.Run(context.Background())
+	require.ErrorContains(t, err, "the medium is gone")
+
+	calls := fsys.calls.Load()
+	time.Sleep(500 * time.Millisecond)
+	require.Equal(t, calls, fsys.calls.Load(), "nothing reads on once the run returned")
+}
+
+func TestAFailedWalkStopsItsReadAheadBeforeItReturns(t *testing.T) {
+	f := newWalkerFixture(t)
+	fsys := slowTree(f, 2*dirWalkers)
+	f.walker.FS = fsys
+	f.walker.ScanWorkers = 4
+
+	_, err := f.walker.Run(context.Background())
+	require.ErrorContains(t, err, "the medium is gone")
+	require.Zero(t, fsys.listing.Load(), "no listing is under way once the run returned")
 }
