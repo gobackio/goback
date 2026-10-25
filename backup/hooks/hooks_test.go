@@ -77,15 +77,14 @@ func TestRedirect(t *testing.T) {
 	require.Equal(t, "/snap/b", Redirect("GOBACK_ROOT=/snap/a\r\nGOBACK_ROOT=/snap/b\r\n"))
 }
 
-func TestAPreHookThatLeavesAProcessHoldingItsOutputSucceeds(t *testing.T) {
-	command := "sleep 20 & echo started"
+func TestAPreHookThatLeavesAProcessHoldingItsOutputFails(t *testing.T) {
+	command := "sleep 8 & echo started"
 	if runtime.GOOS == "windows" {
-		command = "start /b ping -n 20 127.0.0.1 & echo started"
+		command = "start /b ping -n 8 127.0.0.1 & echo started"
 	}
 
-	out, err := (&Runner{Pre: command, Stdout: io.Discard, Stderr: io.Discard}).RunPre(context.Background())
-	require.NoError(t, err)
-	require.Contains(t, out, "started")
+	_, err := (&Runner{Pre: command, Stdout: io.Discard, Stderr: io.Discard}).RunPre(context.Background())
+	require.ErrorIs(t, err, exec.ErrWaitDelay)
 }
 
 func TestACaptureKeepsItsHeadAndTheLastRootLineAfterIt(t *testing.T) {

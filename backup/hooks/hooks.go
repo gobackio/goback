@@ -4,12 +4,10 @@ package hooks
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -65,13 +63,6 @@ func (r *Runner) run(ctx context.Context, name, command string) (string, error) 
 	err := cmd.Run()
 	if ctx.Err() != nil {
 		return out.String(), fmt.Errorf("%s hook: %w", name, ctx.Err())
-	}
-
-	// the shell succeeded, and a child it left running still holds its
-	// output, as one holding a lock for the walk does
-	if errors.Is(err, exec.ErrWaitDelay) {
-		r.logger().Info("the hook left a process holding its output, which is no longer read", "hook", name)
-		err = nil
 	}
 
 	if err != nil {
