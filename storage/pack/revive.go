@@ -34,13 +34,8 @@ func (ps *PackStorage) Revive(ctx context.Context, commits []*proto.Ref, dryRun 
 	ps.compactorMtx.Lock()
 	defer ps.compactorMtx.Unlock()
 
-	pending, err := ps.PendingPlans()
-	if err != nil {
-		return nil, fmt.Errorf("listing published plans: %w", err)
-	}
-
-	if len(pending) > 0 {
-		return nil, fmt.Errorf("the plan of generation %d waits for its rewrite", pending[0])
+	if err := ps.noPendingPlan(); err != nil {
+		return nil, err
 	}
 
 	roots := make([]refKey, len(commits))

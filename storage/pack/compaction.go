@@ -54,6 +54,9 @@ type compactionGroup struct {
 // CompactReport summarizes one Compact. Alongside an error it counts what
 // the compaction finished before it stopped.
 type CompactReport struct {
+	// Waiting is the generation whose published plan has not been
+	// rewritten yet; a compaction that waits does nothing else.
+	Waiting uint64
 	// Candidates counts the small committed archives Compact found, and
 	// CandidateBytes what they take up; it merges them only once they add
 	// up to a batch or are more than MinimumCandidates.
@@ -81,6 +84,10 @@ type CompactReport struct {
 
 // Summary renders the report as a line for a log or an operator.
 func (r *CompactReport) Summary() string {
+	if r.Waiting > 0 {
+		return fmt.Sprintf("Compaction waits for the rewrite of generation %d", r.Waiting)
+	}
+
 	if r.Rewritten == 0 {
 		return fmt.Sprintf("Compaction merged nothing: %d small archives (%s)", r.Candidates, humanize.Bytes(r.CandidateBytes))
 	}
@@ -95,12 +102,23 @@ func (r *CompactReport) Summary() string {
 // returns what it did when it is done. It writes blobs and the other
 // objects into archives of their own, and what the candidates' last mark
 // expected to die about the same time together, each too large to be
-// merged again unless the candidates held too little of it.
+// merged again unless the candidates held too little of it. While a
+// published plan waits for its rewrite it does nothing and names the plan's
+// generation in Waiting.
 func (ps *PackStorage) Compact(ctx context.Context) (*CompactReport, error) {
 	started := time.Now()
 
 	ps.compactorMtx.Lock()
 	defer ps.compactorMtx.Unlock()
+
+	pending, err := ps.PendingPlans()
+	if err != nil {
+		return nil, errors.Wrap(err, "listing published plans")
+	}
+
+	if len(pending) > 0 {
+		return &CompactReport{Waiting: pending[0], Duration: time.Since(started)}, nil
+	}
 
 	group := &compactionGroup{}
 

@@ -27,14 +27,33 @@ type RepairReport struct {
 // Repair scrubs the store and rewrites every archive holding damage,
 // leaving the corrupt records behind. Objects an intact copy exists for
 // survive the pass; the rest are gone from the store, so a later backup
-// stores them again instead of finding them present.
+// stores them again instead of finding them present. It fails while a
+// published plan waits for its rewrite.
 func (ps *PackStorage) Repair(ctx context.Context) (*RepairReport, error) {
+	if err := ps.noPendingPlan(); err != nil {
+		return nil, err
+	}
+
 	report, err := ps.Scrub(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	return ps.repair(ctx, report)
+}
+
+// noPendingPlan fails while a published plan waits for its rewrite.
+func (ps *PackStorage) noPendingPlan() error {
+	pending, err := ps.PendingPlans()
+	if err != nil {
+		return errors.Wrap(err, "listing published plans")
+	}
+
+	if len(pending) > 0 {
+		return errors.Errorf("the plan of generation %d waits for its rewrite", pending[0])
+	}
+
+	return nil
 }
 
 func (ps *PackStorage) repair(ctx context.Context, scrub *ScrubReport) (*RepairReport, error) {
@@ -110,7 +129,10 @@ func (ps *PackStorage) repair(ctx context.Context, scrub *ScrubReport) (*RepairR
 	}
 
 	ps.compactorMtx.Lock()
-	err := ps.compactGroup(ctx, group)
+	err := ps.noPendingPlan()
+	if err == nil {
+		err = ps.compactGroup(ctx, group)
+	}
 	ps.compactorMtx.Unlock()
 
 	if err != nil {
