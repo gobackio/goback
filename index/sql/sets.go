@@ -193,7 +193,7 @@ func (x *Index) BeginCommit(ctx context.Context, name string) (*backup.CommitGra
 		return nil, err
 	}
 
-	grant.Rescan, grant.Damaged, err = x.damage(ctx, s)
+	grant.Rescan, grant.Damaged, err = x.grantDamage(ctx, s.ID)
 	if err != nil {
 		return nil, err
 	}

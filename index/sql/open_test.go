@@ -289,6 +289,7 @@ func TestPostgres(t *testing.T) {
 		"DeletedSetNameTakesANewSet":       TestTheNameOfADeletedSetTakesANewSet,
 		"PruneRetriedAfterAFailure":        TestARetirementRetriesThePruneOfASetWhosePruneFailed,
 		"RetirementFarPastTheLastRun":      TestARetirementFarPastTheLastRunRetiresNothing,
+		"DamageClearedUpToTheGrant":        TestACommitClearsOnlyTheDamageFoundBeforeTheGrantOfItsSet,
 	} {
 		t.Run(name, test)
 	}

@@ -44,6 +44,8 @@ const (
 	FieldSizesDigest = "sizes_digest"
 	// FieldPrunePendingSince holds the string denoting the prune_pending_since field in the database.
 	FieldPrunePendingSince = "prune_pending_since"
+	// FieldGrantedAt holds the string denoting the granted_at field in the database.
+	FieldGrantedAt = "granted_at"
 	// EdgeFiles holds the string denoting the files edge name in mutations.
 	EdgeFiles = "files"
 	// EdgeTrees holds the string denoting the trees edge name in mutations.
@@ -102,6 +104,7 @@ var Columns = []string{
 	FieldUniqueSize,
 	FieldSizesDigest,
 	FieldPrunePendingSince,
+	FieldGrantedAt,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -226,6 +229,11 @@ func ByUniqueSize(opts ...sql.OrderTermOption) OrderOption {
 // ByPrunePendingSince orders the results by the prune_pending_since field.
 func ByPrunePendingSince(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPrunePendingSince, opts...).ToFunc()
+}
+
+// ByGrantedAt orders the results by the granted_at field.
+func ByGrantedAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldGrantedAt, opts...).ToFunc()
 }
 
 // ByFilesCount orders the results by files count.

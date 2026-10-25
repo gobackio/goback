@@ -343,6 +343,26 @@ func (_u *SetUpdate) ClearPrunePendingSince() *SetUpdate {
 	return _u
 }
 
+// SetGrantedAt sets the "granted_at" field.
+func (_u *SetUpdate) SetGrantedAt(v time.Time) *SetUpdate {
+	_u.mutation.SetGrantedAt(v)
+	return _u
+}
+
+// SetNillableGrantedAt sets the "granted_at" field if the given value is not nil.
+func (_u *SetUpdate) SetNillableGrantedAt(v *time.Time) *SetUpdate {
+	if v != nil {
+		_u.SetGrantedAt(*v)
+	}
+	return _u
+}
+
+// ClearGrantedAt clears the value of the "granted_at" field.
+func (_u *SetUpdate) ClearGrantedAt() *SetUpdate {
+	_u.mutation.ClearGrantedAt()
+	return _u
+}
+
 // AddFileIDs adds the "files" edge to the File entity by IDs.
 func (_u *SetUpdate) AddFileIDs(ids ...int) *SetUpdate {
 	_u.mutation.AddFileIDs(ids...)
@@ -636,6 +656,12 @@ func (_u *SetUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.PrunePendingSinceCleared() {
 		_spec.ClearField(set.FieldPrunePendingSince, field.TypeTime)
+	}
+	if value, ok := _u.mutation.GrantedAt(); ok {
+		_spec.SetField(set.FieldGrantedAt, field.TypeTime, value)
+	}
+	if _u.mutation.GrantedAtCleared() {
+		_spec.ClearField(set.FieldGrantedAt, field.TypeTime)
 	}
 	if _u.mutation.FilesCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1148,6 +1174,26 @@ func (_u *SetUpdateOne) ClearPrunePendingSince() *SetUpdateOne {
 	return _u
 }
 
+// SetGrantedAt sets the "granted_at" field.
+func (_u *SetUpdateOne) SetGrantedAt(v time.Time) *SetUpdateOne {
+	_u.mutation.SetGrantedAt(v)
+	return _u
+}
+
+// SetNillableGrantedAt sets the "granted_at" field if the given value is not nil.
+func (_u *SetUpdateOne) SetNillableGrantedAt(v *time.Time) *SetUpdateOne {
+	if v != nil {
+		_u.SetGrantedAt(*v)
+	}
+	return _u
+}
+
+// ClearGrantedAt clears the value of the "granted_at" field.
+func (_u *SetUpdateOne) ClearGrantedAt() *SetUpdateOne {
+	_u.mutation.ClearGrantedAt()
+	return _u
+}
+
 // AddFileIDs adds the "files" edge to the File entity by IDs.
 func (_u *SetUpdateOne) AddFileIDs(ids ...int) *SetUpdateOne {
 	_u.mutation.AddFileIDs(ids...)
@@ -1471,6 +1517,12 @@ func (_u *SetUpdateOne) sqlSave(ctx context.Context) (_node *Set, err error) {
 	}
 	if _u.mutation.PrunePendingSinceCleared() {
 		_spec.ClearField(set.FieldPrunePendingSince, field.TypeTime)
+	}
+	if value, ok := _u.mutation.GrantedAt(); ok {
+		_spec.SetField(set.FieldGrantedAt, field.TypeTime, value)
+	}
+	if _u.mutation.GrantedAtCleared() {
+		_spec.ClearField(set.FieldGrantedAt, field.TypeTime)
 	}
 	if _u.mutation.FilesCleared() {
 		edge := &sqlgraph.EdgeSpec{

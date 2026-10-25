@@ -569,7 +569,7 @@ func (x *Index) applyCommit(ctx context.Context, commit *proto.Commit, ref *prot
 
 		steps.Lap("row")
 
-		err = x.clearDamage(ctx, tx, setID, commit.Partial, commit.GetScanStartNs())
+		err = x.clearDamage(ctx, tx, setID, commit.Partial)
 		if err != nil {
 			return err
 		}

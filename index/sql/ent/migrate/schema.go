@@ -372,6 +372,7 @@ var (
 		{Name: "unique_size", Type: field.TypeInt64, Nullable: true},
 		{Name: "sizes_digest", Type: field.TypeBytes, Nullable: true},
 		{Name: "prune_pending_since", Type: field.TypeTime, Nullable: true},
+		{Name: "granted_at", Type: field.TypeTime, Nullable: true},
 	}
 	// SetsTable holds the schema information for the "sets" table.
 	SetsTable = &schema.Table{

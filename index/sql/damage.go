@@ -90,13 +90,6 @@ func (x *Index) PathsOfFiles(ctx context.Context, refs []*proto.Ref) ([]backup.F
 // so the next backup reads them again. An unknown set is ignored, since a
 // set that is gone has nothing to repair.
 func (x *Index) MarkDamaged(ctx context.Context, setID int64, paths []string) error {
-	exists, err := x.client.Set.Query().Where(set.ID(setID)).Exist(ctx)
-	if err != nil || !exists {
-		return err
-	}
-
-	now := x.now()
-
 	// one statement must not name a row twice
 	seen := make(map[string]bool, len(paths))
 	unique := make([]string, 0, len(paths))
@@ -107,26 +100,43 @@ func (x *Index) MarkDamaged(ctx context.Context, setID int64, paths []string) er
 		}
 	}
 
-	return inBatches(unique, func(batch []string) error {
-		builders := make([]*ent.DamagedPathCreate, len(batch))
-		for i, path := range batch {
-			builders[i] = x.client.DamagedPath.Create().SetSetID(setID).SetPath(path).SetFoundAt(now)
+	return x.tx(ctx, func(tx *ent.Tx) error {
+		s, err := forUpdate(x, tx.Set.Query().Where(set.ID(setID))).Only(ctx)
+		if ent.IsNotFound(err) {
+			return nil
 		}
 
-		err := x.client.DamagedPath.CreateBulk(builders...).OnConflictColumns(damagedpath.FieldSetID, damagedpath.FieldPath).
-			UpdateFoundAt().Exec(ctx)
 		if err != nil {
-			return fmt.Errorf("marking %d paths of set %d damaged: %w", len(batch), setID, err)
+			return err
 		}
 
-		return nil
+		// whatever the clocks say, damage found after a grant is newer than it
+		found := x.now()
+		if s.GrantedAt != nil && !found.After(*s.GrantedAt) {
+			found = s.GrantedAt.Add(time.Millisecond)
+		}
+
+		return inBatches(unique, func(batch []string) error {
+			builders := make([]*ent.DamagedPathCreate, len(batch))
+			for i, path := range batch {
+				builders[i] = tx.DamagedPath.Create().SetSetID(setID).SetPath(path).SetFoundAt(found)
+			}
+
+			err := tx.DamagedPath.CreateBulk(builders...).OnConflictColumns(damagedpath.FieldSetID, damagedpath.FieldPath).
+				UpdateFoundAt().Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("marking %d paths of set %d damaged: %w", len(batch), setID, err)
+			}
+
+			return nil
+		})
 	})
 }
 
 // MarkRescan records that a whole set must be read again, for damage no
 // path could be resolved for.
 func (x *Index) MarkRescan(ctx context.Context, setID int64) error {
-	n, err := x.client.Set.Update().Where(set.ID(setID)).SetRescan(true).Save(ctx)
+	n, err := x.client.Set.Update().Where(set.ID(setID)).SetRescan(true).ClearGrantedAt().Save(ctx)
 	if err != nil {
 		return err
 	}
@@ -138,29 +148,43 @@ func (x *Index) MarkRescan(ctx context.Context, setID int64) error {
 	return nil
 }
 
-// damage returns what a run on the set must read again regardless of what
-// its change detection says.
-func (x *Index) damage(ctx context.Context, s *ent.Set) (rescan bool, paths []string, err error) {
-	if s.Rescan {
-		return true, nil, nil
-	}
+// grantDamage returns what a run on the set must read again regardless of
+// what its change detection says, and records when it was granted.
+func (x *Index) grantDamage(ctx context.Context, setID int64) (rescan bool, paths []string, err error) {
+	err = x.tx(ctx, func(tx *ent.Tx) error {
+		s, err := x.lockSet(ctx, tx, setID)
+		if err != nil {
+			return err
+		}
 
-	rows, err := x.client.DamagedPath.Query().Where(damagedpath.SetID(s.ID)).
-		Order(ent.Asc(damagedpath.FieldPath)).All(ctx)
-	if err != nil {
-		return false, nil, err
-	}
+		rescan, paths = s.Rescan, nil
+		granted := x.now()
 
-	for _, row := range rows {
-		paths = append(paths, row.Path)
-	}
+		rows, err := tx.DamagedPath.Query().Where(damagedpath.SetID(setID)).Order(ent.Asc(damagedpath.FieldPath)).All(ctx)
+		if err != nil {
+			return err
+		}
 
-	return false, paths, nil
+		for _, row := range rows {
+			if !rescan {
+				paths = append(paths, row.Path)
+			}
+
+			if row.FoundAt.After(granted) {
+				granted = row.FoundAt
+			}
+		}
+
+		return tx.Set.UpdateOneID(setID).SetGrantedAt(granted).Exec(ctx)
+	})
+
+	return rescan, paths, err
 }
 
-// clearDamage forgets what a completed run has read again. A checkpoint
-// leaves it, because it did not cover the whole set.
-func (x *Index) clearDamage(ctx context.Context, tx *ent.Tx, setID int64, partial bool, scanStart int64) error {
+// clearDamage forgets what a completed run has read again: what the set's
+// last grant named, once. A checkpoint leaves it, because it did not cover
+// the whole set.
+func (x *Index) clearDamage(ctx context.Context, tx *ent.Tx, setID int64, partial bool) error {
 	if partial {
 		return nil
 	}
@@ -170,23 +194,20 @@ func (x *Index) clearDamage(ctx context.Context, tx *ent.Tx, setID int64, partia
 		return err
 	}
 
-	if s.Rescan {
-		err = tx.Set.UpdateOneID(setID).SetRescan(false).Exec(ctx)
+	if s.GrantedAt != nil {
+		update := tx.Set.UpdateOneID(setID).ClearGrantedAt()
+		if s.Rescan {
+			update.SetRescan(false)
+		}
+
+		if err := update.Exec(ctx); err != nil {
+			return err
+		}
+
+		_, err = tx.DamagedPath.Delete().Where(damagedpath.SetID(setID), damagedpath.FoundAtLTE(*s.GrantedAt)).Exec(ctx)
 		if err != nil {
 			return err
 		}
-	}
-
-	found := x.now()
-	if scanStart > 0 {
-		found = time.Unix(0, scanStart).UTC()
-	}
-
-	// damage found after this run started is not covered by it
-	_, err = tx.DamagedPath.Delete().
-		Where(damagedpath.SetID(setID), damagedpath.FoundAtLTE(found)).Exec(ctx)
-	if err != nil {
-		return err
 	}
 
 	// the run stored the open versions again, so what was lost of them is

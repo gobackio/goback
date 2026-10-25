@@ -43,6 +43,9 @@ func (Set) Fields() []ent.Field {
 		// when the oldest tombstone whose refs and rows retirement has not
 		// pruned yet was marked
 		field.Time("prune_pending_since").Optional().Nillable(),
+		// when the set's last grant was issued; damage found later is newer,
+		// and the commit after it clears only older damage
+		field.Time("granted_at").Optional().Nillable(),
 	}
 }
 

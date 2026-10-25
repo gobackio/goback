@@ -7661,6 +7661,7 @@ type SetMutation struct {
 	addunique_size             *int64
 	sizes_digest               *[]byte
 	prune_pending_since        *time.Time
+	granted_at                 *time.Time
 	clearedFields              map[string]struct{}
 	files                      map[int]struct{}
 	removedfiles               map[int]struct{}
@@ -8600,6 +8601,55 @@ func (m *SetMutation) ResetPrunePendingSince() {
 	delete(m.clearedFields, set.FieldPrunePendingSince)
 }
 
+// SetGrantedAt sets the "granted_at" field.
+func (m *SetMutation) SetGrantedAt(t time.Time) {
+	m.granted_at = &t
+}
+
+// GrantedAt returns the value of the "granted_at" field in the mutation.
+func (m *SetMutation) GrantedAt() (r time.Time, exists bool) {
+	v := m.granted_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGrantedAt returns the old "granted_at" field's value of the Set entity.
+// If the Set object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SetMutation) OldGrantedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGrantedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGrantedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGrantedAt: %w", err)
+	}
+	return oldValue.GrantedAt, nil
+}
+
+// ClearGrantedAt clears the value of the "granted_at" field.
+func (m *SetMutation) ClearGrantedAt() {
+	m.granted_at = nil
+	m.clearedFields[set.FieldGrantedAt] = struct{}{}
+}
+
+// GrantedAtCleared returns if the "granted_at" field was cleared in this mutation.
+func (m *SetMutation) GrantedAtCleared() bool {
+	_, ok := m.clearedFields[set.FieldGrantedAt]
+	return ok
+}
+
+// ResetGrantedAt resets all changes to the "granted_at" field.
+func (m *SetMutation) ResetGrantedAt() {
+	m.granted_at = nil
+	delete(m.clearedFields, set.FieldGrantedAt)
+}
+
 // AddFileIDs adds the "files" edge to the File entity by ids.
 func (m *SetMutation) AddFileIDs(ids ...int) {
 	if m.files == nil {
@@ -8850,7 +8900,7 @@ func (m *SetMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SetMutation) Fields() []string {
-	fields := make([]string, 0, 15)
+	fields := make([]string, 0, 16)
 	if m.name != nil {
 		fields = append(fields, set.FieldName)
 	}
@@ -8896,6 +8946,9 @@ func (m *SetMutation) Fields() []string {
 	if m.prune_pending_since != nil {
 		fields = append(fields, set.FieldPrunePendingSince)
 	}
+	if m.granted_at != nil {
+		fields = append(fields, set.FieldGrantedAt)
+	}
 	return fields
 }
 
@@ -8934,6 +8987,8 @@ func (m *SetMutation) Field(name string) (ent.Value, bool) {
 		return m.SizesDigest()
 	case set.FieldPrunePendingSince:
 		return m.PrunePendingSince()
+	case set.FieldGrantedAt:
+		return m.GrantedAt()
 	}
 	return nil, false
 }
@@ -8973,6 +9028,8 @@ func (m *SetMutation) OldField(ctx context.Context, name string) (ent.Value, err
 		return m.OldSizesDigest(ctx)
 	case set.FieldPrunePendingSince:
 		return m.OldPrunePendingSince(ctx)
+	case set.FieldGrantedAt:
+		return m.OldGrantedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown Set field %s", name)
 }
@@ -9086,6 +9143,13 @@ func (m *SetMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetPrunePendingSince(v)
+		return nil
+	case set.FieldGrantedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGrantedAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Set field %s", name)
@@ -9234,6 +9298,9 @@ func (m *SetMutation) ClearedFields() []string {
 	if m.FieldCleared(set.FieldPrunePendingSince) {
 		fields = append(fields, set.FieldPrunePendingSince)
 	}
+	if m.FieldCleared(set.FieldGrantedAt) {
+		fields = append(fields, set.FieldGrantedAt)
+	}
 	return fields
 }
 
@@ -9277,6 +9344,9 @@ func (m *SetMutation) ClearField(name string) error {
 		return nil
 	case set.FieldPrunePendingSince:
 		m.ClearPrunePendingSince()
+		return nil
+	case set.FieldGrantedAt:
+		m.ClearGrantedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown Set nullable field %s", name)
@@ -9330,6 +9400,9 @@ func (m *SetMutation) ResetField(name string) error {
 		return nil
 	case set.FieldPrunePendingSince:
 		m.ResetPrunePendingSince()
+		return nil
+	case set.FieldGrantedAt:
+		m.ResetGrantedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown Set field %s", name)

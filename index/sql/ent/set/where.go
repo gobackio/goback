@@ -125,6 +125,11 @@ func PrunePendingSince(v time.Time) predicate.Set {
 	return predicate.Set(sql.FieldEQ(FieldPrunePendingSince, v))
 }
 
+// GrantedAt applies equality check predicate on the "granted_at" field. It's identical to GrantedAtEQ.
+func GrantedAt(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldEQ(FieldGrantedAt, v))
+}
+
 // NameEQ applies the EQ predicate on the "name" field.
 func NameEQ(v string) predicate.Set {
 	return predicate.Set(sql.FieldEQ(FieldName, v))
@@ -763,6 +768,56 @@ func PrunePendingSinceIsNil() predicate.Set {
 // PrunePendingSinceNotNil applies the NotNil predicate on the "prune_pending_since" field.
 func PrunePendingSinceNotNil() predicate.Set {
 	return predicate.Set(sql.FieldNotNull(FieldPrunePendingSince))
+}
+
+// GrantedAtEQ applies the EQ predicate on the "granted_at" field.
+func GrantedAtEQ(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldEQ(FieldGrantedAt, v))
+}
+
+// GrantedAtNEQ applies the NEQ predicate on the "granted_at" field.
+func GrantedAtNEQ(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldNEQ(FieldGrantedAt, v))
+}
+
+// GrantedAtIn applies the In predicate on the "granted_at" field.
+func GrantedAtIn(vs ...time.Time) predicate.Set {
+	return predicate.Set(sql.FieldIn(FieldGrantedAt, vs...))
+}
+
+// GrantedAtNotIn applies the NotIn predicate on the "granted_at" field.
+func GrantedAtNotIn(vs ...time.Time) predicate.Set {
+	return predicate.Set(sql.FieldNotIn(FieldGrantedAt, vs...))
+}
+
+// GrantedAtGT applies the GT predicate on the "granted_at" field.
+func GrantedAtGT(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldGT(FieldGrantedAt, v))
+}
+
+// GrantedAtGTE applies the GTE predicate on the "granted_at" field.
+func GrantedAtGTE(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldGTE(FieldGrantedAt, v))
+}
+
+// GrantedAtLT applies the LT predicate on the "granted_at" field.
+func GrantedAtLT(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldLT(FieldGrantedAt, v))
+}
+
+// GrantedAtLTE applies the LTE predicate on the "granted_at" field.
+func GrantedAtLTE(v time.Time) predicate.Set {
+	return predicate.Set(sql.FieldLTE(FieldGrantedAt, v))
+}
+
+// GrantedAtIsNil applies the IsNil predicate on the "granted_at" field.
+func GrantedAtIsNil() predicate.Set {
+	return predicate.Set(sql.FieldIsNull(FieldGrantedAt))
+}
+
+// GrantedAtNotNil applies the NotNil predicate on the "granted_at" field.
+func GrantedAtNotNil() predicate.Set {
+	return predicate.Set(sql.FieldNotNull(FieldGrantedAt))
 }
 
 // HasFiles applies the HasEdge predicate on the "files" edge.

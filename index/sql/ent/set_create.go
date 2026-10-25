@@ -220,6 +220,20 @@ func (_c *SetCreate) SetNillablePrunePendingSince(v *time.Time) *SetCreate {
 	return _c
 }
 
+// SetGrantedAt sets the "granted_at" field.
+func (_c *SetCreate) SetGrantedAt(v time.Time) *SetCreate {
+	_c.mutation.SetGrantedAt(v)
+	return _c
+}
+
+// SetNillableGrantedAt sets the "granted_at" field if the given value is not nil.
+func (_c *SetCreate) SetNillableGrantedAt(v *time.Time) *SetCreate {
+	if v != nil {
+		_c.SetGrantedAt(*v)
+	}
+	return _c
+}
+
 // SetID sets the "id" field.
 func (_c *SetCreate) SetID(v int64) *SetCreate {
 	_c.mutation.SetID(v)
@@ -453,6 +467,10 @@ func (_c *SetCreate) createSpec() (*Set, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.PrunePendingSince(); ok {
 		_spec.SetField(set.FieldPrunePendingSince, field.TypeTime, value)
 		_node.PrunePendingSince = &value
+	}
+	if value, ok := _c.mutation.GrantedAt(); ok {
+		_spec.SetField(set.FieldGrantedAt, field.TypeTime, value)
+		_node.GrantedAt = &value
 	}
 	if nodes := _c.mutation.FilesIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -852,6 +870,24 @@ func (u *SetUpsert) ClearPrunePendingSince() *SetUpsert {
 	return u
 }
 
+// SetGrantedAt sets the "granted_at" field.
+func (u *SetUpsert) SetGrantedAt(v time.Time) *SetUpsert {
+	u.Set(set.FieldGrantedAt, v)
+	return u
+}
+
+// UpdateGrantedAt sets the "granted_at" field to the value that was provided on create.
+func (u *SetUpsert) UpdateGrantedAt() *SetUpsert {
+	u.SetExcluded(set.FieldGrantedAt)
+	return u
+}
+
+// ClearGrantedAt clears the value of the "granted_at" field.
+func (u *SetUpsert) ClearGrantedAt() *SetUpsert {
+	u.SetNull(set.FieldGrantedAt)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
 // Using this option is equivalent to using:
 //
@@ -1226,6 +1262,27 @@ func (u *SetUpsertOne) UpdatePrunePendingSince() *SetUpsertOne {
 func (u *SetUpsertOne) ClearPrunePendingSince() *SetUpsertOne {
 	return u.Update(func(s *SetUpsert) {
 		s.ClearPrunePendingSince()
+	})
+}
+
+// SetGrantedAt sets the "granted_at" field.
+func (u *SetUpsertOne) SetGrantedAt(v time.Time) *SetUpsertOne {
+	return u.Update(func(s *SetUpsert) {
+		s.SetGrantedAt(v)
+	})
+}
+
+// UpdateGrantedAt sets the "granted_at" field to the value that was provided on create.
+func (u *SetUpsertOne) UpdateGrantedAt() *SetUpsertOne {
+	return u.Update(func(s *SetUpsert) {
+		s.UpdateGrantedAt()
+	})
+}
+
+// ClearGrantedAt clears the value of the "granted_at" field.
+func (u *SetUpsertOne) ClearGrantedAt() *SetUpsertOne {
+	return u.Update(func(s *SetUpsert) {
+		s.ClearGrantedAt()
 	})
 }
 
@@ -1769,6 +1826,27 @@ func (u *SetUpsertBulk) UpdatePrunePendingSince() *SetUpsertBulk {
 func (u *SetUpsertBulk) ClearPrunePendingSince() *SetUpsertBulk {
 	return u.Update(func(s *SetUpsert) {
 		s.ClearPrunePendingSince()
+	})
+}
+
+// SetGrantedAt sets the "granted_at" field.
+func (u *SetUpsertBulk) SetGrantedAt(v time.Time) *SetUpsertBulk {
+	return u.Update(func(s *SetUpsert) {
+		s.SetGrantedAt(v)
+	})
+}
+
+// UpdateGrantedAt sets the "granted_at" field to the value that was provided on create.
+func (u *SetUpsertBulk) UpdateGrantedAt() *SetUpsertBulk {
+	return u.Update(func(s *SetUpsert) {
+		s.UpdateGrantedAt()
+	})
+}
+
+// ClearGrantedAt clears the value of the "granted_at" field.
+func (u *SetUpsertBulk) ClearGrantedAt() *SetUpsertBulk {
+	return u.Update(func(s *SetUpsert) {
+		s.ClearGrantedAt()
 	})
 }
 

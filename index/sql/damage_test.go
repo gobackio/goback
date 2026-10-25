@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/index/sql/ent"
+	"github.com/gobackio/goback/index/sql/ent/damagedpath"
 	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
@@ -74,6 +76,74 @@ func TestARescanIsClearedByAFullRun(t *testing.T) {
 	grant, err = f.x.BeginCommit(ctx, "world")
 	require.NoError(t, err)
 	require.False(t, grant.Rescan)
+}
+
+func TestACommitClearsOnlyTheDamageFoundBeforeTheGrantOfItsSet(t *testing.T) {
+	f := newFixture(t)
+	ctx := f.ctx
+
+	f.commit("world", f.tree(f.file("a.txt", "one")), false)
+	world := f.setID("world")
+
+	damaged := func() []string {
+		rows, err := f.x.client.DamagedPath.Query().Order(ent.Asc(damagedpath.FieldPath)).All(ctx)
+		require.NoError(t, err)
+
+		var paths []string
+		for _, row := range rows {
+			paths = append(paths, row.Path)
+		}
+
+		return paths
+	}
+
+	// the agent's clock says its scan began after every mark
+	run := func(content string) {
+		obj := proto.NewObject(&proto.Commit{
+			Timestamp: f.clock.Unix(), Tree: f.tree(f.file("a.txt", content)).Ref(),
+			BackupSet: "world", AgentId: "node-1", ScanStartNs: f.clock.Add(time.Hour).UnixNano(),
+		})
+		require.NoError(t, f.x.Put(ctx, obj))
+		f.advance(time.Minute)
+	}
+
+	require.NoError(t, f.x.MarkDamaged(ctx, world, []string{"seen"}))
+	f.advance(time.Minute)
+
+	grant, err := f.x.BeginCommit(ctx, "world")
+	require.NoError(t, err)
+	require.Equal(t, []string{"seen"}, grant.Damaged)
+
+	require.NoError(t, f.x.MarkDamaged(ctx, world, []string{"same instant"}))
+	f.advance(time.Minute)
+	require.NoError(t, f.x.MarkDamaged(ctx, world, []string{"later"}))
+	f.advance(time.Minute)
+
+	run("two")
+	require.Equal(t, []string{"later", "same instant"}, damaged())
+
+	_, err = f.x.BeginCommit(ctx, "world")
+	require.NoError(t, err)
+	require.NoError(t, f.x.MarkRescan(ctx, world))
+	run("three")
+
+	grant, err = f.x.BeginCommit(ctx, "world")
+	require.NoError(t, err)
+	require.True(t, grant.Rescan, "the rescan asked for after the grant stays")
+	require.Equal(t, []string{"later", "same instant"}, damaged())
+
+	run("four")
+
+	grant, err = f.x.BeginCommit(ctx, "world")
+	require.NoError(t, err)
+	require.False(t, grant.Rescan)
+	require.Empty(t, grant.Damaged, "a run under a grant that held them clears them")
+	run("five")
+
+	require.NoError(t, f.x.MarkDamaged(ctx, world, []string{"after"}))
+	run("six")
+	f.commit("world", f.tree(f.file("a.txt", "seven")), false)
+	require.Equal(t, []string{"after"}, damaged(), "one grant clears once")
 }
 
 func TestThePathsOfMoreFilesThanOneStatementNamesComeInPathOrder(t *testing.T) {
