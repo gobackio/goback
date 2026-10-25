@@ -21,21 +21,22 @@ func cloudOnly(stat *proto.FileInfo) bool {
 	return stat.GetType() == proto.NodeType_NODE_FILE && stat.GetAttributes()&recallAttributes != 0
 }
 
-// descriptorsKept bounds the security descriptors a walk remembers the
-// stored ref of; beyond it, each further one is stored again.
-const descriptorsKept = 10_000
+// contentsKept bounds the security descriptors and extended attribute
+// values a walk remembers the stored ref of; beyond it, each further one is
+// stored again.
+const contentsKept = 10_000
 
-// descriptors remembers where a walk stored each security descriptor, and
-// which ones the base commit holds, so the many entries that share one
-// store it once.
-type descriptors struct {
+// sharedContents remembers where a walk stored each security descriptor
+// and extended attribute value, and which ones the base commit holds, so
+// the many entries that share one store it once.
+type sharedContents struct {
 	mtx  sync.Mutex
 	refs map[string]*proto.Ref
 	held map[string]bool
 }
 
-// hold notes a descriptor the base commit refers to.
-func (d *descriptors) hold(ref *proto.Ref) {
+// hold notes a content the base commit refers to.
+func (d *sharedContents) hold(ref *proto.Ref) {
 	if ref == nil {
 		return
 	}
@@ -47,15 +48,15 @@ func (d *descriptors) hold(ref *proto.Ref) {
 		d.held = map[string]bool{}
 	}
 
-	if len(d.held) < descriptorsKept {
+	if len(d.held) < contentsKept {
 		d.held[string(ref.Hash)] = true
 	}
 }
 
 // stored returns the ref sd is held or was stored under, storing it with
-// put the first time. Concurrent callers with the same descriptor wait for
-// one put.
-func (d *descriptors) stored(sd []byte, ref *proto.Ref, put func() (*proto.Ref, error)) (*proto.Ref, error) {
+// put the first time. Concurrent callers with the same content wait for one
+// put.
+func (d *sharedContents) stored(sd []byte, ref *proto.Ref, put func() (*proto.Ref, error)) (*proto.Ref, error) {
 	d.mtx.Lock()
 	defer d.mtx.Unlock()
 
@@ -76,18 +77,23 @@ func (d *descriptors) stored(sd []byte, ref *proto.Ref, put func() (*proto.Ref, 
 		d.refs = map[string]*proto.Ref{}
 	}
 
-	if len(d.refs) < descriptorsKept {
+	if len(d.refs) < contentsKept {
 		d.refs[string(sd)] = stored
 	}
 
 	return stored, nil
 }
 
-// metadata records the security descriptor and streams of the entry at
-// path into stat. It takes them from the base node when the size, mtime
-// and change time say nothing changed and the base node holds a security
-// descriptor, and keeps the base node's for what it cannot read.
+// metadata records the extended attributes and flags, security descriptor
+// and streams of the entry at path into stat. It takes the descriptor and
+// streams from the base node when the size, mtime and change time say
+// nothing changed and the base node holds a security descriptor, and keeps
+// the base node's for what it cannot read.
 func (w *Walker) metadata(ctx context.Context, path, rel string, stat *proto.FileInfo, baseNode *proto.TreeNode) error {
+	if err := w.extended(ctx, path, rel, stat, baseNode); err != nil {
+		return err
+	}
+
 	fsys, ok := w.fs().(MetadataFS)
 	if !ok {
 		return nil
@@ -99,7 +105,7 @@ func (w *Walker) metadata(ctx context.Context, path, rel string, stat *proto.Fil
 	}
 
 	if !w.lost(rel) {
-		w.descriptors.hold(base.GetSecurity())
+		w.contents.hold(base.GetSecurity())
 	}
 
 	if !w.Verify && !w.lost(rel) && base.GetCtimeNs() != 0 && base.GetSecurity() != nil &&
@@ -115,7 +121,7 @@ func (w *Walker) metadata(ctx context.Context, path, rel string, stat *proto.Fil
 		atomic.AddInt64(&w.result.Unreadable, 1)
 		stat.Security = base.GetSecurity()
 	case len(sd) > 0:
-		if stat.Security, err = w.putDescriptor(ctx, sd); err != nil {
+		if stat.Security, err = w.putShared(ctx, sd); err != nil {
 			return err
 		}
 	}
@@ -176,15 +182,15 @@ func (w *Walker) placeholder(ctx context.Context, path, rel string, stat *proto.
 	return &proto.TreeNode{Stat: stat, Ref: ref}, nil
 }
 
-// putDescriptor stores sd unless this run stored it already or the base
-// commit holds it.
-func (w *Walker) putDescriptor(ctx context.Context, sd []byte) (*proto.Ref, error) {
+// putShared stores sd, a security descriptor or an extended attribute
+// value, unless this run stored it already or the base commit holds it.
+func (w *Walker) putShared(ctx context.Context, sd []byte) (*proto.Ref, error) {
 	ref, err := PutFile(ctx, discardStore{}, w.Key, int64(len(sd)), bytes.NewReader(sd))
 	if err != nil {
 		return nil, err
 	}
 
-	return w.descriptors.stored(sd, ref, func() (*proto.Ref, error) {
+	return w.contents.stored(sd, ref, func() (*proto.Ref, error) {
 		return w.putContent(ctx, int64(len(sd)), bytes.NewReader(sd))
 	})
 }

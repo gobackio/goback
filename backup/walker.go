@@ -200,8 +200,11 @@ type Walker struct {
 	dirSlots chan struct{}
 	result   WalkResult
 	sent     *sentSet
-	// descriptors is where this run stored each security descriptor
-	descriptors *descriptors
+	// contents is where this run stored each security descriptor and
+	// extended attribute value
+	contents *sharedContents
+	// links is where this run first found each file with more than one link
+	links *hardLinks
 	// emptyFile stores the empty file once a run, for placeholders
 	emptyFile func() (*proto.Ref, error)
 	// local is the root a walk of the local disk lists and opens what it
@@ -553,7 +556,8 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 	w.result = WalkResult{}
 	w.foundAll.Store(false)
 	w.sent = newSentSet()
-	w.descriptors = &descriptors{}
+	w.contents = &sharedContents{}
+	w.links = &hardLinks{}
 	w.emptyFile = sync.OnceValues(func() (*proto.Ref, error) {
 		return w.putContent(w.session, 0, bytes.NewReader(nil))
 	})
@@ -1061,13 +1065,42 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, listed os.FileInf
 			atomic.AddInt64(&w.result.Bytes, info.Size())
 			index := i
 
+			first, mine := w.claim(info, childRel)
+			if first != nil && !mine {
+				fileCtx := groupCtx
+				group.Go(func() error {
+					node, err := w.linked(fileCtx, first, childPath, childRel, found.self, info, stat, baseNode)
+					if err != nil {
+						return err
+					}
+
+					mtx.Lock()
+					results[index] = node
+					mtx.Unlock()
+
+					if !nodeEqual(node, baseNode) {
+						markChanged()
+					}
+
+					return nil
+				})
+
+				continue
+			}
+
 			if w.reusable(ctx, childPath, childRel, found.self, info, stat, baseNode) {
 				atomic.AddInt64(&w.result.Reused, 1)
-				if err := w.metadata(ctx, childPath, childRel, stat, baseNode); err != nil {
+				err := w.metadata(ctx, childPath, childRel, stat, baseNode)
+				node := &proto.TreeNode{Stat: stat, Ref: baseNode.Ref}
+
+				if mine {
+					first.settle(node, err == nil)
+				}
+
+				if err != nil {
 					return nil, false, err
 				}
 
-				node := &proto.TreeNode{Stat: stat, Ref: baseNode.Ref}
 				results[index] = node
 				if !nodeEqual(node, baseNode) {
 					markChanged()
@@ -1081,6 +1114,12 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, listed os.FileInf
 				defer w.gate.Done()
 
 				node, err := w.backupFile(fileCtx, childPath, childRel, found.self, info, baseNode)
+				if mine {
+					// a node that is the base node is what the walk kept for a
+					// file it could not read
+					first.settle(node, err == nil && node != baseNode)
+				}
+
 				if err != nil {
 					return err
 				}
@@ -1726,6 +1765,9 @@ func nodeEqual(node, base *proto.TreeNode) bool {
 		a.GetReparseTag() == b.GetReparseTag() &&
 		a.GetSecurity().Equal(b.GetSecurity()) &&
 		streamsEqual(a.GetStreams(), b.GetStreams()) &&
+		streamsEqual(a.GetXattrs(), b.GetXattrs()) &&
+		a.GetLinuxFlags() == b.GetLinuxFlags() && a.GetDarwinFlags() == b.GetDarwinFlags() &&
+		bytes.Equal(a.GetHardLink(), b.GetHardLink()) &&
 		node.Ref.Equal(base.Ref)
 }
 

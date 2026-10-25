@@ -36,11 +36,19 @@ func (r *Restorer) streamFile(ctx context.Context, fsys WriteFS, path string, st
 	}
 
 	if err == nil {
+		err = r.putXattrs(ctx, fsys, partial, stat)
+	}
+
+	if err == nil {
 		err = setMeta(ctx, fsys, partial, mode, mtimeOf(stat))
 	}
 
 	if err == nil {
 		err = fsys.Rename(ctx, partial, path)
+	}
+
+	if err == nil {
+		err = r.putFlags(ctx, fsys, path, stat)
 	}
 
 	if err != nil {

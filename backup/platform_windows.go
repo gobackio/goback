@@ -69,6 +69,11 @@ func OwnerNames(os.FileInfo) (string, string) {
 	return "", ""
 }
 
+// linkID finds no hard links: a walk on Windows records none.
+func linkID(os.FileInfo) (fileID, bool) {
+	return fileID{}, false
+}
+
 func ownerIDs(os.FileInfo) (uint32, uint32) {
 	return 0, 0
 }

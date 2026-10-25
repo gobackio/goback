@@ -85,6 +85,9 @@ const (
 	OutcomeCloudOnly
 	// OutcomeLost means the entry was left out: the store lost its content.
 	OutcomeLost
+	// OutcomeLinked means the file was made a hard link to another file the
+	// restore wrote, as the backup recorded it.
+	OutcomeLinked
 )
 
 // A Hole is a range of a salvaged file that no source could fill; the
@@ -114,6 +117,8 @@ func (o Outcome) String() string {
 		return "cloud only"
 	case OutcomeLost:
 		return "lost"
+	case OutcomeLinked:
+		return "linked"
 	}
 
 	return "unknown"
@@ -142,6 +147,14 @@ type RestoreStats struct {
 	// recorded user or group has no account here and no id stands in.
 	Owned         int64 `json:"owned"`
 	OwnersLeftOut int64 `json:"owners_left_out"`
+	// XattrsLeftOut counts the extended attributes, and FlagsLeftOut the
+	// entries' file flags, that the tree or the restoring user could not
+	// set.
+	XattrsLeftOut int64 `json:"xattrs_left_out"`
+	FlagsLeftOut  int64 `json:"flags_left_out"`
+	// Linked counts the files made hard links to another file the restore
+	// wrote.
+	Linked int64 `json:"linked"`
 	// CloudOnly counts the files left out because their content was only
 	// in a cloud sync service when they were backed up.
 	CloudOnly int64 `json:"cloud_only"`
@@ -231,8 +244,8 @@ type Restorer struct {
 	// Owner leaves them to whoever runs it.
 	Owner Owner
 
-	stats       RestoreStats
-	descriptors restoredDescriptors
+	stats    RestoreStats
+	contents restoredContents
 	// local is the local disk the restore writes when FS is nil or LocalFS
 	local rootedFS
 
@@ -264,6 +277,9 @@ func (r *Restorer) Stats() RestoreStats {
 		StreamsLeftOut:       atomic.LoadInt64(&r.stats.StreamsLeftOut),
 		Owned:                atomic.LoadInt64(&r.stats.Owned),
 		OwnersLeftOut:        atomic.LoadInt64(&r.stats.OwnersLeftOut),
+		XattrsLeftOut:        atomic.LoadInt64(&r.stats.XattrsLeftOut),
+		FlagsLeftOut:         atomic.LoadInt64(&r.stats.FlagsLeftOut),
+		Linked:               atomic.LoadInt64(&r.stats.Linked),
 		CloudOnly:            atomic.LoadInt64(&r.stats.CloudOnly),
 		Lost:                 atomic.LoadInt64(&r.stats.Lost),
 		BytesFromDestination: atomic.LoadInt64(&r.stats.BytesFromDestination),
@@ -304,6 +320,8 @@ func (r *Restorer) countFile(ctx context.Context, outcome Outcome) {
 		atomic.AddInt64(&r.stats.Skipped, 1)
 	case OutcomeLost:
 		atomic.AddInt64(&r.stats.Lost, 1)
+	case OutcomeLinked:
+		atomic.AddInt64(&r.stats.Linked, 1)
 	}
 
 	restoreFiles.Add(ctx, 1, metric.WithAttributes(keyOutcome.String(outcome.String())))
@@ -592,6 +610,10 @@ func (r *Restorer) settle(ctx context.Context, fsys RandomWriteFS, tmp RandomFil
 	var mode os.FileMode
 	if err == nil {
 		mode, err = r.ownFile(ctx, fsys, partial, stat)
+	}
+
+	if err == nil {
+		err = r.putXattrs(ctx, fsys, partial, stat)
 	}
 
 	if err == nil {

@@ -21,11 +21,17 @@ func sealInfo(key *storekey.Key, parent []byte, info *proto.FileInfo) *proto.Fil
 	sealed.User = key.SealField(parent, storekey.FieldUser, info.User)
 	sealed.Group = key.SealField(parent, storekey.FieldGroup, info.Group)
 	sealed.LinkTarget = key.SealField(parent, storekey.FieldTarget, info.LinkTarget)
+	sealed.HardLink = key.SealField(parent, storekey.FieldHardLink, info.HardLink)
 
 	for _, stream := range sealed.Streams {
 		stream.Name = key.SealField(sealed.Name, storekey.FieldStream, stream.Name)
 	}
 	proto.SortStreams(sealed.Streams)
+
+	for _, xattr := range sealed.Xattrs {
+		xattr.Name = key.SealField(sealed.Name, storekey.FieldXattr, xattr.Name)
+	}
+	proto.SortStreams(sealed.Xattrs)
 
 	return sealed
 }
@@ -48,6 +54,7 @@ func openInfo(key *storekey.Key, parent []byte, info *proto.FileInfo) (*proto.Fi
 		{storekey.FieldUser, &opened.User, info.User},
 		{storekey.FieldGroup, &opened.Group, info.Group},
 		{storekey.FieldTarget, &opened.LinkTarget, info.LinkTarget},
+		{storekey.FieldHardLink, &opened.HardLink, info.HardLink},
 	}
 
 	for _, f := range fields {
@@ -64,6 +71,14 @@ func openInfo(key *storekey.Key, parent []byte, info *proto.FileInfo) (*proto.Fi
 		}
 	}
 	proto.SortStreams(opened.Streams)
+
+	for _, xattr := range opened.Xattrs {
+		xattr.Name, err = key.OpenField(info.Name, storekey.FieldXattr, xattr.Name)
+		if err != nil {
+			return nil, err
+		}
+	}
+	proto.SortStreams(opened.Xattrs)
 
 	return opened, nil
 }

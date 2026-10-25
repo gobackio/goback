@@ -45,6 +45,10 @@ type Mapper interface {
 	// field:Lost from:"-"
 	// field:Uid from:"-"
 	// field:Gid from:"-"
+	// field:Xattrs from:"-"
+	// field:LinuxFlags from:"-"
+	// field:DarwinFlags from:"-"
+	// field:HardLink from:"-"
 	FileInfo(in *ent.File) *proto.FileInfo
 
 	// field:Ref using:"Ref"

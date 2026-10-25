@@ -103,6 +103,17 @@ func TestCanonicalGoldenVectors(t *testing.T) {
 			}}),
 			payload: "0a3a0a140a016110a4031a0175300540019001e70798014612220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed1",
 		},
+		{
+			name: "tree with unix metadata",
+			object: NewObject(&Tree{Nodes: []*TreeNode{
+				{Stat: &FileInfo{
+					Name: []byte("a"), Mode: 0644, Size: 5, MtimeNs: 1,
+					Xattrs:     []*Stream{{Name: []byte("security.selinux"), Ref: part, Size: 4}, {Name: []byte("user.x"), Ref: part}},
+					LinuxFlags: 0x10, DarwinFlags: 0x2, HardLink: []byte("b/a"),
+				}, Ref: part},
+			}}),
+			payload: "0aa7010a80010a016110a40330054001a201380a1073656375726974792e73656c696e757812220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed11804a2012c0a06757365722e7812220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed1a80110b00102ba0103622f6112220a2037a680133bd09342f934afb8dd2c7d9e1b624da5f35e3a38adb103e37c055ed1",
+		},
 	}
 
 	for _, tc := range cases {
@@ -141,6 +152,8 @@ func TestCanonicalRejects(t *testing.T) {
 		"stream without ref": NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a"), Streams: []*Stream{{Name: []byte("x")}}}, Ref: good}}}),
 		"short security ref": NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a"), Security: &Ref{Hash: []byte("short")}}, Ref: good}}}),
 		"nameless node":      NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{}, Ref: good}}}),
+		"unsorted xattrs":    NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a"), Xattrs: []*Stream{{Name: []byte("y"), Ref: good}, {Name: []byte("x"), Ref: good}}}, Ref: good}}}),
+		"hard link on dir":   NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a"), Type: NodeType_NODE_DIRECTORY, HardLink: []byte("x")}, Ref: good}}}),
 		"link target on dir": NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a"), Type: NodeType_NODE_DIRECTORY, LinkTarget: []byte("x")}, Ref: good}}}),
 		"nodes and splits":   NewObject(&Tree{Nodes: []*TreeNode{{Stat: &FileInfo{Name: []byte("a")}, Ref: good}}, Splits: []*Ref{good}}),
 		"gap in parts":       NewObject(&File{Parts: []*FilePart{{Offset: 0, Length: 5, Ref: good}, {Offset: 6, Length: 1, Ref: good}}}),

@@ -56,6 +56,25 @@ type MetadataWriteFS interface {
 	SetAttributes(ctx context.Context, path string, birth time.Time, attributes uint32) error
 }
 
+// ExtendedWriteFS is a WriteFS that puts back what an ExtendedFS records.
+// LocalFS is one on Linux and macOS.
+type ExtendedWriteFS interface {
+	// SetXattr sets one extended attribute of the file or directory at
+	// path, replacing one of that name.
+	SetXattr(ctx context.Context, path, name string, value []byte) error
+	// SetFlags gives the file or directory at path the flags recorded for
+	// this platform, linux on Linux and darwin on macOS. It fails with an
+	// error matching errors.ErrUnsupported for flags of another platform.
+	SetFlags(ctx context.Context, path string, linux, darwin uint32) error
+}
+
+// LinkWriteFS is a WriteFS that makes hard links. LocalFS is one.
+type LinkWriteFS interface {
+	// Link makes path a hard link to the file at target. It fails with an
+	// error matching errors.ErrUnsupported where the tree holds none.
+	Link(ctx context.Context, target, path string) error
+}
+
 // OwnerWriteFS is a WriteFS whose entries take a Unix owner, as a
 // Restorer's Owner gives them. LocalFS is one on Unix.
 type OwnerWriteFS interface {
@@ -91,7 +110,10 @@ type RandomFile interface {
 	Close() error
 }
 
-var _ RandomWriteFS = LocalFS{}
+var (
+	_ RandomWriteFS = LocalFS{}
+	_ LinkWriteFS   = LocalFS{}
+)
 
 // Split implements WriteFS.
 func (LocalFS) Split(path string) (string, string) {
@@ -159,6 +181,11 @@ func (LocalFS) RemoveAll(_ context.Context, path string) error {
 // Symlink implements WriteFS.
 func (LocalFS) Symlink(_ context.Context, target, path string) error {
 	return unsupportedLink(os.Symlink(target, path))
+}
+
+// Link implements LinkWriteFS.
+func (LocalFS) Link(_ context.Context, target, path string) error {
+	return unsupportedLink(os.Link(target, path))
 }
 
 // unsupportedLink makes err, from making a link, match

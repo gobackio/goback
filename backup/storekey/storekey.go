@@ -51,6 +51,11 @@ const (
 	FieldTarget Field = "link_target"
 	// FieldStream is an alternate stream's name, sealed within its entry.
 	FieldStream Field = "stream"
+	// FieldXattr is an extended attribute's name, sealed within its entry.
+	FieldXattr Field = "xattr"
+	// FieldHardLink is the path of the file a hard link shares its content
+	// with.
+	FieldHardLink Field = "hard_link"
 )
 
 // Mode is the store policy's encryption requirement for new writes. An

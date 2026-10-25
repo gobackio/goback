@@ -50,6 +50,25 @@ type MetadataFS interface {
 	OpenStream(ctx context.Context, path, name string) (File, error)
 }
 
+// ExtendedFS is an FS whose files and directories carry extended
+// attributes and file flags, which a walk records with the entry. LocalFS
+// is one on Linux and macOS.
+type ExtendedFS interface {
+	// Extended reads the extended attributes, POSIX ACLs among them, and
+	// the file flags of the file or directory at path. It fails with an
+	// error matching errors.ErrUnsupported where the FS has none to read.
+	Extended(ctx context.Context, path string) (Extended, error)
+}
+
+// Extended is what an ExtendedFS records of an entry beyond its stat.
+type Extended struct {
+	// Xattrs are the values of the extended attributes by name.
+	Xattrs map[string][]byte
+	// LinuxFlags are the inode flags chattr sets on Linux, DarwinFlags the
+	// file flags chflags sets on macOS.
+	LinuxFlags, DarwinFlags uint32
+}
+
 // StreamInfo names an alternate data stream and its size.
 type StreamInfo struct {
 	Name string

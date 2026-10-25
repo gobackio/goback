@@ -170,8 +170,8 @@ func (fi *FileInfo) IsDir() bool {
 	return fi.GetType() == NodeType_NODE_DIRECTORY
 }
 
-// MetadataRefs lists the File objects the entry's security descriptor and
-// streams are stored in.
+// MetadataRefs lists the File objects the entry's security descriptor,
+// streams and extended attributes are stored in.
 func (fi *FileInfo) MetadataRefs() []*Ref {
 	var refs []*Ref
 	if fi.GetSecurity() != nil {
@@ -181,6 +181,12 @@ func (fi *FileInfo) MetadataRefs() []*Ref {
 	for _, stream := range fi.GetStreams() {
 		if stream.GetRef() != nil {
 			refs = append(refs, stream.Ref)
+		}
+	}
+
+	for _, xattr := range fi.GetXattrs() {
+		if xattr.GetRef() != nil {
+			refs = append(refs, xattr.Ref)
 		}
 	}
 

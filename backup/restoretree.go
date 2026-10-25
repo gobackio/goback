@@ -112,11 +112,15 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 		}
 
 		l.into = []string{dir}
-		err = l.add(ctx, tree, parent, dir, "", "")
+		err = l.add(ctx, tree, parent, dir, "", "", opts.From)
 	}
 
 	if err != nil {
 		return err
+	}
+
+	if !r.DryRun {
+		l.findLinks()
 	}
 
 	if opts.Listed != nil {
@@ -188,6 +192,10 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 			mode &^= os.ModeSetuid
 		}
 
+		if err := r.putXattrs(ctx, r.fs(), e.path, e.stat); err != nil {
+			return err
+		}
+
 		if err := setMeta(ctx, r.fs(), e.path, mode, e.info.ModTime()); err != nil {
 			return err
 		}
@@ -229,11 +237,15 @@ func topPaths(paths []string) ([]string, error) {
 
 type treeEntry struct {
 	path string
-	// rel is the slash-separated path under the directory restored into
-	rel  string
-	info os.FileInfo
-	stat *proto.FileInfo
-	ref  *proto.Ref
+	// rel is the slash-separated path under the directory restored into,
+	// and at its path in the commit
+	rel, at string
+	info    os.FileInfo
+	stat    *proto.FileInfo
+	ref     *proto.Ref
+	// linkTo is the index of the entry this file is restored as a hard
+	// link to, or -1
+	linkTo int
 }
 
 // treeList is every entry a restore writes, parents before their children,
@@ -291,7 +303,7 @@ func (l *treeList) addPaths(ctx context.Context, root *proto.Ref, dir string, to
 		}
 
 		if node.GetStat().IsDir() && !node.GetStat().GetLost() {
-			if err := l.add(ctx, node.GetRef(), NameToken(l.reader.key, token, node.GetStat().GetName()), path, rel, top); err != nil {
+			if err := l.add(ctx, node.GetRef(), NameToken(l.reader.key, token, node.GetStat().GetName()), path, rel, top, top); err != nil {
 				return err
 			}
 		}
@@ -301,10 +313,10 @@ func (l *treeList) addPaths(ctx context.Context, root *proto.Ref, dir string, to
 }
 
 // add lists everything the tree at ref holds under dir, which is at under
-// in the directory restored into, renaming the entries it holds directly
-// when Name is set and named is empty; named is the tree's path when it is
-// itself an entry Paths names.
-func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, under, named string) error {
+// in the directory restored into and at at in the commit, renaming the
+// entries it holds directly when Name is set and named is empty; named is
+// the tree's path when it is itself an entry Paths names.
+func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, under, named, at string) error {
 	renamed := map[string]string{}
 
 	return l.reader.WalkTree(ctx, ref, parent, func(rel string, info os.FileInfo, ref *proto.Ref) error {
@@ -318,6 +330,7 @@ func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, 
 		}
 
 		parts := strings.Split(rel, string(filepath.Separator))
+		inCommit := path.Join(append([]string{at}, parts...)...)
 
 		if l.name != nil && named == "" {
 			if len(parts) == 1 {
@@ -332,12 +345,12 @@ func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, 
 			parts[0] = renamed[parts[0]]
 		}
 
-		path := dir
+		written := dir
 		for _, part := range parts {
-			path = l.fsys.Join(path, part)
+			written = l.fsys.Join(written, part)
 		}
 
-		l.append(path, relPath(under, parts...), info, stat, ref)
+		l.append(written, relPath(under, parts...), inCommit, info, stat, ref)
 
 		return nil
 	})
@@ -363,7 +376,7 @@ func (l *treeList) entry(top, into, under string, stat *proto.FileInfo, ref *pro
 	}
 
 	path, rel := l.fsys.Join(into, name), relPath(under, name)
-	l.append(path, rel, info, stat, ref)
+	l.append(path, rel, top, info, stat, ref)
 
 	return path, rel, nil
 }
@@ -402,8 +415,8 @@ func (l *treeList) rename(path string, info os.FileInfo) (string, error) {
 	return name, nil
 }
 
-func (l *treeList) append(path, rel string, info os.FileInfo, stat *proto.FileInfo, ref *proto.Ref) {
-	l.entries = append(l.entries, treeEntry{path: path, rel: rel, info: info, stat: stat, ref: ref})
+func (l *treeList) append(path, rel, at string, info os.FileInfo, stat *proto.FileInfo, ref *proto.Ref) {
+	l.entries = append(l.entries, treeEntry{path: path, rel: rel, at: at, info: info, stat: stat, ref: ref, linkTo: -1})
 
 	if !info.IsDir() && stat.GetType() != proto.NodeType_NODE_SYMLINK {
 		l.files++
@@ -411,17 +424,53 @@ func (l *treeList) append(path, rel string, info os.FileInfo, stat *proto.FileIn
 	}
 }
 
-// restoreEntries makes every directory and link and then hands the files
-// to RestoreFiles, which takes several at a time.
+// findLinks has each file recorded as a hard link to another file the
+// restore writes, with the same content, link to that one, whose bytes are
+// then written once.
+func (l *treeList) findLinks() {
+	files := map[string]int{}
+
+	for i, e := range l.entries {
+		if restoredAsFile(e.stat) && len(e.stat.GetHardLink()) == 0 {
+			files[e.at] = i
+		}
+	}
+
+	for i := range l.entries {
+		e := &l.entries[i]
+		if len(e.stat.GetHardLink()) == 0 || !restoredAsFile(e.stat) {
+			continue
+		}
+
+		target, ok := files[string(e.stat.GetHardLink())]
+		if ok && l.entries[target].ref.Equal(e.ref) {
+			e.linkTo = target
+			l.size -= e.stat.GetSize()
+		}
+	}
+}
+
+// restoredAsFile reports whether stat is of a file a restore writes.
+func restoredAsFile(stat *proto.FileInfo) bool {
+	return stat.GetType() == proto.NodeType_NODE_FILE && !stat.GetLost() && !cloudOnly(stat)
+}
+
+// restoreEntries makes every directory and symlink, hands the files to
+// RestoreFiles, which takes several at a time, and then links each file
+// findLinks found to the one it shares content with, or, where that one
+// failed or the link cannot be made, writes it as well.
 func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts TreeOptions) error {
 	var (
-		files   []FileToRestore
-		written []*atomic.Int64
+		files []FileToRestore
 		// made holds the directories the restore made, by their parent
 		made = map[string][]os.FileInfo{}
+		// links are the entries linked to another, and fileOf the index in
+		// files of each entry written
+		links  []int
+		fileOf = map[int]int{}
 	)
 
-	for _, e := range entries {
+	for i, e := range entries {
 		switch {
 		case e.stat.GetLost() && e.stat.GetType() != proto.NodeType_NODE_FILE:
 			atomic.AddInt64(&r.stats.Lost, 1)
@@ -474,19 +523,78 @@ func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts
 				}
 			}
 
-			landed := &atomic.Int64{}
-			written = append(written, landed)
-			files = append(files, FileToRestore{Path: e.path, Rel: e.rel, Stat: e.stat, Ref: e.ref, Written: func(n int64) {
-				landed.Add(n)
+			if e.linkTo >= 0 {
+				links = append(links, i)
+				continue
+			}
 
-				if opts.Written != nil {
-					opts.Written(n)
-				}
-			}})
+			fileOf[i] = len(files)
+			files = append(files, FileToRestore{Path: e.path, Rel: e.rel, Stat: e.stat, Ref: e.ref})
 		}
 	}
 
-	return r.RestoreFiles(ctx, files, func(i int, outcome Outcome, err error) error {
+	written, err := r.restoreAll(ctx, files, opts)
+	if err != nil {
+		return err
+	}
+
+	var copies []FileToRestore
+
+	for _, i := range links {
+		e := entries[i]
+		target := entries[e.linkTo]
+
+		if written[fileOf[e.linkTo]] {
+			outcome, err := r.restoreLink(ctx, target.path, e.path, e.stat)
+			if err == nil {
+				if opts.Done != nil {
+					if err := opts.Done(RestoredFile{Path: e.path, Ref: e.ref, Size: e.stat.GetSize(), Outcome: outcome}); err != nil {
+						return err
+					}
+				}
+
+				continue
+			}
+
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+
+		copies = append(copies, FileToRestore{Path: e.path, Rel: e.rel, Stat: e.stat, Ref: e.ref})
+	}
+
+	if len(copies) == 0 {
+		return nil
+	}
+
+	_, err = r.restoreAll(ctx, copies, opts)
+
+	return err
+}
+
+// restoreAll restores files as RestoreFiles does, handing each to Done,
+// and reports which of them it wrote or found in place.
+func (r *Restorer) restoreAll(ctx context.Context, files []FileToRestore, opts TreeOptions) ([]bool, error) {
+	written := make([]atomic.Int64, len(files))
+	placed := make([]atomic.Bool, len(files))
+
+	for i := range files {
+		files[i].Written = func(n int64) {
+			written[i].Add(n)
+
+			if opts.Written != nil {
+				opts.Written(n)
+			}
+		}
+	}
+
+	err := r.RestoreFiles(ctx, files, func(i int, outcome Outcome, err error) error {
+		switch outcome {
+		case OutcomeWritten, OutcomeUnchanged, OutcomeSkipped, OutcomeSalvaged:
+			placed[i].Store(err == nil)
+		}
+
 		if opts.Done == nil {
 			return err
 		}
@@ -497,6 +605,56 @@ func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts
 			Path: f.Path, Ref: f.Ref, Size: f.Stat.GetSize(), Written: written[i].Load(), Outcome: outcome, Err: err,
 		})
 	})
+
+	res := make([]bool, len(files))
+	for i := range placed {
+		res[i] = placed[i].Load()
+	}
+
+	return res, err
+}
+
+// restoreLink makes path a hard link to target, a file the restore wrote,
+// unless it is one already or Overwrite leaves the file there. The link is
+// made beside path and renamed over it, so a tree that cannot hold links
+// loses nothing that is there.
+func (r *Restorer) restoreLink(ctx context.Context, target, path string, stat *proto.FileInfo) (Outcome, error) {
+	fsys := r.fs()
+
+	linker, ok := fsys.(LinkWriteFS)
+	if !ok {
+		return 0, errors.ErrUnsupported
+	}
+
+	if existing, err := fsys.Lstat(ctx, path); err == nil {
+		if linked, err := fsys.Lstat(ctx, target); err == nil && os.SameFile(existing, linked) {
+			r.countFile(ctx, OutcomeUnchanged)
+			return OutcomeUnchanged, nil
+		}
+
+		if existing.Mode().IsRegular() && r.Overwrite == OverwriteIfChanged && existing.Size() == stat.GetSize() && existing.ModTime().UnixNano() == stat.GetMtimeNs() {
+			r.countFile(ctx, OutcomeSkipped)
+			return OutcomeSkipped, nil
+		}
+	}
+
+	partial := r.partial(path)
+	if err := removeIfThere(ctx, fsys, partial); err != nil {
+		return 0, err
+	}
+
+	if err := linker.Link(ctx, target, partial); err != nil {
+		return 0, err
+	}
+
+	if err := fsys.Rename(ctx, partial, path); err != nil {
+		_ = removeIfThere(ctx, fsys, partial)
+		return 0, err
+	}
+
+	r.countFile(ctx, OutcomeLinked)
+
+	return OutcomeLinked, nil
 }
 
 // restoreDir makes path the recorded directory, which its owner can write

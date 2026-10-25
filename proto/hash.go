@@ -678,18 +678,44 @@ func canonicalFileInfo(info *FileInfo) ([]byte, error) {
 	b = appendVarint(b, 12, uint64(info.BirthtimeNs))
 	b = appendVarint(b, 13, uint64(info.Attributes))
 
+	var err error
 	if info.Security != nil {
-		var err error
 		if b, err = appendRef(b, 14, info.Security); err != nil {
 			return nil, err
 		}
 	}
 
+	if b, err = appendStreams(b, 15, "stream", info.Streams); err != nil {
+		return nil, err
+	}
+
+	b = appendVarint(b, 16, uint64(info.ReparseTag))
+	b = appendBool(b, 17, info.Lost)
+	b = appendVarint(b, 18, uint64(info.Uid))
+	b = appendVarint(b, 19, uint64(info.Gid))
+
+	if b, err = appendStreams(b, 20, "xattr", info.Xattrs); err != nil {
+		return nil, err
+	}
+
+	b = appendVarint(b, 21, uint64(info.LinuxFlags))
+	b = appendVarint(b, 22, uint64(info.DarwinFlags))
+
+	if len(info.HardLink) > 0 && info.Type != NodeType_NODE_FILE {
+		return nil, invalid("hard link on a %s node", info.Type)
+	}
+
+	return appendBytes(b, 23, info.HardLink), nil
+}
+
+// appendStreams encodes streams, sorted by name and each name once, as
+// field num; what names one in an error.
+func appendStreams(b []byte, num protowire.Number, what string, streams []*Stream) ([]byte, error) {
 	var last []byte
 
-	for i, stream := range info.Streams {
+	for i, stream := range streams {
 		if stream == nil {
-			return nil, invalid("stream %d is empty", i)
+			return nil, invalid("%s %d is empty", what, i)
 		}
 
 		if err := noUnknown(stream); err != nil {
@@ -697,34 +723,29 @@ func canonicalFileInfo(info *FileInfo) ([]byte, error) {
 		}
 
 		if len(stream.Name) == 0 {
-			return nil, invalid("stream %d without a name", i)
+			return nil, invalid("%s %d without a name", what, i)
 		}
 
 		if i > 0 && bytes.Compare(stream.Name, last) <= 0 {
-			return nil, invalid("streams not sorted or not unique at %q", stream.Name)
+			return nil, invalid("%ss not sorted or not unique at %q", what, stream.Name)
 		}
 		last = stream.Name
 
 		if stream.Size < 0 {
-			return nil, invalid("stream %q of %d bytes", stream.Name, stream.Size)
+			return nil, invalid("%s %q of %d bytes", what, stream.Name, stream.Size)
 		}
 
 		body := appendBytes(nil, 1, stream.Name)
 
 		body, err := appendRef(body, 2, stream.Ref)
 		if err != nil {
-			return nil, fmt.Errorf("stream %q: %w", stream.Name, err)
+			return nil, fmt.Errorf("%s %q: %w", what, stream.Name, err)
 		}
 
-		b = appendMessage(b, 15, appendVarint(body, 3, uint64(stream.Size)))
+		b = appendMessage(b, num, appendVarint(body, 3, uint64(stream.Size)))
 	}
 
-	b = appendVarint(b, 16, uint64(info.ReparseTag))
-
-	b = appendBool(b, 17, info.Lost)
-	b = appendVarint(b, 18, uint64(info.Uid))
-
-	return appendVarint(b, 19, uint64(info.Gid)), nil
+	return b, nil
 }
 
 // SortStreams puts streams in the order a FileInfo records them, by name.

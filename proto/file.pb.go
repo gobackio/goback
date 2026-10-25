@@ -152,8 +152,18 @@ type FileInfo struct {
 	Lost bool `protobuf:"varint,17,opt,name=lost,proto3" json:"lost,omitempty"`
 	// the numeric owner on Unix, which a restore falls back to where user or
 	// group names no account; 0 for root and on Windows
-	Uid           uint32 `protobuf:"varint,18,opt,name=uid,proto3" json:"uid,omitempty"`
-	Gid           uint32 `protobuf:"varint,19,opt,name=gid,proto3" json:"gid,omitempty"`
+	Uid uint32 `protobuf:"varint,18,opt,name=uid,proto3" json:"uid,omitempty"`
+	Gid uint32 `protobuf:"varint,19,opt,name=gid,proto3" json:"gid,omitempty"`
+	// the extended attributes of a file or directory on Linux and macOS,
+	// POSIX ACLs among them, by name, each value held as a stream's content
+	Xattrs []*Stream `protobuf:"bytes,20,rep,name=xattrs,proto3" json:"xattrs,omitempty"`
+	// the inode flags chattr sets on Linux (FS_*_FL)
+	LinuxFlags uint32 `protobuf:"varint,21,opt,name=linux_flags,json=linuxFlags,proto3" json:"linux_flags,omitempty"`
+	// the file flags chflags sets on macOS (st_flags)
+	DarwinFlags uint32 `protobuf:"varint,22,opt,name=darwin_flags,json=darwinFlags,proto3" json:"darwin_flags,omitempty"`
+	// the slash-separated path in the commit of the file this one is a hard
+	// link to, whose ref is this one's too; sealed like link_target
+	HardLink      []byte `protobuf:"bytes,23,opt,name=hard_link,json=hardLink,proto3" json:"hard_link,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -305,6 +315,34 @@ func (x *FileInfo) GetGid() uint32 {
 		return x.Gid
 	}
 	return 0
+}
+
+func (x *FileInfo) GetXattrs() []*Stream {
+	if x != nil {
+		return x.Xattrs
+	}
+	return nil
+}
+
+func (x *FileInfo) GetLinuxFlags() uint32 {
+	if x != nil {
+		return x.LinuxFlags
+	}
+	return 0
+}
+
+func (x *FileInfo) GetDarwinFlags() uint32 {
+	if x != nil {
+		return x.DarwinFlags
+	}
+	return 0
+}
+
+func (x *FileInfo) GetHardLink() []byte {
+	if x != nil {
+		return x.HardLink
+	}
+	return nil
 }
 
 // Stream is one alternate data stream of a file or directory.
@@ -539,7 +577,7 @@ var File_file_proto protoreflect.FileDescriptor
 const file_file_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"file.proto\x12\x05proto\x1a\tref.proto\x1a\x10encryption.proto\"\xf6\x03\n" +
+	"file.proto\x12\x05proto\x1a\tref.proto\x1a\x10encryption.proto\"\xfe\x04\n" +
 	"\bFileInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\fR\x04name\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\rR\x04mode\x12\x12\n" +
@@ -563,7 +601,12 @@ const file_file_proto_rawDesc = "" +
 	"reparseTag\x12\x12\n" +
 	"\x04lost\x18\x11 \x01(\bR\x04lost\x12\x10\n" +
 	"\x03uid\x18\x12 \x01(\rR\x03uid\x12\x10\n" +
-	"\x03gid\x18\x13 \x01(\rR\x03gidJ\x04\b\x05\x10\x06J\x04\b\a\x10\bR\ttimestampR\x04tree\"N\n" +
+	"\x03gid\x18\x13 \x01(\rR\x03gid\x12%\n" +
+	"\x06xattrs\x18\x14 \x03(\v2\r.proto.StreamR\x06xattrs\x12\x1f\n" +
+	"\vlinux_flags\x18\x15 \x01(\rR\n" +
+	"linuxFlags\x12!\n" +
+	"\fdarwin_flags\x18\x16 \x01(\rR\vdarwinFlags\x12\x1b\n" +
+	"\thard_link\x18\x17 \x01(\fR\bhardLinkJ\x04\b\x05\x10\x06J\x04\b\a\x10\bR\ttimestampR\x04tree\"N\n" +
 	"\x06Stream\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\fR\x04name\x12\x1c\n" +
 	"\x03ref\x18\x02 \x01(\v2\n" +
@@ -616,20 +659,21 @@ var file_file_proto_goTypes = []any{
 	(Encryption)(0),  // 7: proto.Encryption
 }
 var file_file_proto_depIdxs = []int32{
-	0, // 0: proto.FileInfo.type:type_name -> proto.NodeType
-	6, // 1: proto.FileInfo.security:type_name -> proto.Ref
-	3, // 2: proto.FileInfo.streams:type_name -> proto.Stream
-	6, // 3: proto.Stream.ref:type_name -> proto.Ref
-	5, // 4: proto.File.parts:type_name -> proto.FilePart
-	6, // 5: proto.File.splits:type_name -> proto.Ref
-	1, // 6: proto.File.chunker:type_name -> proto.Chunker
-	7, // 7: proto.File.inline_encryption:type_name -> proto.Encryption
-	6, // 8: proto.FilePart.ref:type_name -> proto.Ref
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	0,  // 0: proto.FileInfo.type:type_name -> proto.NodeType
+	6,  // 1: proto.FileInfo.security:type_name -> proto.Ref
+	3,  // 2: proto.FileInfo.streams:type_name -> proto.Stream
+	3,  // 3: proto.FileInfo.xattrs:type_name -> proto.Stream
+	6,  // 4: proto.Stream.ref:type_name -> proto.Ref
+	5,  // 5: proto.File.parts:type_name -> proto.FilePart
+	6,  // 6: proto.File.splits:type_name -> proto.Ref
+	1,  // 7: proto.File.chunker:type_name -> proto.Chunker
+	7,  // 8: proto.File.inline_encryption:type_name -> proto.Encryption
+	6,  // 9: proto.FilePart.ref:type_name -> proto.Ref
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_file_proto_init() }

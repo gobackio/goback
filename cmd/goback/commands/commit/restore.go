@@ -259,6 +259,18 @@ func logStats(stats backup.RestoreStats) {
 	if stats.OwnersLeftOut > 0 {
 		log.Printf("%d entries kept the restoring user as owner: their recorded user or group has no account here", stats.OwnersLeftOut)
 	}
+
+	if stats.Linked > 0 {
+		log.Printf("%d files made hard links, as they were backed up", stats.Linked)
+	}
+
+	if stats.XattrsLeftOut > 0 {
+		log.Printf("%d extended attributes left out: the destination or the restoring user cannot set them", stats.XattrsLeftOut)
+	}
+
+	if stats.FlagsLeftOut > 0 {
+		log.Printf("%d entries left without their file flags: the destination or the restoring user cannot set them", stats.FlagsLeftOut)
+	}
 }
 
 func restoreAction(c *cli.Context) {

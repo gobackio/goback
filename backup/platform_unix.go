@@ -96,6 +96,16 @@ func OwnerNames(info os.FileInfo) (string, string) {
 	return userName, groupName
 }
 
+// linkID identifies the inode of a regular file with more than one link.
+func linkID(info os.FileInfo) (fileID, bool) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.Mode().IsRegular() || stat.Nlink < 2 {
+		return fileID{}, false
+	}
+
+	return fileID{dev: uint64(stat.Dev), ino: stat.Ino}, true
+}
+
 func ownerIDs(info os.FileInfo) (uint32, uint32) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {

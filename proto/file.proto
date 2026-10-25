@@ -60,6 +60,18 @@ message FileInfo {
 	// group names no account; 0 for root and on Windows
 	uint32 uid = 18;
 	uint32 gid = 19;
+
+	// the extended attributes of a file or directory on Linux and macOS,
+	// POSIX ACLs among them, by name, each value held as a stream's content
+	repeated Stream xattrs = 20;
+	// the inode flags chattr sets on Linux (FS_*_FL)
+	uint32 linux_flags = 21;
+	// the file flags chflags sets on macOS (st_flags)
+	uint32 darwin_flags = 22;
+
+	// the slash-separated path in the commit of the file this one is a hard
+	// link to, whose ref is this one's too; sealed like link_target
+	bytes hard_link = 23;
 }
 
 // Stream is one alternate data stream of a file or directory.

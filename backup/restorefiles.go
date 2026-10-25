@@ -520,6 +520,10 @@ func (r *Restorer) writeWhole(ctx context.Context, path string, stat *proto.File
 		}
 
 		if err == nil {
+			err = r.putXattrs(ctx, fsys, partial, stat)
+		}
+
+		if err == nil {
 			err = setMeta(ctx, fsys, partial, mode, mtimeOf(stat))
 		}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/gobackio/goback/backup"
@@ -189,7 +190,7 @@ func (x *Index) walkRefs(ctx context.Context, trees []*proto.Ref, visited map[st
 					visit(ref.GetHash())
 				}
 
-				for _, stream := range node.GetStat().GetStreams() {
+				for _, stream := range slices.Concat(node.GetStat().GetStreams(), node.GetStat().GetXattrs()) {
 					if stream.GetSize() >= backup.SplitFileSize {
 						large = append(large, stream.GetRef())
 					}

@@ -30,7 +30,10 @@ type confinedDir struct {
 	held int
 }
 
-var _ RandomWriteFS = (*rootedFS)(nil)
+var (
+	_ RandomWriteFS = (*rootedFS)(nil)
+	_ LinkWriteFS   = (*rootedFS)(nil)
+)
 
 // confine reaches every path under dir, which must exist, through a root
 // on it until release is called.
@@ -288,6 +291,22 @@ func (l *rootedFS) Symlink(ctx context.Context, target, path string) error {
 	}
 
 	return unsupportedLink(symlinkIn(root, target, rel, path))
+}
+
+// Link implements LinkWriteFS; both paths are under the same root or under
+// none.
+func (l *rootedFS) Link(ctx context.Context, target, path string) error {
+	root, relTarget := l.resolve(target)
+	pathRoot, rel := l.resolve(path)
+
+	switch {
+	case root == nil && pathRoot == nil:
+		return LocalFS{}.Link(ctx, target, path)
+	case root != pathRoot:
+		return fmt.Errorf("linking %s to %s leaves the directory restored into", path, target)
+	}
+
+	return unsupportedLink(named(root.Link(relTarget, rel), path))
 }
 
 // Readlink implements WriteFS.

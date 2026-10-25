@@ -1092,7 +1092,7 @@ func (d *treeDiff) dir(l *level, trees map[string][]byte, files map[string]*ent.
 			d.ref(ref.GetHash())
 		}
 
-		for _, stream := range info.GetStreams() {
+		for _, stream := range slices.Concat(info.GetStreams(), info.GetXattrs()) {
 			if stream.GetSize() >= backup.SplitFileSize {
 				large = append(large, descent{path: child, node: &proto.TreeNode{Ref: stream.GetRef()}})
 			}

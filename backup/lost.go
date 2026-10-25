@@ -193,7 +193,7 @@ func (m *marker) node(node *proto.TreeNode) (*proto.TreeNode, bool, error) {
 	}
 
 	lost := pb.Clone(stat).(*proto.FileInfo)
-	lost.Lost, lost.Security, lost.Streams = true, nil, nil
+	lost.Lost, lost.Security, lost.Streams, lost.Xattrs = true, nil, nil, nil
 
 	return &proto.TreeNode{Stat: lost}, true, nil
 }

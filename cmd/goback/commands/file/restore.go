@@ -50,6 +50,14 @@ func (f *file) restore() error {
 		if stats.OwnersLeftOut > 0 {
 			log.Print("it kept the restoring user as owner: its recorded user or group has no account here")
 		}
+
+		if stats.XattrsLeftOut > 0 {
+			log.Printf("%d extended attributes left out: the destination or the restoring user cannot set them", stats.XattrsLeftOut)
+		}
+
+		if stats.FlagsLeftOut > 0 {
+			log.Print("its file flags were left out: the destination or the restoring user cannot set them")
+		}
 	})
 
 	return nil
