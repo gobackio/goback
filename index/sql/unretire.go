@@ -197,7 +197,7 @@ func (x *Index) unretireSet(ctx context.Context, setID int64, revived []*ent.Com
 // the store answers.
 func (x *Index) unretire(ctx context.Context, row *ent.CommitRow, visited map[string]bool) error {
 	refs := [][]byte{row.Ref}
-	err := x.walkRefs(ctx, []*proto.Ref{{Hash: row.Tree}}, visited, false, func(hash []byte) { refs = append(refs, hash) })
+	err := x.walkRefs(ctx, []*proto.Ref{{Hash: row.Tree}}, visited, false, func(hash []byte) { refs = append(refs, hash) }, nil)
 	if err != nil {
 		return err
 	}

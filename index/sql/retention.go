@@ -1369,7 +1369,7 @@ func (x *Index) prunePending(ctx context.Context, setID int64, since time.Time) 
 		return err
 	}
 
-	if err := x.dropDeadRows(ctx, setID); err != nil {
+	if err := x.dropRowsAround(ctx, setID, refs); err != nil {
 		return err
 	}
 
@@ -1404,8 +1404,44 @@ func (x *Index) prunePending(ctx context.Context, setID int64, since time.Time) 
 // holds no commit without a tombstone, under the set's lock, so that no
 // unretirement reads them in between.
 func (x *Index) dropDeadRows(ctx context.Context, setID int64) error {
-	untombstoned := func(c *entsql.SelectTable) *entsql.Predicate {
-		return entsql.IsNull(c.C(commitrow.FieldTombstonedAt))
+	return x.tx(ctx, func(tx *ent.Tx) error {
+		if _, err := x.lockSet(ctx, tx, setID); err != nil {
+			return err
+		}
+
+		return deleteDeadRows(ctx, tx, setID)
+	})
+}
+
+func deleteDeadRows(ctx context.Context, tx *ent.Tx, setID int64) error {
+	_, err := tx.File.Delete().Where(file.SetID(setID), predicate.File(entsql.NotPredicates(heldByCommit(untombstonedColumns)))).Exec(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Tree.Delete().Where(tree.SetID(setID), predicate.Tree(entsql.NotPredicates(heldByCommit(untombstonedColumns)))).Exec(ctx)
+
+	return err
+}
+
+// gapLimit is the most gaps dropRowsAround looks the rows up by; past it a
+// scan for rows that hold no live commit costs less.
+const gapLimit = 4
+
+// gap is the receipt times strictly between two live commits of a set, with
+// no bound at an end that has none.
+type gap struct {
+	after, before *time.Time
+}
+
+// dropRowsAround deletes what dropDeadRows does among the rows the
+// tombstoned commits held: a row holds no live commit once its range lies
+// between the live commits right before and after one of them, which a few
+// such gaps find without looking any commit up for every row.
+func (x *Index) dropRowsAround(ctx context.Context, setID int64, tombstoned [][]byte) error {
+	targets := make(map[string]bool, len(tombstoned))
+	for _, ref := range tombstoned {
+		targets[string(ref)] = true
 	}
 
 	return x.tx(ctx, func(tx *ent.Tx) error {
@@ -1413,15 +1449,71 @@ func (x *Index) dropDeadRows(ctx context.Context, setID int64) error {
 			return err
 		}
 
-		_, err := tx.File.Delete().Where(file.SetID(setID), predicate.File(entsql.NotPredicates(heldByCommit(untombstoned)))).Exec(ctx)
+		commits, err := tx.CommitRow.Query().Where(commitrow.SetID(setID)).
+			Order(ent.Asc(commitrow.FieldReceivedAt), ent.Asc(commitrow.FieldID)).
+			Select(commitrow.FieldRef, commitrow.FieldReceivedAt, commitrow.FieldTombstonedAt).All(ctx)
 		if err != nil {
 			return err
 		}
 
-		_, err = tx.Tree.Delete().Where(tree.SetID(setID), predicate.Tree(entsql.NotPredicates(heldByCommit(untombstoned)))).Exec(ctx)
+		var gaps []gap
+		var after *time.Time
+		holds := false
+
+		for _, c := range commits {
+			if c.TombstonedAt != nil {
+				holds = holds || targets[string(c.Ref)]
+				continue
+			}
+
+			if holds {
+				gaps = append(gaps, gap{after: after, before: &c.ReceivedAt})
+			}
+
+			after, holds = &c.ReceivedAt, false
+		}
+
+		if holds {
+			gaps = append(gaps, gap{after: after})
+		}
+
+		if len(gaps) == 0 {
+			return nil
+		}
+
+		if len(gaps) > gapLimit {
+			return deleteDeadRows(ctx, tx, setID)
+		}
+
+		var files []predicate.File
+		var trees []predicate.Tree
+
+		for _, g := range gaps {
+			inFile, inTree := []predicate.File{file.SetID(setID)}, []predicate.Tree{tree.SetID(setID)}
+
+			if g.after != nil {
+				inFile, inTree = append(inFile, file.ValidFromGT(*g.after)), append(inTree, tree.ValidFromGT(*g.after))
+			}
+
+			if g.before != nil {
+				inFile, inTree = append(inFile, file.ValidUntilLTE(*g.before)), append(inTree, tree.ValidUntilLTE(*g.before))
+			}
+
+			files, trees = append(files, file.And(inFile...)), append(trees, tree.And(inTree...))
+		}
+
+		if _, err := tx.File.Delete().Where(file.SetID(setID), file.Or(files...)).Exec(ctx); err != nil {
+			return err
+		}
+
+		_, err = tx.Tree.Delete().Where(tree.SetID(setID), tree.Or(trees...)).Exec(ctx)
 
 		return err
 	})
+}
+
+func untombstonedColumns(c *entsql.SelectTable) *entsql.Predicate {
+	return entsql.IsNull(c.C(commitrow.FieldTombstonedAt))
 }
 
 func (x *Index) closeEmptySets(ctx context.Context) error {

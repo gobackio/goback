@@ -290,6 +290,9 @@ func TestPostgres(t *testing.T) {
 		"PruneRetriedAfterAFailure":        TestARetirementRetriesThePruneOfASetWhosePruneFailed,
 		"RetirementFarPastTheLastRun":      TestARetirementFarPastTheLastRunRetiresNothing,
 		"DamageClearedUpToTheGrant":        TestACommitClearsOnlyTheDamageFoundBeforeTheGrantOfItsSet,
+		"RetiringLikeItsNeighbours":        TestRetiringACommitLikeItsNeighboursReadsNoTree,
+		"RetiringKeepsWhatOthersShare":     TestRetiringACommitKeepsWhatACommitFurtherAwayShares,
+		"RetiringDropsRowsBetween":         TestRetiringCommitsBetweenOthersDropsEveryRowOnlyTheyHeld,
 	} {
 		t.Run(name, test)
 	}
