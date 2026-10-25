@@ -2,6 +2,7 @@ package pack
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"strings"
@@ -235,10 +236,45 @@ func TestARewriteTrustsOnlyAReachableCopyOutsideItsGroup(t *testing.T) {
 		return copies
 	}
 
-	require.False(t, rw.elsewhere(nil))
-	require.False(t, rw.elsewhere(at("candidate")), "a copy the rewrite drops is no copy")
-	require.False(t, rw.elsewhere(at("candidate", "unreachable")), "an unreachable copy may be swept next")
-	require.True(t, rw.elsewhere(at("unreachable", "reachable")))
+	require.Empty(t, rw.standIns(nil))
+	require.Empty(t, rw.standIns(at("candidate")), "a copy the rewrite drops is no copy")
+	require.Empty(t, rw.standIns(at("candidate", "unreachable")), "an unreachable copy may be swept next")
+	require.Equal(t, at("reachable"), rw.standIns(at("unreachable", "reachable")))
+}
+
+func TestACompactionKeepsTheNewestTombstoneOfAnObject(t *testing.T) {
+	store := newTestStore(t, t.TempDir(), WithCompaction(CompactionConfig{Small: 32 << 10, MinimumCandidates: 0}))
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	obj := makeTestData(t, 1)
+	ballast := make([]byte, 64<<10)
+	_, err := rand.Read(ballast)
+	require.NoError(t, err)
+
+	for i, present := range []bool{true, false, true, false} {
+		if present {
+			require.NoError(t, store.Put(ctx, obj[0]))
+		} else {
+			require.NoError(t, store.Delete(ctx, obj[0].Ref()))
+		}
+
+		// the first tombstone and the copy after it sit in archives too
+		// large to compact
+		if i == 1 || i == 2 {
+			ballast[0] = byte(i)
+			require.NoError(t, store.Put(ctx, proto.NewObject(&proto.Blob{Data: ballast})))
+		}
+
+		require.NoError(t, store.Flush())
+		requirePresent(t, store, obj, present)
+	}
+
+	compact(t, ctx, store)
+	requirePresent(t, store, obj, false)
+
+	compact(t, ctx, store)
+	requirePresent(t, store, obj, false)
 }
 
 // refusingRetirement refuses to store retirements while refusing is set.

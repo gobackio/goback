@@ -41,6 +41,44 @@ func TestARevivedCommitKeepsWhatACollectionCondemnedUnderIt(t *testing.T) {
 	requirePresent(t, store, gone, true)
 }
 
+func TestACompactionKeepsTheRevivalOfACommitASessionStored(t *testing.T) {
+	store := newTestStore(t, t.TempDir(), WithMaxSize(256*1024), WithCompaction(CompactionConfig{MinimumCandidates: 0}))
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	chain := makeChain(makeTestData(t, 20))
+	commit := chain[len(chain)-1]
+
+	session, _ := beginSession(t, store, "agent")
+	for _, obj := range chain {
+		require.NoError(t, store.Put(session, obj))
+	}
+
+	require.NoError(t, store.Delete(ctx, commit.Ref()))
+	require.NoError(t, store.Flush())
+
+	_, err := store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+
+	revivals, err := store.Revive(ctx, []*proto.Ref{commit.Ref()}, false)
+	require.NoError(t, err)
+	require.True(t, revivals[0].Whole())
+
+	compact(t, ctx, store)
+
+	revived, err := store.Revived(ctx, commit.Ref())
+	require.NoError(t, err)
+	require.True(t, revived)
+
+	for i, ahead := range []time.Duration{48 * time.Hour, 96 * time.Hour, 144 * time.Hour} {
+		_, err := store.Collect(ctx, gcOptions(t, ahead))
+		require.NoError(t, err, "collection %d", i)
+	}
+
+	requireStored(t, store, chain, true)
+	requirePresent(t, store, chain, true)
+}
+
 func TestARevivalTakesNothingBackUnderACommitMissingAnObject(t *testing.T) {
 	store := newGCStore(t, t.TempDir())
 	t.Cleanup(func() { _ = store.Close() })

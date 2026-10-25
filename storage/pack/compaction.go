@@ -337,6 +337,10 @@ type rewrite struct {
 	// deaths those it expected to die
 	unmarked map[string]unmarkedIn
 	deaths   map[string]deathClass
+	// tombs holds the newest record of each tombstone the chunk keeps, which
+	// it writes once every candidate is read: two tombstones of one ref
+	// differ by their versions
+	tombs map[string]*heldTomb
 	// open holds the outputs being written; class is the classes of the
 	// chunk being written, and writers how many outputs each class shares
 	// out among the workers when more than one
@@ -394,6 +398,7 @@ func (rw *rewrite) chunk(ctx context.Context, chunk []*archive, workers int) err
 	}
 
 	rw.written, rw.unmarked, rw.deaths = make(map[string]bool), make(map[string]unmarkedIn), make(map[string]deathClass)
+	rw.tombs = make(map[string]*heldTomb)
 
 	if rw.group.classes != nil {
 		rw.class, rw.writers = chunkClasses(rw.group.classes, rw.ps.compaction.small(), chunk, rw.group.classed), nil
@@ -435,6 +440,11 @@ func (rw *rewrite) chunk(ctx context.Context, chunk []*archive, workers int) err
 	}
 
 	if err := grp.Wait(); err != nil {
+		rw.abort()
+		return err
+	}
+
+	if err := rw.writeTombs(ctx); err != nil {
 		rw.abort()
 		return err
 	}
@@ -520,7 +530,9 @@ func (rw *rewrite) deathClasses(chunk []*archive, indexes []IndexFile, workers i
 
 // lookUp reads the indexes of the chunk and works out once for every
 // object they hold whether a copy outside the group may stand in for it.
-func (rw *rewrite) lookUp(ctx context.Context, chunk []*archive, workers int) ([]IndexFile, map[string]bool, error) {
+// A ref in the result has such a copy; for a tombstone it is the newest
+// such copy's version, as only a tombstone at least as new stands in.
+func (rw *rewrite) lookUp(ctx context.Context, chunk []*archive, workers int) ([]IndexFile, map[string]*Version, error) {
 	indexes := make([]IndexFile, len(chunk))
 
 	grp, gctx := errgroup.WithContext(ctx)
@@ -548,19 +560,26 @@ func (rw *rewrite) lookUp(ctx context.Context, chunk []*archive, workers int) ([
 	}
 
 	seen := make(map[refKey]bool)
+	tombs := make(map[refKey]bool)
 	var refs []*proto.Ref
 
 	for _, idx := range indexes {
 		for i := range idx {
-			if key := keyOf(idx[i].Sum[:]); !seen[key] {
+			key := keyOf(idx[i].Sum[:])
+			if !seen[key] {
 				seen[key] = true
 				refs = append(refs, &proto.Ref{Hash: idx[i].Sum[:]})
+			}
+
+			// an index too old to record types may hold tombstones anywhere
+			if t := proto.ObjectType(idx[i].Type); t == proto.ObjectType_TOMBSTONE || t == proto.ObjectType_INVALID {
+				tombs[key] = true
 			}
 		}
 	}
 
 	var mtx sync.Mutex
-	standIn := make(map[string]bool)
+	standIn := make(map[string]*Version)
 
 	grp, gctx = errgroup.WithContext(ctx)
 	grp.SetLimit(workers)
@@ -578,14 +597,32 @@ func (rw *rewrite) lookUp(ctx context.Context, chunk []*archive, workers int) ([
 				return errors.Wrap(err, "locating the objects of a rewrite")
 			}
 
-			mtx.Lock()
-			defer mtx.Unlock()
+			found := make(map[string]*Version)
 
 			for _, ref := range batch {
-				if rw.elsewhere(copies[string(ref.Hash)]) {
-					standIn[string(ref.Hash)] = true
+				locs := rw.standIns(copies[string(ref.Hash)])
+				if len(locs) == 0 {
+					continue
+				}
+
+				if !tombs[keyOf(ref.Hash)] {
+					found[string(ref.Hash)] = nil
+					continue
+				}
+
+				newest, err := rw.ps.newest(locs)
+				if err != nil {
+					return errors.Wrap(err, "reading the versions of the tombstones of a rewrite")
+				}
+
+				if newest != nil {
+					found[string(ref.Hash)] = newest
 				}
 			}
+
+			mtx.Lock()
+			maps.Copy(standIn, found)
+			mtx.Unlock()
 
 			return nil
 		})
@@ -689,20 +726,22 @@ func (rw *rewrite) claim(hash []byte, mark *gcFile, pos int) bool {
 	return true
 }
 
-// elsewhere reports whether one of the copies outside the group may stand
-// in for the candidate's.
-func (rw *rewrite) elsewhere(copies []IndexLocation) bool {
+// standIns returns the copies outside the group that may stand in for the
+// candidate's.
+func (rw *rewrite) standIns(copies []IndexLocation) []IndexLocation {
+	var out []IndexLocation
+
 	for i := range copies {
 		if rw.inGroup[copies[i].Archive] {
 			continue
 		}
 
 		if rw.group.marked == nil || rw.group.marked(&copies[i]) {
-			return true
+			out = append(out, copies[i])
 		}
 	}
 
-	return false
+	return out
 }
 
 // output is the open output the worker writes the record of type t at
@@ -764,10 +803,82 @@ func (rw *rewrite) abort() {
 	rw.open = make(map[outputKey]*rewriteOutput)
 }
 
+// heldTomb is a tombstone record a chunk keeps, read from the candidate at
+// pos by the worker.
+type heldTomb struct {
+	worker    int
+	candidate *archive
+	pos       int
+	hdr       *proto.ObjectHeader
+	bytes     []byte
+	length    uint32
+	version   Version
+}
+
+// holdTomb keeps the tombstone record unless the chunk holds one of its
+// ref at least as new, and reports whether it took the place of another.
+func (rw *rewrite) holdTomb(held *heldTomb) (kept, replaced bool) {
+	rw.mtx.Lock()
+	defer rw.mtx.Unlock()
+
+	key := string(held.hdr.Ref.Hash)
+
+	prior := rw.tombs[key]
+	if prior != nil && !prior.version.Before(held.version) {
+		return false, false
+	}
+
+	rw.tombs[key] = held
+
+	return true, prior != nil
+}
+
+// writeTombs writes the tombstones the chunk kept into the outputs.
+func (rw *rewrite) writeTombs(ctx context.Context) error {
+	rw.mtx.Lock()
+	tombs := rw.tombs
+	rw.tombs = make(map[string]*heldTomb)
+	rw.mtx.Unlock()
+
+	for _, held := range tombs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		rw.claim(held.hdr.Ref.Hash, held.candidate.gcResult(), held.pos)
+
+		if err := rw.put(ctx, held.worker, held.candidate, held.pos, held.hdr, held.bytes, held.version); err != nil {
+			return err
+		}
+
+		rw.mtx.Lock()
+		rw.group.copiedBytes += uint64(held.length)
+		rw.group.moved++
+		rw.mtx.Unlock()
+	}
+
+	return nil
+}
+
+// put writes a record of the candidate at pos into the worker's output.
+func (rw *rewrite) put(ctx context.Context, worker int, candidate *archive, pos int, hdr *proto.ObjectHeader, bytes []byte, version Version) error {
+	out := rw.output(worker, candidate, pos, uint32(hdr.Type))
+	out.mtx.Lock()
+	defer out.mtx.Unlock()
+
+	ar, err := out.archive()
+	if err != nil {
+		return err
+	}
+
+	return ar.putVersioned(ctx, hdr, bytes, &version)
+}
+
 // candidate copies what survives of one candidate, whose bytes data
 // holds or, when nil, the storage streams, into the worker's outputs;
-// standIn names the objects a copy outside the group stands in for.
-func (rw *rewrite) candidate(ctx context.Context, worker int, candidate *archive, idx IndexFile, standIn map[string]bool, data []byte) error {
+// standIn names the objects a copy outside the group stands in for, as
+// lookUp returns it.
+func (rw *rewrite) candidate(ctx context.Context, worker int, candidate *archive, idx IndexFile, standIn map[string]*Version, data []byte) error {
 	started := time.Now()
 	var copied, moved, superseded uint64
 
@@ -792,7 +903,15 @@ func (rw *rewrite) candidate(ctx context.Context, worker int, candidate *archive
 			return nil
 		}
 
-		if standIn[string(hdr.Ref.Hash)] {
+		pos := idx.position(hdr.Ref.Hash)
+		if pos < 0 {
+			return errors.Errorf("object %x in archive %s is missing from its index", hdr.Ref.Hash, candidate.name)
+		}
+
+		version := idx[pos].Version(candidate.created)
+		tomb := hdr.Type == proto.ObjectType_TOMBSTONE
+
+		if newer, ok := standIn[string(hdr.Ref.Hash)]; ok && (!tomb || newer != nil && !newer.Before(version)) {
 			superseded++
 			return nil
 		}
@@ -803,27 +922,24 @@ func (rw *rewrite) candidate(ctx context.Context, worker int, candidate *archive
 			return errors.Wrapf(err, "object %x in archive %s", hdr.Ref.Hash, candidate.name)
 		}
 
-		pos := idx.position(hdr.Ref.Hash)
+		if tomb {
+			kept, replaced := rw.holdTomb(&heldTomb{worker: worker, candidate: candidate, pos: pos, hdr: hdr, bytes: bytes, length: length, version: version})
+			if !kept || replaced {
+				superseded++
+			}
+
+			return nil
+		}
+
 		if !rw.claim(hdr.Ref.Hash, mark, pos) {
 			superseded++
 			return nil
 		}
 
-		out := rw.output(worker, candidate, pos, uint32(hdr.Type))
-		out.mtx.Lock()
-		defer out.mtx.Unlock()
-
-		ar, err := out.archive()
-		if err != nil {
-			return err
-		}
-
 		copied += uint64(length)
 		moved++
 
-		version := idx[pos].Version(candidate.created)
-
-		return ar.putVersioned(ctx, hdr, bytes, &version)
+		return rw.put(ctx, worker, candidate, pos, hdr, bytes, version)
 	})
 	if err != nil {
 		return err
