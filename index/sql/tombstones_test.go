@@ -2,9 +2,12 @@ package sql
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage"
 	"github.com/gobackio/goback/storage/pack"
@@ -27,6 +30,28 @@ func openPacks(t *testing.T, bucket *blob.Bucket) (*pack.PackStorage, *Index) {
 	t.Cleanup(func() { _ = packs.Close() })
 
 	return packs, index
+}
+
+func TestAPinIsInTheStoreOnceItIsIndexed(t *testing.T) {
+	ctx := context.Background()
+	bucket, err := fileblob.OpenBucket(t.TempDir(), nil)
+	require.NoError(t, err)
+	_, index := openPacks(t, bucket)
+
+	src := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(src, "level.dat"), []byte("the world"), 0o644))
+
+	walker := &backup.Walker{Index: index, Objects: index, Set: "world", AgentID: "a", Root: src, Workers: 1}
+	result, err := walker.Run(ctx)
+	require.NoError(t, err)
+
+	pin := proto.NewObject(&proto.Pin{Target: result.Ref})
+	require.NoError(t, index.Put(ctx, pin))
+
+	rebuilt, _ := openPacks(t, bucket)
+	has, err := rebuilt.Has(ctx, pin.Ref())
+	require.NoError(t, err)
+	require.True(t, has, "a store opened after the pin holds it")
 }
 
 func TestTombstonesAreFoundThroughCompactionAndRebuild(t *testing.T) {

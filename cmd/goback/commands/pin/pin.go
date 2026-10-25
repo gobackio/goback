@@ -58,7 +58,7 @@ func addAction(c *cli.Context) {
 		Pin    string `json:"pin"`
 		Target string `json:"target"`
 	}{views.Hex(pin.Ref()), c.Args().First()}, func() { log.Printf("Pinned %s as %x", c.Args().First(), pin.Ref().Hash) })
-	index.Close()
+	common.CloseRepo(repo)
 }
 
 func listAction(c *cli.Context) {
@@ -81,7 +81,7 @@ func listAction(c *cli.Context) {
 		}
 	})
 
-	index.Close()
+	common.CloseRepo(repo)
 }
 
 func removeAction(c *cli.Context) {
@@ -98,5 +98,5 @@ func removeAction(c *cli.Context) {
 	}
 
 	common.Result(common.Done{Action: "removed", Ref: c.Args().First()}, func() { log.Printf("Pin %s removed", c.Args().First()) })
-	index.Close()
+	common.CloseRepo(repo)
 }

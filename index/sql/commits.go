@@ -154,6 +154,12 @@ func (x *Index) Put(ctx context.Context, object *proto.Object) error {
 		_, err := x.indexCommit(ctx, object.GetCommit(), object.Ref(), true, true, steps)
 		return err
 	case proto.ObjectType_PIN:
+		// the pin is durable before its row says so, so that an index
+		// rebuilt from the store keeps it
+		if err := x.flush(); err != nil {
+			return err
+		}
+
 		return x.indexPin(ctx, object.GetPin(), object.Ref(), true)
 	}
 
