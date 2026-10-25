@@ -115,7 +115,7 @@ func (x *Index) tombstonedRows(ctx context.Context, refs []*proto.Ref) (map[stri
 	rows := make(map[string]*ent.CommitRow, len(hashes))
 
 	err := inBatches(hashes, func(batch [][]byte) error {
-		found, err := x.client.CommitRow.Query().Where(commitrow.RefIn(batch...)).WithSet().All(ctx)
+		found, err := x.client.CommitRow.Query().Where(commitrow.RefIn(batch...), commitrow.HasSetWith()).WithSet().All(ctx)
 		for _, row := range found {
 			rows[string(row.Ref)] = row
 		}

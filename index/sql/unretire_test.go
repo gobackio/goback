@@ -132,6 +132,29 @@ func TestUnretireRefusesALiveCommit(t *testing.T) {
 	require.ErrorIs(t, err, backup.ErrNotFound)
 }
 
+// TestUnretireFindsNoCommitOfASetItCannotSee stands a commit row whose set
+// the query cannot see, as row-level security on sets hides another
+// tenant's, for a commit of a hidden set.
+func TestUnretireFindsNoCommitOfASetItCannotSee(t *testing.T) {
+	f := newFixture(t)
+	ref := &proto.Ref{Hash: make([]byte, proto.HashSize)}
+
+	_, err := f.x.db.ExecContext(f.ctx, "PRAGMA foreign_keys = off")
+	require.NoError(t, err)
+	err = f.x.client.CommitRow.Create().SetRef(ref.Hash).SetTimestamp(f.clock).SetReceivedAt(f.clock).SetTree(ref.Hash).
+		SetSetID(999).SetTombstonedAt(f.clock).Exec(f.ctx)
+	require.NoError(t, err)
+	_, err = f.x.db.ExecContext(f.ctx, "PRAGMA foreign_keys = on")
+	require.NoError(t, err)
+
+	_, err = f.x.UnretireCommits(f.ctx, []*proto.Ref{ref}, true)
+	require.ErrorIs(t, err, backup.ErrNotFound)
+
+	retired, err := f.x.RetiredCommits(f.ctx, []*proto.Ref{ref})
+	require.NoError(t, err)
+	require.Empty(t, retired)
+}
+
 // TestUnretireCompletesARevivalThatCrashedBeforeItsRows: the store holds the
 // revival but the rows still say tombstoned. Retirement leaves the commit
 // alone, a rebuild brings it back, and unretiring it again finishes the job.

@@ -787,7 +787,7 @@ func (x *Index) RetiredCommits(ctx context.Context, refs []*proto.Ref) ([]index.
 	var rows []*ent.CommitRow
 
 	err := inBatches(hashes, func(batch [][]byte) error {
-		found, err := x.client.CommitRow.Query().Where(commitrow.RefIn(batch...), commitrow.HasSet()).WithSet().All(ctx)
+		found, err := x.client.CommitRow.Query().Where(commitrow.RefIn(batch...), commitrow.HasSetWith()).WithSet().All(ctx)
 		rows = append(rows, found...)
 
 		return err
