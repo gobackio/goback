@@ -445,11 +445,17 @@ func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts
 				made[parent] = append(made[parent], info)
 			}
 		case e.stat.GetType() == proto.NodeType_NODE_SYMLINK:
+			parent, _ := r.fs().Split(e.path)
+
+			if opts.Delete {
+				if err := r.clearDir(ctx, e.path, made[parent], opts.Removing); err != nil {
+					return err
+				}
+			}
+
 			if r.DryRun {
 				continue
 			}
-
-			parent, _ := r.fs().Split(e.path)
 
 			err := r.restoreSymlink(ctx, e.path, e.stat, made[parent])
 			if errors.Is(err, errors.ErrUnsupported) {
@@ -461,6 +467,13 @@ func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts
 				return err
 			}
 		default:
+			if opts.Delete {
+				parent, _ := r.fs().Split(e.path)
+				if err := r.clearDir(ctx, e.path, made[parent], opts.Removing); err != nil {
+					return err
+				}
+			}
+
 			landed := &atomic.Int64{}
 			written = append(written, landed)
 			files = append(files, FileToRestore{Path: e.path, Rel: e.rel, Stat: e.stat, Ref: e.ref, Written: func(n int64) {
@@ -551,6 +564,34 @@ func (r *Restorer) restoreSymlink(ctx context.Context, path string, stat *proto.
 	}
 
 	return fsys.Rename(ctx, partial, path)
+}
+
+// clearDir removes, with all it holds, a directory at path where the tree
+// has a file or link, unless it is one of siblings, the directories the
+// restore made beside path.
+func (r *Restorer) clearDir(ctx context.Context, path string, siblings []os.FileInfo, removing func(string)) error {
+	fsys := r.fs()
+
+	existing, err := fsys.Lstat(ctx, path)
+	if err != nil || !existing.IsDir() {
+		return nil
+	}
+
+	for _, dir := range siblings {
+		if os.SameFile(existing, dir) {
+			return fmt.Errorf("%s and a directory beside it are one name here", path)
+		}
+	}
+
+	if removing != nil {
+		removing(path)
+	}
+
+	if r.DryRun {
+		return nil
+	}
+
+	return fsys.RemoveAll(ctx, path)
 }
 
 // removeUnrestored deletes everything under dir the restore did not

@@ -186,6 +186,26 @@ func TestRestoreTreeWritesNothingThroughADirectorySwappedForALink(t *testing.T) 
 	require.Equal(t, before.Mode(), after.Mode())
 }
 
+func TestADeleteReplacesADirectoryWhereTheTreeHasAFile(t *testing.T) {
+	b := newTreeBuilder(t)
+	dst := t.TempDir()
+
+	require.NoError(t, os.MkdirAll(filepath.Join(dst, "x", "sub"), 0o755))
+	writeFile(t, filepath.Join(dst, "x", "sub", "f"))
+
+	var removed []string
+	err := (&Restorer{Store: b.store}).RestoreTree(context.Background(), b.commit(b.file("x", "file", 0o644), b.file("y", "other", 0o644)), dst, TreeOptions{
+		Delete:   true,
+		Removing: func(path string) { removed = append(removed, path) },
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{filepath.Join(dst, "x")}, removed)
+
+	got, err := os.ReadFile(filepath.Join(dst, "x"))
+	require.NoError(t, err)
+	require.Equal(t, "file", string(got))
+}
+
 func TestEntriesWithTheLongestNamesAreRestored(t *testing.T) {
 	b := newTreeBuilder(t)
 	dst := t.TempDir()
