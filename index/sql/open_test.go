@@ -283,6 +283,7 @@ func TestPostgres(t *testing.T) {
 		"ArchiveIndexSessions":             TestArchiveIndexSessions,
 		"ClaimIndex":                       TestClaimIndex,
 		"ArchiveIndexCounts":               TestArchiveIndexCountsAndRestoreSessions,
+		"PastTheBindLimit":                 TestASetWithMoreCommitsThanOneStatementBindsKeepsWorking,
 	} {
 		t.Run(name, test)
 	}

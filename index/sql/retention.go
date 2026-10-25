@@ -1,10 +1,12 @@
 package sql
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -114,12 +116,7 @@ func (x *Index) evaluateSet(ctx context.Context, tx *ent.Tx, setID int64, now ti
 		return nil
 	}
 
-	refs := make([][]byte, len(rows))
-	for i, row := range rows {
-		refs[i] = row.Ref
-	}
-
-	pinned, err := c.Pin.Query().Where(pin.TargetIn(refs...), pin.DeletedAtIsNil()).Select(pin.FieldTarget).Strings(ctx)
+	pinned, err := c.Pin.Query().Where(pin.DeletedAtIsNil(), pinsInSet(setID)).Select(pin.FieldTarget).Strings(ctx)
 	if err != nil {
 		return err
 	}
@@ -172,6 +169,14 @@ func (x *Index) evaluateSet(ctx context.Context, tx *ent.Tx, setID int64, now ti
 		return c.CommitRow.Update().Where(commitrow.RefIn(batch...)).SetRetainedBy("").SetRetireAt(now).SetRetirePolicy(string(policy)).
 			SetExpiresAt(now).Exec(ctx)
 	})
+}
+
+// pinsInSet keeps the pins whose target is a commit of the set.
+func pinsInSet(setID int64) predicate.Pin {
+	return func(s *entsql.Selector) {
+		commits := entsql.Select(commitrow.FieldRef).From(entsql.Table(commitrow.Table)).Where(entsql.EQ(commitrow.FieldSetID, setID))
+		s.Where(entsql.In(s.C(pin.FieldTarget), commits))
+	}
 }
 
 // inBatches calls fn with consecutive runs of at most objectBatch items.
@@ -588,11 +593,25 @@ func (x *Index) PinsOf(ctx context.Context, targets ...*proto.Ref) ([]*proto.Pin
 		hashes[i] = t.GetHash()
 	}
 
-	rows, err := x.client.Pin.Query().Where(pin.TargetIn(hashes...), pin.DeletedAtIsNil(), inVisibleSets()).
-		Order(ent.Asc(pin.FieldReceivedAt)).All(ctx)
+	var rows []*ent.Pin
+
+	err := inBatches(hashes, func(batch [][]byte) error {
+		found, err := x.client.Pin.Query().Where(pin.TargetIn(batch...), pin.DeletedAtIsNil(), inVisibleSets()).All(ctx)
+		rows = append(rows, found...)
+
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
+
+	slices.SortStableFunc(rows, func(a, b *ent.Pin) int {
+		if c := a.ReceivedAt.Compare(b.ReceivedAt); c != 0 {
+			return c
+		}
+
+		return cmp.Compare(a.ID, b.ID)
+	})
 
 	return mapAll(rows, m.Pin), nil
 }
@@ -765,7 +784,14 @@ func (x *Index) RetiredCommits(ctx context.Context, refs []*proto.Ref) ([]index.
 		hashes[i] = ref.GetHash()
 	}
 
-	rows, err := x.client.CommitRow.Query().Where(commitrow.RefIn(hashes...), commitrow.HasSet()).WithSet().All(ctx)
+	var rows []*ent.CommitRow
+
+	err := inBatches(hashes, func(batch [][]byte) error {
+		found, err := x.client.CommitRow.Query().Where(commitrow.RefIn(batch...), commitrow.HasSet()).WithSet().All(ctx)
+		rows = append(rows, found...)
+
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}

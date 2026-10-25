@@ -112,14 +112,18 @@ func (x *Index) tombstonedRows(ctx context.Context, refs []*proto.Ref) (map[stri
 		hashes[i] = ref.GetHash()
 	}
 
-	found, err := x.client.CommitRow.Query().Where(commitrow.RefIn(hashes...)).WithSet().All(ctx)
+	rows := make(map[string]*ent.CommitRow, len(hashes))
+
+	err := inBatches(hashes, func(batch [][]byte) error {
+		found, err := x.client.CommitRow.Query().Where(commitrow.RefIn(batch...)).WithSet().All(ctx)
+		for _, row := range found {
+			rows[string(row.Ref)] = row
+		}
+
+		return err
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	rows := make(map[string]*ent.CommitRow, len(found))
-	for _, row := range found {
-		rows[string(row.Ref)] = row
 	}
 
 	for _, hash := range hashes {
@@ -308,16 +312,14 @@ func readRetained(ctx context.Context, c *ent.Client, rows []*ent.CommitRow, ret
 		refs[i] = row.Ref
 	}
 
-	current, err := c.CommitRow.Query().Where(commitrow.RefIn(refs...)).All(ctx)
-	if err != nil {
+	return inBatches(refs, func(batch [][]byte) error {
+		current, err := c.CommitRow.Query().Where(commitrow.RefIn(batch...)).All(ctx)
+		for _, row := range current {
+			retained[string(row.Ref)] = row.RetainedBy
+		}
+
 		return err
-	}
-
-	for _, row := range current {
-		retained[string(row.Ref)] = row.RetainedBy
-	}
-
-	return nil
+	})
 }
 
 func addSetRefs(ctx context.Context, c *ent.Client, setID int64, refs [][]byte) error {

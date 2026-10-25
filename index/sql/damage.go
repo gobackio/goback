@@ -54,13 +54,16 @@ func (x *Index) PathsOfFiles(ctx context.Context, refs []*proto.Ref) ([]backup.F
 		}
 	}
 
-	sets, err := x.client.Set.Query().Where(set.IDIn(ids...)).Select(set.FieldName).All(ctx)
+	err = inBatches(ids, func(batch []int64) error {
+		sets, err := x.client.Set.Query().Where(set.IDIn(batch...)).Select(set.FieldName).All(ctx)
+		for _, s := range sets {
+			names[s.ID] = s.Name
+		}
+
+		return err
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	for _, s := range sets {
-		names[s.ID] = s.Name
 	}
 
 	seen := make(map[string]bool)

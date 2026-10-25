@@ -265,11 +265,13 @@ func (x *Index) EndSession(id string) ([]string, error) {
 
 		dropped = pending
 
-		if _, err := tx.Object.Delete().Where(object.ArchiveIDIn(pending...)).Exec(ctx); err != nil {
+		uncommitted := []predicate.Archive{archive.SessionID(id), archive.StateNEQ(int(pack.ArchiveCommitted))}
+
+		if _, err := tx.Object.Delete().Where(object.HasArchiveWith(uncommitted...)).Exec(ctx); err != nil {
 			return err
 		}
 
-		if _, err := tx.Archive.Delete().Where(archive.IDIn(pending...)).Exec(ctx); err != nil {
+		if _, err := tx.Archive.Delete().Where(uncommitted...).Exec(ctx); err != nil {
 			return err
 		}
 
@@ -340,16 +342,13 @@ func (x *Index) CommitSession(id string) error {
 			return backup.ErrNoSession
 		}
 
-		lost, err := tx.Archive.Query().Where(archive.SessionID(id), archive.State(int(pack.ArchiveLost))).IDs(ctx)
-		if err != nil {
+		lost := []predicate.Archive{archive.SessionID(id), archive.State(int(pack.ArchiveLost))}
+
+		if _, err := tx.Object.Delete().Where(object.HasArchiveWith(lost...)).Exec(ctx); err != nil {
 			return err
 		}
 
-		if _, err := tx.Object.Delete().Where(object.ArchiveIDIn(lost...)).Exec(ctx); err != nil {
-			return err
-		}
-
-		if _, err := tx.Archive.Delete().Where(archive.IDIn(lost...)).Exec(ctx); err != nil {
+		if _, err := tx.Archive.Delete().Where(lost...).Exec(ctx); err != nil {
 			return err
 		}
 
