@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"math"
 	"math/big"
 	"net"
 	"net/http"
@@ -1012,4 +1013,30 @@ func TestRemoteCommitSizesCrossTheWire(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, sizes, len(commits), "a store that measures nothing still answers each commit")
 	require.Nil(t, sizes[0].LogicalBytes)
+}
+
+func TestALocationLongerThanItsBodyFailsToRead(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("a short body"))
+	}))
+	_ = server.Listener.Close()
+	server.Listener = listener
+	server.Start()
+	t.Cleanup(server.Close)
+
+	client := &Client{}
+
+	for _, length := range []int64{-1, 0, 1 << 40} {
+		_, err := client.follow(context.Background(), &proto.Location{Url: server.URL, Length: length})
+		require.Error(t, err, "a location of %d bytes", length)
+	}
+
+	run := &proto.LocatedRun{
+		Location: &proto.Location{Url: server.URL, Length: 12},
+		Records:  []*proto.LocatedRecord{{Offset: math.MaxInt64 - 2, Length: 10}},
+	}
+	require.Error(t, client.fetchRun(context.Background(), run, func(*proto.LocatedRecord, *proto.Object) error { return nil }))
 }

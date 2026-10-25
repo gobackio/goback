@@ -878,18 +878,44 @@ func (r *Client) Downloaded() int64 {
 
 // follow reads the body of a location, which must be as long as it says.
 func (r *Client) follow(ctx context.Context, location *proto.Location) ([]byte, error) {
+	if location.GetLength() <= 0 {
+		return nil, fmt.Errorf("%w: a location of %d bytes", proto.ErrInvalidObject, location.GetLength())
+	}
+
 	body, err := r.open(ctx, location)
 	if err != nil {
 		return nil, err
 	}
 	defer body.Close()
 
-	record := make([]byte, location.GetLength())
+	return readLength(body, location.GetLength())
+}
+
+// lengthAhead is the most readLength allocates before the bytes arrive.
+const lengthAhead = 1 << 20
+
+// readLength reads the n bytes a location says its body holds, allocating
+// for those past lengthAhead only as they arrive.
+func readLength(body io.Reader, n int64) ([]byte, error) {
+	record := make([]byte, min(n, lengthAhead))
 	if _, err := io.ReadFull(body, record); err != nil {
 		return nil, err
 	}
 
-	return record, nil
+	if n == int64(len(record)) {
+		return record, nil
+	}
+
+	rest, err := io.ReadAll(io.LimitReader(body, n-int64(len(record))))
+	if err != nil {
+		return nil, err
+	}
+
+	if int64(len(record)+len(rest)) != n {
+		return nil, io.ErrUnexpectedEOF
+	}
+
+	return append(record, rest...), nil
 }
 
 // fetchRun follows a run once the client fetches fewer than runFetchers,
@@ -920,7 +946,7 @@ func (r *Client) fetchRun(ctx context.Context, run *proto.LocatedRun, fn func(*p
 	for _, next := range run.GetRecords() {
 		// the same record twice is read once
 		if previous == nil || next.Offset != previous.Offset || next.Length != previous.Length {
-			if next.Offset < at || next.Length <= 0 || next.Offset+next.Length > location.GetLength() {
+			if next.Offset < at || next.Length <= 0 || next.Length > location.GetLength()-next.Offset {
 				return fmt.Errorf("record %d lies outside its run or overlaps the one before", next.Index)
 			}
 
@@ -928,8 +954,8 @@ func (r *Client) fetchRun(ctx context.Context, run *proto.LocatedRun, fn func(*p
 				return fmt.Errorf("fetching a run of %d records: %w", len(run.GetRecords()), err)
 			}
 
-			record = make([]byte, next.Length)
-			if _, err := io.ReadFull(body, record); err != nil {
+			record, err = readLength(body, next.Length)
+			if err != nil {
 				return fmt.Errorf("fetching a run of %d records: %w", len(run.GetRecords()), err)
 			}
 
