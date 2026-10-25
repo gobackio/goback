@@ -253,6 +253,27 @@ func TestRestoreFileInline(t *testing.T) {
 	}
 }
 
+func TestRestoreFileLeavesACloudOnlyFilesDestinationAlone(t *testing.T) {
+	store := newMemStore()
+	empty := putFile(t, store, nil, nil)
+
+	path := filepath.Join(t.TempDir(), "report.docx")
+	require.NoError(t, os.WriteFile(path, []byte("the local content"), 0o644))
+
+	stat := statFor(make([]byte, 25))
+	stat.Attributes = recallAttributes
+
+	r := &Restorer{Store: store}
+	outcome, err := r.RestoreFile(context.Background(), path, stat, empty)
+	require.NoError(t, err)
+	require.Equal(t, OutcomeCloudOnly, outcome)
+	require.EqualValues(t, 1, r.Stats().CloudOnly)
+
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "the local content", string(content))
+}
+
 func TestRestoreFileFromSeeds(t *testing.T) {
 	for name, key := range keyCases(t) {
 		t.Run(name, func(t *testing.T) {

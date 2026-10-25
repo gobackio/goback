@@ -17,16 +17,29 @@ import (
 
 // ReadFile reads the file ref describes into memory, fetching it as
 // RestoreFile does, so from a store that serves parts only to a restore
-// too. It suits files of a few KiB.
+// too. It suits files of a few KiB. A file the store lost fails with
+// ErrLost, and one whose content was only in the cloud fails too.
 func (r *Restorer) ReadFile(ctx context.Context, stat *proto.FileInfo, ref *proto.Ref) ([]byte, error) {
 	mem := &memWriteFS{files: map[string]*memWriteFile{}}
 	restorer := &Restorer{Store: r.Store, Key: r.Key, FS: mem, Seeds: r.Seeds, Cache: r.Cache, Workers: r.Workers}
 
-	if _, err := restorer.RestoreFile(ctx, "file", stat, ref); err != nil {
+	outcome, err := restorer.RestoreFile(ctx, "file", stat, ref)
+
+	switch {
+	case err != nil:
+		return nil, err
+	case outcome == OutcomeLost:
+		return nil, fmt.Errorf("%s: %w", stat.GetName(), ErrLost)
+	case outcome == OutcomeCloudOnly:
+		return nil, fmt.Errorf("%s: its content was only in the cloud when it was backed up", stat.GetName())
+	}
+
+	file, err := mem.file("file")
+	if err != nil {
 		return nil, err
 	}
 
-	return mem.files["file"].data, nil
+	return file.data, nil
 }
 
 // memWriteFS is a tree of files in memory, without directories, links, modes or

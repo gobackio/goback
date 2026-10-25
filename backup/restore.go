@@ -368,7 +368,9 @@ func (r *Restorer) readBudget() (*semaphore.Weighted, int64) {
 // place. A failed restore leaves the partial file behind, and the next one
 // takes every part from it that still hashes to its ref. On a tree that
 // is no RandomWriteFS, the file is written front to back and neither the
-// destination nor a partial file is read.
+// destination nor a partial file is read. A file the store lost, or whose
+// content was only in the cloud, leaves path as it is, with OutcomeLost or
+// OutcomeCloudOnly.
 func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.FileInfo, ref *proto.Ref) (Outcome, error) {
 	if err := r.check(); err != nil {
 		return 0, err
@@ -377,6 +379,11 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 	if stat.GetLost() {
 		r.countFile(ctx, OutcomeLost)
 		return OutcomeLost, nil
+	}
+
+	if cloudOnly(stat) {
+		atomic.AddInt64(&r.stats.CloudOnly, 1)
+		return OutcomeCloudOnly, nil
 	}
 
 	fsys := r.fs()

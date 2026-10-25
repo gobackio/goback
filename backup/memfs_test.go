@@ -24,3 +24,21 @@ func TestReadFileReadsAFileIntoMemory(t *testing.T) {
 	require.NoError(t, err, "from a store that serves parts only through ReadParts")
 	require.Equal(t, data, got)
 }
+
+func TestReadFileFailsForAFileLeftOut(t *testing.T) {
+	store := newMemStore()
+	data := randomData(100, 1)
+	ref := putFile(t, store, nil, data)
+
+	lost := statFor(data)
+	lost.Lost = true
+
+	_, err := (&Restorer{Store: store}).ReadFile(context.Background(), lost, ref)
+	require.ErrorIs(t, err, ErrLost)
+
+	cloud := statFor(data)
+	cloud.Attributes = recallAttributes
+
+	_, err = (&Restorer{Store: store}).ReadFile(context.Background(), cloud, ref)
+	require.Error(t, err)
+}
