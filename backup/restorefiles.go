@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -58,11 +59,20 @@ func (r *Restorer) RestoreFiles(ctx context.Context, files []FileToRestore, done
 		size  int64
 	)
 
+	budget, capacity := r.groupBudget()
+
 	flush := func() {
-		members := group
+		members, held := group, min(size, capacity)
 		group, size = nil, 0
 
-		grp.Go(func() error { return r.restoreGroup(gctx, reader, files, members, done) })
+		if budget.Acquire(gctx, held) != nil {
+			return
+		}
+
+		grp.Go(func() error {
+			defer budget.Release(held)
+			return r.restoreGroup(gctx, reader, files, members, done)
+		})
 	}
 
 	for i, file := range files {
@@ -582,17 +592,17 @@ func (r *Restorer) fill(ctx context.Context, name string, reader *fileReader, bu
 	}
 	defer f.Close()
 
-	content := make([]byte, len(buf))
-	n, _ := io.ReadFull(f, content)
+	var part []byte
 
-	for i, part := range reader.parts {
-		end := part.Offset + part.Length
-		if end > uint64(n) {
-			continue
+	// the parts follow one another from offset 0
+	for i, p := range reader.parts {
+		part = slices.Grow(part[:0], int(p.Length))[:p.Length]
+		if _, err := io.ReadFull(f, part); err != nil {
+			break
 		}
 
-		if r.matches(reader, i, content[part.Offset:end]) {
-			copy(buf[part.Offset:], content[part.Offset:end])
+		if r.matches(reader, i, part) {
+			copy(buf[p.Offset:], part)
 			held[i] = true
 		}
 	}

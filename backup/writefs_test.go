@@ -30,6 +30,43 @@ func TestALinkTheFilesystemOrUserMayNotMakeIsUnsupported(t *testing.T) {
 	require.NotErrorIs(t, unsupportedLink(&os.LinkError{Op: "symlink", Err: os.ErrExist}), errors.ErrUnsupported)
 }
 
+// slowFilesStore is filesStore taking a while over each read, counting
+// the most reads under way at once.
+type slowFilesStore struct {
+	filesStore
+	reading, most atomic.Int64
+}
+
+func (s *slowFilesStore) ReadFiles(ctx context.Context, files []FileRead, objectsOnly bool, object func(int, *proto.Object) error, part func(int, int, *proto.Object) error) error {
+	n := s.reading.Add(1)
+	defer s.reading.Add(-1)
+
+	for most := s.most.Load(); n > most && !s.most.CompareAndSwap(most, n); most = s.most.Load() {
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	return s.filesStore.ReadFiles(ctx, files, objectsOnly, object, part)
+}
+
+func TestSmallFilesReadTogetherHoldNoMoreThanTheReadAhead(t *testing.T) {
+	store := &slowFilesStore{filesStore: filesStore{newMemStore()}}
+	content := randomData(1000, 1)
+	ref := putFile(t, store.memStore, nil, content)
+
+	dir := t.TempDir()
+
+	files := make([]FileToRestore, 3*MaxFilesPerRead)
+	for i := range files {
+		files[i] = FileToRestore{Path: filepath.Join(dir, fmt.Sprint(i)), Stat: statFor(content), Ref: ref}
+	}
+
+	r := &Restorer{Store: store, ReadAhead: int64(MaxFilesPerRead*len(content)) * 3 / 2}
+	require.NoError(t, r.RestoreFiles(context.Background(), files, func(_ int, _ Outcome, err error) error { return err }))
+	require.EqualValues(t, 1, store.most.Load(), "a second group does not fit beside the first")
+	require.EqualValues(t, len(files), r.Stats().Written)
+}
+
 // filesStore reads files in groups, as a store server does.
 type filesStore struct{ *memStore }
 

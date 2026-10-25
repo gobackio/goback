@@ -203,8 +203,9 @@ type Restorer struct {
 	// parts of one; 0 means DefaultRestoreWorkers.
 	Workers int
 	// ReadAhead bounds the bytes of parts read from a store that is a
-	// RecordReader at once, across every file of the restore; 0 means
-	// DefaultReadAhead.
+	// RecordReader at once, across every file of the restore, and apart
+	// from those the bytes of the small files read together from a
+	// FilesReader; 0 means DefaultReadAhead.
 	ReadAhead int64
 	Overwrite OverwriteMode
 	// Verify rehashes every written file before it is renamed into place.
@@ -241,6 +242,8 @@ type Restorer struct {
 	budgetOnce sync.Once
 	budget     *semaphore.Weighted
 	capacity   int64
+	groupsOnce sync.Once
+	groups     *semaphore.Weighted
 }
 
 // Stats returns what the restorer has done so far.
@@ -362,6 +365,15 @@ func (r *Restorer) readBudget() (*semaphore.Weighted, int64) {
 	})
 
 	return r.budget, r.capacity
+}
+
+// groupBudget is the restore's shared allowance of the bytes held by the
+// small files it reads together, as large as readBudget's.
+func (r *Restorer) groupBudget() (*semaphore.Weighted, int64) {
+	_, capacity := r.readBudget()
+	r.groupsOnce.Do(func() { r.groups = semaphore.NewWeighted(capacity) })
+
+	return r.groups, capacity
 }
 
 // RestoreFile puts the file ref describes at path with the recorded mode
