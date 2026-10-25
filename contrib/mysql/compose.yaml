@@ -29,7 +29,7 @@ services:
     volumes:
       - mysqldata:/var/lib/mysql
 
-  # runs goback.yaml: a daily dump, and the binlogs received as a replica
+  # runs goback/goback.yaml: a daily dump, and the binlogs received as a replica
   # over the network, without the data volume; from the MySQL image, for its
   # mysqldump
   agent:
@@ -52,7 +52,9 @@ services:
       - gcp-credentials
       - mysql-client.cnf
     volumes:
-      - ./goback.yaml:/etc/goback/goback.yaml:ro
+      # the folder rather than the file: a file mount keeps the version
+      # the container started with, so an edit never reaches a reload
+      - ./goback:/etc/goback:ro
       - goback-bin:/opt/goback:ro
       - goback-agent:/var/lib/goback
     healthcheck:

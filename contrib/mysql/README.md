@@ -2,14 +2,14 @@
 
 `compose.yaml` backs up a MySQL 8.0 container into a GCS bucket:
 
-- The `agent` service runs `goback agent run` with `goback.yaml`. Its one backup, `db`, dumps the server every day at 03:00 into the `db/dump` set, through `mysqldump`, which is why the agent runs from the `mysql:8.0` image.
+- The `agent` service runs `goback agent run` with `goback/goback.yaml`. Its one backup, `db`, dumps the server every day at 03:00 into the `db/dump` set, through `mysqldump`, which is why the agent runs from the `mysql:8.0` image.
 - The same agent connects to the server as a replica, receives its binlogs as they are written into a spool, and commits them to the `db/binlog` set every minute. It needs no access to the data directory, only the MySQL port, so it works for a server on another host too.
 - goback reaches the agent's container through the `goback-bin` volume. A one-shot service copies the static binary there on every `docker compose up`, so `docker compose build` followed by `docker compose up -d` upgrades it.
 - The dump and the receiver read the password from the option file `defaults-extra-file` names. The receiver keeps it in memory only.
 
 ## Setup
 
-1. Replace `BUCKET` in `goback.yaml` with your bucket.
+1. Replace `BUCKET` in `goback/goback.yaml` with your bucket.
 2. Put a service account key with access to the bucket in `gcp-credentials.json`.
 3. Create the store key with `goback key new <store name>` (it writes `store.key`) and move it to `goback.key`. Keep a copy elsewhere: without it, nothing can be restored.
 4. Put the root password in `mysql-root-password`.

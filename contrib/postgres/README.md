@@ -2,13 +2,13 @@
 
 `compose.yaml` backs up a Postgres container into a GCS bucket:
 
-- The `agent` service runs `goback agent run` with `goback.yaml`. Its one backup, `db`, takes a base backup every day at 03:00 into the `db/base` set, over a replication connection; before Postgres 15, through `pg_basebackup`, which the goback image lacks.
+- The `agent` service runs `goback agent run` with `goback/goback.yaml`. Its one backup, `db`, takes a base backup every day at 03:00 into the `db/base` set, over a replication connection; before Postgres 15, through `pg_basebackup`, which the goback image lacks.
 - The same agent streams the WAL through a physical replication slot into a spool as it is written, and commits it to the `db/wal` set every minute. It needs no access to the data directory, only the Postgres port, so it works for a cluster on another host too.
 - Restores run inside the Postgres container, which reaches goback through the `goback-bin` volume. A one-shot service copies the static binary there on every `docker compose up`, so `docker compose build` followed by `docker compose up -d` upgrades it.
 
 ## Setup
 
-1. Replace `BUCKET` in `goback.yaml` with your bucket.
+1. Replace `BUCKET` in `goback/goback.yaml` with your bucket.
 2. Put a service account key with access to the bucket in `gcp-credentials.json`.
 3. Create the store key with `goback key new <store name>` (it writes `store.key`) and move it to `goback.key`. Keep a copy elsewhere: without it, nothing can be restored.
 4. Put the Postgres password in `postgres-password`.

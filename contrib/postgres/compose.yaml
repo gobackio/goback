@@ -36,7 +36,7 @@ services:
       - goback-bin:/opt/goback:ro
       - goback:/var/lib/goback
 
-  # runs goback.yaml: a daily base backup, and the WAL streamed through a
+  # runs goback/goback.yaml: a daily base backup, and the WAL streamed through a
   # replication slot over the network, without the data volume
   agent:
     image: goback
@@ -58,7 +58,9 @@ services:
       - gcp-credentials
       - goback.pgpass
     volumes:
-      - ./goback.yaml:/etc/goback/goback.yaml:ro
+      # the folder rather than the file: a file mount keeps the version
+      # the container started with, so an edit never reaches a reload
+      - ./goback:/etc/goback:ro
       - goback-agent:/var/lib/goback
     healthcheck:
       test: [CMD, /usr/bin/goback, agent, status, --check]
