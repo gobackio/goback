@@ -888,8 +888,14 @@ func (l *loop) finish(f finished) {
 	case ResultOK, ResultDirty:
 		e.failures = 0
 		e.lastEnd = f.ended
-		e.status.LastSuccess = f.started
 		e.due = e.task.NextDue(l.a.ID, f.started, now)
+
+		if result == ResultOK {
+			e.status.LastSuccess, e.status.DirtyRuns = f.started, 0
+		} else {
+			e.status.LastDirty = f.started
+			e.status.DirtyRuns++
+		}
 
 		if f.result != nil {
 			e.committed = true

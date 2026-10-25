@@ -39,11 +39,16 @@ type JobStatus struct {
 	Set    string `json:"set"`
 	Kind   string `json:"kind"`
 	// State is planning, blocked, waiting, idle or running.
-	State       string    `json:"state"`
-	LastStart   time.Time `json:"last_start,omitzero"`
-	LastResult  string    `json:"last_result,omitempty"`
-	LastError   string    `json:"last_error,omitempty"`
+	State      string    `json:"state"`
+	LastStart  time.Time `json:"last_start,omitzero"`
+	LastResult string    `json:"last_result,omitempty"`
+	LastError  string    `json:"last_error,omitempty"`
+	// LastSuccess is when the last clean run started, and LastDirty the
+	// last dirty one, which committed but left out torn or unreadable
+	// files; DirtyRuns counts the dirty runs since the last clean one.
 	LastSuccess time.Time `json:"last_success,omitzero"`
+	LastDirty   time.Time `json:"last_dirty,omitzero"`
+	DirtyRuns   int       `json:"dirty_runs,omitempty"`
 	LastCommit  string    `json:"last_commit,omitempty"`
 	Failures    int       `json:"failures"`
 	NextDue     time.Time `json:"next_due,omitzero"`
@@ -76,6 +81,9 @@ const (
 // heartbeatStale is how old the status file may be before the agent counts
 // as hung.
 const heartbeatStale = 3 * time.Minute
+
+// dirtyRunsUnhealthy is how many dirty runs in a row make a job unhealthy.
+const dirtyRunsUnhealthy = 3
 
 // writeStatus replaces the status file in dir atomically.
 func writeStatus(dir string, s *Status) error {
@@ -145,8 +153,9 @@ func ReadStatus(dir string) (*Status, error) {
 }
 
 // Problems lists what makes the agent unhealthy at now: having stopped, a
-// heartbeat older than three minutes, and every job whose last success is older than its
-// bound. A job that never succeeded is stale once the agent has been up
+// heartbeat older than three minutes, every job whose last success is
+// older than its bound and every job whose last three runs or more were
+// dirty. A job that never succeeded is stale once the agent has been up
 // for its bound; a blocked one is not judged.
 func (s *Status) Problems(now time.Time) []string {
 	var problems []string
@@ -160,6 +169,10 @@ func (s *Status) Problems(now time.Time) []string {
 	}
 
 	for _, j := range s.Jobs {
+		if j.DirtyRuns >= dirtyRunsUnhealthy {
+			problems = append(problems, fmt.Sprintf("%s left out torn or unreadable files in its last %d runs", j.Name, j.DirtyRuns))
+		}
+
 		if j.StaleAfter <= 0 || j.State == JobBlocked {
 			continue
 		}

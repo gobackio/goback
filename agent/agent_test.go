@@ -651,6 +651,59 @@ func TestProblems(t *testing.T) {
 
 	never.StartedAt = now.Add(-time.Minute)
 	require.Empty(t, never.Problems(now))
+
+	dirty := *healthy
+	dirty.Jobs = []JobStatus{{Name: "dirty", StaleAfter: 3 * hour, LastSuccess: now.Add(-2 * time.Hour), DirtyRuns: 3}}
+	require.Len(t, dirty.Problems(now), 1)
+
+	dirty.Jobs[0].DirtyRuns = 2
+	require.Empty(t, dirty.Problems(now))
+}
+
+func TestADirtyRunIsNoSuccess(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.a.StateDir = t.TempDir()
+
+		task := h.fake("w", Every(time.Hour), 0, nil)
+		run := task.Run
+		clean := false
+		task.Run = func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
+			result, err := run(ctx, env)
+			if result != nil && !clean {
+				result.Unreadable = 1
+			}
+
+			return result, err
+		}
+
+		h.run(task)
+
+		status := func() JobStatus {
+			s, err := ReadStatus(h.a.StateDir)
+			require.NoError(t, err)
+
+			return s.Jobs[0]
+		}
+
+		time.Sleep(2*time.Hour + time.Minute)
+
+		j := status()
+		require.Equal(t, ResultDirty, j.LastResult)
+		require.Zero(t, j.LastSuccess)
+		require.True(t, h.t0.Add(2*time.Hour).Equal(j.LastDirty))
+		require.Equal(t, 3, j.DirtyRuns)
+		require.Zero(t, j.Failures)
+
+		clean = true
+		time.Sleep(time.Hour)
+
+		j = status()
+		require.True(t, h.t0.Add(3*time.Hour).Equal(j.LastSuccess))
+		require.Zero(t, j.DirtyRuns)
+
+		h.stop()
+	})
 }
 
 func TestAPausedAgentStartsNothingScheduledAndCatchesUpOnResume(t *testing.T) {

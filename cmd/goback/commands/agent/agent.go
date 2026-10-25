@@ -250,11 +250,11 @@ func statusAction(c *cli.Context) error {
 		fmt.Printf("pid %d, %s since %s, updated %s\n", status.PID, status.State, when(status.StartedAt, ""), when(status.UpdatedAt, ""))
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "JOB\tKIND\tSTATE\tLAST START\tRESULT\tLAST SUCCESS\tFAILURES\tNEXT DUE")
+		fmt.Fprintln(w, "JOB\tKIND\tSTATE\tLAST START\tRESULT\tLAST SUCCESS\tLAST DIRTY\tFAILURES\tNEXT DUE")
 
 		for _, j := range status.Jobs {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n", j.Name, j.Kind, j.State, when(j.LastStart, "-"), j.LastResult,
-				when(j.LastSuccess, "-"), j.Failures, when(j.NextDue, "-"))
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n", j.Name, j.Kind, j.State, when(j.LastStart, "-"), j.LastResult,
+				when(j.LastSuccess, "-"), when(j.LastDirty, "-"), j.Failures, when(j.NextDue, "-"))
 		}
 
 		_ = w.Flush()
