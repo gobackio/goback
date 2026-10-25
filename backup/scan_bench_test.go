@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/backup/storekey"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,6 +84,72 @@ func walkOnce(t *testing.T, root string, workers int) time.Duration {
 	require.NoError(t, err)
 
 	return time.Since(start)
+}
+
+// TestChangedFilesBenchmark measures a sealed backup of files that all
+// changed since the one before, the case that cuts, compresses and seals
+// every chunk. It runs only with GOBACK_BENCH set.
+func TestChangedFilesBenchmark(t *testing.T) {
+	if os.Getenv("GOBACK_BENCH") == "" {
+		t.Skip("set GOBACK_BENCH to run")
+	}
+
+	var (
+		files  = benchInt("GOBACK_BENCH_CHANGED", 32)
+		size   = benchInt("GOBACK_BENCH_SIZE", 4<<20)
+		rounds = benchInt("GOBACK_BENCH_ROUNDS", 3)
+	)
+
+	key, err := storekey.Generate("bench")
+	require.NoError(t, err)
+
+	root := t.TempDir()
+	store := newMemStore()
+	walker := &Walker{
+		Index:   newMemIndex(store),
+		Objects: store,
+		Key:     key,
+		Set:     "bench",
+		AgentID: "bench",
+		Root:    root,
+		Workers: 8,
+	}
+
+	// half the files compress about twofold, half not at all
+	write := func(round int) {
+		for i := range files {
+			data := randomData(size, int64(round*files+i))
+			if i%2 == 0 {
+				for j := range data {
+					data[j] = 'a' + data[j]&15
+				}
+			}
+
+			require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("f%03d.bin", i)), data, 0o644))
+		}
+	}
+
+	write(0)
+	_, err = walker.Run(context.Background())
+	require.NoError(t, err)
+
+	var best time.Duration
+	for round := 1; round <= rounds; round++ {
+		write(round)
+		time.Sleep(30 * time.Millisecond)
+
+		start := time.Now()
+		result, err := walker.Run(context.Background())
+		require.NoError(t, err)
+		require.EqualValues(t, files, result.Read, "every file is read again")
+
+		if took := time.Since(start); best == 0 || took < best {
+			best = took
+		}
+	}
+
+	mib := float64(files*size) / (1 << 20)
+	t.Logf("%d changed files, %.0f MiB, best of %d: %s, %.1f MiB/s", files, mib, rounds, best.Round(time.Millisecond), mib/best.Seconds())
 }
 
 func benchInt(name string, fallback int) int {
