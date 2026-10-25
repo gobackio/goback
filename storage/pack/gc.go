@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -292,6 +293,9 @@ type gcRun struct {
 	// check is whether the run is the confirmation of another, whose
 	// mark it reports as PhaseConfirm
 	check bool
+	// lost counts the reachable objects the mark found missing, which
+	// leave what only they reach unmarked
+	lost atomic.Int64
 
 	roots      []gcRoot
 	tombstones []gcTombstone
@@ -512,10 +516,14 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 			"unattributed", humanize.Bytes(report.Unattributed), "archives", humanize.Bytes(report.ArchiveBytes))
 	}
 
-	if err := run.condemn(ctx); err != nil {
-		return nil, err
+	// what only a missing object reaches went unmarked, so nothing the
+	// mark left unreachable is condemned
+	if run.lost.Load() == 0 {
+		if err := run.condemn(ctx); err != nil {
+			return nil, err
+		}
+		report.Condemned = len(run.condemned)
 	}
-	report.Condemned = len(run.condemned)
 
 	condemned, horizon, err := run.horizon()
 	if err != nil {
@@ -544,6 +552,7 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 		}
 
 		ps.logger.Info("gc confirmed the drops", "generation", run.gen, "took", time.Since(checkStart).Round(time.Millisecond))
+		report.SweepSkipped = run.sweepBlocker()
 	}
 
 	run.releaseMark()
@@ -1526,9 +1535,6 @@ type placed struct {
 	rec *IndexRecord
 }
 
-// place finds a copy of the object to read: in the snapshot, or, for one
-// written since, through the index, or in a live session's archive. It
-// returns a zero placed when there is none.
 // missing reports a reachable object the store lacks, which only a store
 // in front of another expects.
 func (r *gcRun) missing(key refKey) {
@@ -1537,9 +1543,13 @@ func (r *gcRun) missing(key refKey) {
 		return
 	}
 
+	r.lost.Add(1)
 	r.ps.logger.Warn("reachable object is missing", "ref", fmt.Sprintf("%x", key))
 }
 
+// place finds a copy of the object to read: in the snapshot, or, for one
+// written since, through the index, or in a live session's archive. It
+// returns a zero placed when there is none.
 func (r *gcRun) place(ctx context.Context, key refKey) (placed, error) {
 	if p, ok := r.located[key]; ok {
 		return p, nil
@@ -2006,6 +2016,10 @@ func (r *gcRun) releaseMark() {
 func (r *gcRun) sweepBlocker() string {
 	if r.opts.NoSweep {
 		return "sweep disabled"
+	}
+
+	if lost := r.lost.Load(); lost > 0 {
+		return fmt.Sprintf("%d reachable objects are missing", lost)
 	}
 
 	if r.prev == nil {

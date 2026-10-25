@@ -1516,3 +1516,39 @@ func TestAnErasureFlagsOnlyWhatNoGroupReaches(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, a.gcResult().Erase)
 }
+
+func TestACollectionThatFindsAReachableObjectMissingCondemnsAndSweepsNothing(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	blobs := makeTestData(t, 20)
+	chain := makeChain(blobs[:10])
+	lost := chain[10]
+	require.Equal(t, proto.ObjectType_FILE, lost.Type())
+
+	stored := append(append(append([]*proto.Object{}, chain[:10]...), chain[11:]...), blobs[10:]...)
+	putAll(t, store, stored)
+
+	first, err := store.Collect(ctx, gcOptions(t, 0))
+	require.NoError(t, err)
+	require.Zero(t, first.Condemned)
+	require.NotZero(t, first.DeadObjects, "the mark still records what it reached")
+	requirePresent(t, store, blobs, true)
+
+	second, err := store.Collect(ctx, gcOptions(t, 48*time.Hour))
+	require.NoError(t, err)
+	require.NotEmpty(t, second.SweepSkipped)
+	require.Zero(t, second.Condemned)
+	require.Zero(t, second.Swept)
+	requireStored(t, store, blobs, true)
+	requirePresent(t, store, blobs, true)
+
+	putAll(t, store, []*proto.Object{lost})
+
+	third, err := store.Collect(ctx, gcOptions(t, 72*time.Hour))
+	require.NoError(t, err)
+	require.EqualValues(t, 10, third.Condemned, "once it is back, what nothing reaches is condemned")
+	requirePresent(t, store, blobs[:10], true)
+	requirePresent(t, store, blobs[10:], false)
+}

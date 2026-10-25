@@ -88,6 +88,13 @@ func (r *gcRun) confirmDrops(ctx context.Context) error {
 	}
 	defer live.close()
 
+	// a check that missed an object marked less than there is, and the
+	// run then does not sweep
+	if lost := check.lost.Load(); lost > 0 {
+		r.lost.Add(lost)
+		return nil
+	}
+
 	dropped := make(map[refKey][]string)
 	kept := make(map[refKey]bool)
 
