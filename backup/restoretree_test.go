@@ -3,6 +3,7 @@ package backup
 import (
 	"bytes"
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -95,6 +96,119 @@ func (b treeBuilder) commit(nodes ...*proto.TreeNode) *proto.Commit {
 	return &proto.Commit{BackupSet: "s", Tree: tree.Ref()}
 }
 
+// readTree is every file under dir by its slash path, with its content.
+func readTree(t *testing.T, dir string) map[string][]byte {
+	t.Helper()
+
+	files := map[string][]byte{}
+	require.NoError(t, filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+
+		data, err := os.ReadFile(path)
+		files[filepath.ToSlash(rel)] = data
+
+		return err
+	}))
+
+	return files
+}
+
+// windowsNames makes a restore hold only the names Windows holds.
+func windowsNames(t *testing.T) {
+	held, drops := holdsName, dropsTrailing
+	holdsName, dropsTrailing = WindowsHolds, true
+	t.Cleanup(func() { holdsName, dropsTrailing = held, drops })
+}
+
+func TestARestoreLeavesOutNamesThePlatformCannotHold(t *testing.T) {
+	windowsNames(t)
+
+	ctx := context.Background()
+	b := newTreeBuilder(t)
+	outside := t.TempDir()
+	commit := b.commit(SortNodes([]*proto.TreeNode{
+		b.file("ok.txt", "ok", 0o644),
+		b.file("1700000000.M1P2.host:2,S", "mail", 0o644),
+		b.dir("aux", 0o755, b.file("inner.txt", "inner", 0o644)),
+		b.link("...", outside),
+		b.file("notes", "plain", 0o644),
+		b.file("notes.", "dotted", 0o644),
+	})...)
+
+	dst := t.TempDir()
+	var left []string
+
+	restorer := &Restorer{Store: b.store}
+	require.NoError(t, restorer.RestoreTree(ctx, commit, dst, TreeOptions{Done: func(f RestoredFile) error {
+		if f.Outcome == OutcomeUnsupportedName {
+			left = append(left, filepath.Base(f.Path))
+		}
+
+		return f.Err
+	}}))
+
+	require.ElementsMatch(t, []string{"1700000000.M1P2.host:2,S", "aux", "...", "notes."}, left)
+	require.EqualValues(t, 4, restorer.Stats().NamesLeftOut)
+	require.Equal(t, map[string][]byte{"ok.txt": []byte("ok"), "notes": []byte("plain")}, readTree(t, dst))
+}
+
+func TestARestoreEscapesNamesThePlatformCannotHold(t *testing.T) {
+	windowsNames(t)
+
+	ctx := context.Background()
+	b := newTreeBuilder(t)
+	commit := b.commit(SortNodes([]*proto.TreeNode{
+		b.file("ok.txt", "ok", 0o644),
+		b.file("a:b", "colon", 0o644),
+		b.dir("aux", 0o755, b.file("inner:x", "inner", 0o644)),
+	})...)
+
+	dst := t.TempDir()
+	restorer := &Restorer{Store: b.store}
+	require.NoError(t, restorer.RestoreTree(ctx, commit, dst, TreeOptions{EscapeNames: true}))
+	require.EqualValues(t, 3, restorer.Stats().NamesEscaped)
+	require.Zero(t, restorer.Stats().NamesLeftOut)
+	require.Equal(t, map[string][]byte{
+		"ok.txt":          []byte("ok"),
+		EscapeName("a:b"): []byte("colon"),
+		EscapeName("aux") + "/" + EscapeName("inner:x"): []byte("inner"),
+	}, readTree(t, dst))
+}
+
+func TestAWalkRecordsEscapedNamesAsTheirOriginals(t *testing.T) {
+	windowsNames(t)
+
+	unescapes := unescapesNames
+	unescapesNames = true
+	t.Cleanup(func() { unescapesNames = unescapes })
+
+	ctx := context.Background()
+	f := newWalkerFixture(t)
+	b := treeBuilder{t: t, store: f.store}
+	commit := b.commit(SortNodes([]*proto.TreeNode{
+		b.file("a:b", "colon", 0o644),
+		b.dir("aux", 0o755, b.file("inner:x", "inner", 0o644)),
+	})...)
+
+	require.NoError(t, (&Restorer{Store: f.store}).RestoreTree(ctx, commit, f.root, TreeOptions{EscapeNames: true}))
+
+	result := f.run()
+	top := f.tree(result.Commit.Tree)
+	require.Contains(t, top, "a:b")
+	require.Equal(t, "colon", f.content(result.Commit.Tree, "a:b"))
+	require.Equal(t, "inner", f.content(top["aux"].Ref, "inner:x"))
+
+	again := f.run()
+	require.True(t, again.Commit.Tree.Equal(result.Commit.Tree), "an unchanged walk records the same tree")
+}
+
 func TestRestoreTreeRefusesAnEntryNamedOutsideItsDirectory(t *testing.T) {
 	ctx := context.Background()
 	b := newTreeBuilder(t)
@@ -114,8 +228,6 @@ func TestRestoreTreeRefusesAnEntryNamedOutsideItsDirectory(t *testing.T) {
 	}
 
 	if runtime.GOOS == "windows" {
-		cases["dots link"] = []*proto.TreeNode{b.link("...", outside), pwned("pwned")}
-		cases["spaced link"] = []*proto.TreeNode{b.link(". .", outside), pwned("pwned")}
 		cases["backslashed"] = []*proto.TreeNode{b.link("x", outside), pwned(`x\pwned`)}
 	}
 

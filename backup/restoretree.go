@@ -38,6 +38,12 @@ type TreeOptions struct {
 	// Without it such a restore fails with ErrIncomplete before it writes
 	// anything.
 	DeleteIncomplete bool
+	// EscapeNames restores an entry whose name this platform cannot hold,
+	// as Windows cannot hold one with a colon or a device name, under
+	// EscapeName's name, which a Walker records as the original again.
+	// Without it such an entry, with all it holds, is left out and handed
+	// to Done as OutcomeUnsupportedName.
+	EscapeNames bool
 	// Listed is handed the files and bytes the tree holds once it is
 	// listed, before anything is written.
 	Listed func(files, bytes int64)
@@ -108,7 +114,7 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 	}
 	defer end()
 
-	l := &treeList{fsys: r.fs(), reader: reader, name: opts.Name}
+	l := &treeList{fsys: r.fs(), reader: reader, name: opts.Name, escape: opts.EscapeNames}
 
 	if len(tops) > 0 {
 		err = l.addPaths(ctx, commit.GetTree(), dir, tops)
@@ -134,6 +140,7 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 	}
 
 	atomic.AddInt64(&r.stats.PartialDirs, l.partial)
+	atomic.AddInt64(&r.stats.NamesEscaped, l.escaped)
 
 	if !r.DryRun {
 		l.findLinks()
@@ -190,7 +197,7 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 
 	for i := len(l.entries) - 1; i >= 0; i-- {
 		e := l.entries[i]
-		if !e.info.IsDir() || e.stat.GetLost() {
+		if !e.info.IsDir() || e.stat.GetLost() || e.unsupported {
 			continue
 		}
 
@@ -262,6 +269,9 @@ type treeEntry struct {
 	// linkTo is the index of the entry this file is restored as a hard
 	// link to, or -1
 	linkTo int
+	// unsupported marks an entry left out, with all it holds, because
+	// this platform cannot hold its name
+	unsupported bool
 }
 
 // treeList is every entry a restore writes, parents before their children,
@@ -271,6 +281,7 @@ type treeList struct {
 	fsys   WriteFS
 	reader *BackupReader
 	name   func(string, os.FileInfo) string
+	escape bool
 
 	entries     []treeEntry
 	files, size int64
@@ -280,6 +291,8 @@ type treeList struct {
 	// partial counts the directories that lost entries with their names
 	incomplete bool
 	partial    int64
+	// escaped counts the entries listed under EscapeName's name
+	escaped int64
 }
 
 // addPaths lists each of tops at its path under dir.
@@ -303,27 +316,34 @@ func (l *treeList) addPaths(ctx context.Context, root *proto.Ref, dir string, to
 			return fmt.Errorf("%s is not in the commit", top)
 		}
 
-		into := dir
+		node := tree.GetNodes()[i]
+
+		into, under, held := dir, "", true
 		for _, part := range parents {
 			if err := checkName(part); err != nil {
 				return err
 			}
 
-			into = l.fsys.Join(into, part)
+			disk, ok := l.diskName(part, false)
+			held = held && ok
+			into, under = l.fsys.Join(into, disk), relPath(under, disk)
+		}
+
+		if !held {
+			l.leaveOut(l.fsys.Join(into, base), relPath(under, base), node.GetStat())
+			continue
 		}
 
 		if !slices.Contains(l.into, into) {
 			l.into = append(l.into, into)
 		}
 
-		node := tree.GetNodes()[i]
-
-		path, rel, err := l.entry(top, into, strings.Join(parents, "/"), node.GetStat(), node.GetRef())
+		path, rel, ok, err := l.entry(top, into, under, node.GetStat(), node.GetRef())
 		if err != nil {
 			return err
 		}
 
-		if node.GetStat().IsDir() && !node.GetStat().GetLost() {
+		if ok && node.GetStat().IsDir() && !node.GetStat().GetLost() {
 			if err := l.add(ctx, node.GetRef(), NameToken(l.reader.key, token, node.GetStat().GetName()), path, rel, top, top); err != nil {
 				return err
 			}
@@ -338,40 +358,56 @@ func (l *treeList) addPaths(ctx context.Context, root *proto.Ref, dir string, to
 // entries it holds directly when Name is set and named is empty; named is
 // the tree's path when it is itself an entry Paths names.
 func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, under, named, at string) error {
-	renamed := map[string]string{}
+	// by depth, the directory written into, its path under the one
+	// restored into and the names written there as the platform keeps
+	// them; left is the depth of an entry left out, whose subtree goes
+	// with it, or -1
+	paths, rels, kept, left := []string{dir}, []string{under}, []map[string]bool{{}}, -1
 
-	incomplete, err := l.reader.walkTree(ctx, ref, parent, func(rel string, info os.FileInfo, ref *proto.Ref) error {
+	incomplete, err := l.reader.walkTree(ctx, ref, parent, func(treePath string, depth int, info os.FileInfo, ref *proto.Ref) error {
 		stat, _ := info.Sys().(*proto.FileInfo)
 		if stat == nil {
-			return fmt.Errorf("no stat for %s", rel)
+			return fmt.Errorf("no stat for %s", treePath)
 		}
 
-		if err := checkName(string(stat.GetName())); err != nil {
+		name := string(stat.GetName())
+		if err := checkName(name); err != nil {
 			return err
 		}
 
-		parts := strings.Split(rel, string(filepath.Separator))
-		inCommit := path.Join(append([]string{at}, parts...)...)
+		if left >= 0 && depth > left {
+			return nil
+		}
 
-		if l.name != nil && named == "" {
-			if len(parts) == 1 {
-				name, err := l.rename(parts[0], info)
-				if err != nil {
-					return err
-				}
+		left, paths, rels, kept = -1, paths[:depth+1], rels[:depth+1], kept[:depth+1]
 
-				renamed[parts[0]] = name
+		// the plain name sorts before those that end in dots or spaces
+		key := keptName(name)
+		collides := key != name && kept[depth][key]
+		kept[depth][key] = true
+
+		var disk string
+
+		if l.name != nil && named == "" && depth == 0 {
+			var err error
+			if disk, err = l.rename(name, info); err != nil {
+				return err
 			}
+		} else if d, ok := l.diskName(name, collides); ok {
+			disk = d
+		} else {
+			left = depth
+			l.leaveOut(l.fsys.Join(paths[depth], name), relPath(rels[depth], name), stat)
 
-			parts[0] = renamed[parts[0]]
+			return nil
 		}
 
-		written := dir
-		for _, part := range parts {
-			written = l.fsys.Join(written, part)
-		}
+		written, rel := l.fsys.Join(paths[depth], disk), relPath(rels[depth], disk)
+		l.append(written, rel, path.Join(at, filepath.ToSlash(treePath)), info, stat, ref)
 
-		l.append(written, relPath(under, parts...), inCommit, info, stat, ref)
+		if info.IsDir() {
+			paths, rels, kept = append(paths, written), append(rels, rel), append(kept, map[string]bool{})
+		}
 
 		return nil
 	}, func(string) { l.partial++ })
@@ -383,47 +419,84 @@ func (l *treeList) add(ctx context.Context, ref *proto.Ref, parent []byte, dir, 
 
 // entry lists the node at the tree path top in the directory into, which
 // is at under in the directory restored into, under the name Name gives
-// it, and returns the path it is written at and its path under the
-// directory restored into.
-func (l *treeList) entry(top, into, under string, stat *proto.FileInfo, ref *proto.Ref) (string, string, error) {
+// it, and returns the path it is written at, its path under the directory
+// restored into and false when it is left out.
+func (l *treeList) entry(top, into, under string, stat *proto.FileInfo, ref *proto.Ref) (string, string, bool, error) {
 	info := proto.GetOSFileInfo(stat)
 
 	name := string(stat.GetName())
 	if err := checkName(name); err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
+
+	disk, ok := name, true
 
 	if l.name != nil {
 		var err error
-		if name, err = l.rename(top, info); err != nil {
-			return "", "", err
+		if disk, err = l.rename(top, info); err != nil {
+			return "", "", false, err
 		}
+	} else if disk, ok = l.diskName(name, false); !ok {
+		l.leaveOut(l.fsys.Join(into, name), relPath(under, name), stat)
+		return "", "", false, nil
 	}
 
-	path, rel := l.fsys.Join(into, name), relPath(under, name)
+	path, rel := l.fsys.Join(into, disk), relPath(under, disk)
 	l.append(path, rel, top, info, stat, ref)
 
-	return path, rel, nil
+	return path, rel, true, nil
 }
 
 // checkName refuses the name of a tree entry that is no single name in a
-// directory, so it cannot reach outside the one it is listed in, and on
-// Windows a name the platform cannot hold. Windows drops the trailing dots
-// and spaces of a name, so there a name of nothing else names the
-// directory it is in.
+// directory, so it cannot reach outside the one it is listed in.
 func checkName(name string) error {
-	windows := filepath.Separator == '\\'
-
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") ||
-		(windows && (strings.ContainsRune(name, '\\') || strings.TrimRight(name, ". ") == "")) {
+		filepath.Separator == '\\' && strings.ContainsRune(name, '\\') {
 		return fmt.Errorf("the tree holds an entry named %q, which is not a name", name)
 	}
 
-	if !filepath.IsLocal(name) {
-		return fmt.Errorf("the tree holds %q, which is no file name on %s", name, runtime.GOOS)
+	return nil
+}
+
+// holdsName reports whether this platform holds an entry named name, and
+// dropsTrailing whether it drops the dots and spaces a name ends in, as
+// Windows does.
+var (
+	holdsName = func(name string) bool {
+		return runtime.GOOS != "windows" || WindowsHolds(name)
+	}
+	dropsTrailing = runtime.GOOS == "windows"
+)
+
+// keptName is the name the platform keeps an entry named name under.
+func keptName(name string) string {
+	if dropsTrailing {
+		return strings.TrimRight(name, ". ")
 	}
 
-	return nil
+	return name
+}
+
+// diskName is the name an entry named name is written under, and false when
+// it is left out because this platform cannot hold it, or it collides with
+// a sibling once the platform drops what it ends in, and names are not
+// escaped.
+func (l *treeList) diskName(name string, collides bool) (string, bool) {
+	switch {
+	case holdsName(name) && !collides:
+		return name, true
+	case !l.escape:
+		return "", false
+	}
+
+	l.escaped++
+
+	return EscapeName(name), true
+}
+
+// leaveOut lists an entry left out for its name.
+func (l *treeList) leaveOut(path, rel string, stat *proto.FileInfo) {
+	l.entries = append(l.entries, treeEntry{path: path, rel: rel, info: proto.GetOSFileInfo(stat), stat: stat, linkTo: -1, unsupported: true})
 }
 
 // relPath joins the slash-separated path under and the names below it.
@@ -457,14 +530,14 @@ func (l *treeList) findLinks() {
 	files := map[string]int{}
 
 	for i, e := range l.entries {
-		if restoredAsFile(e.stat) && len(e.stat.GetHardLink()) == 0 {
+		if !e.unsupported && restoredAsFile(e.stat) && len(e.stat.GetHardLink()) == 0 {
 			files[e.at] = i
 		}
 	}
 
 	for i := range l.entries {
 		e := &l.entries[i]
-		if len(e.stat.GetHardLink()) == 0 || !restoredAsFile(e.stat) {
+		if e.unsupported || len(e.stat.GetHardLink()) == 0 || !restoredAsFile(e.stat) {
 			continue
 		}
 
@@ -497,6 +570,18 @@ func (r *Restorer) restoreEntries(ctx context.Context, entries []treeEntry, opts
 	)
 
 	for i, e := range entries {
+		if e.unsupported {
+			atomic.AddInt64(&r.stats.NamesLeftOut, 1)
+
+			if opts.Done != nil {
+				if err := opts.Done(RestoredFile{Path: e.path, Outcome: OutcomeUnsupportedName}); err != nil {
+					return err
+				}
+			}
+
+			continue
+		}
+
 		if e.stat.GetMetadataLost() && !e.stat.GetLost() {
 			atomic.AddInt64(&r.stats.MetadataLost, 1)
 		}

@@ -23,6 +23,8 @@ type commit struct {
 	delete   bool
 	force    bool
 
+	escapeNames bool
+
 	progressInterval time.Duration
 }
 

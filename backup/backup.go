@@ -79,18 +79,23 @@ func (br *BackupReader) ReadFile(ctx context.Context, ref *proto.Ref) (io.ReadSe
 // walk.
 type WalkFn func(path string, info os.FileInfo, ref *proto.Ref) error
 
-// walk visits an opened tree; parent is the token of the directory the
-// tree describes, which opens the names of its subdirectories. short, when
-// set, is handed the path of each directory that lost entries no node
-// below it is marked lost for, as a lost tree split takes them.
-func (br *BackupReader) walk(ctx context.Context, trees Getter, path string, parent []byte, tree *proto.Tree, walkFn WalkFn, short func(dir string)) error {
+// visitFn is a WalkFn also handed how many directories deep the node is,
+// 0 for those the walked tree holds directly.
+type visitFn func(path string, depth int, info os.FileInfo, ref *proto.Ref) error
+
+// walk visits an opened tree, depth directories deep; parent is the token
+// of the directory the tree describes, which opens the names of its
+// subdirectories. short, when set, is handed the path of each directory
+// that lost entries no node below it is marked lost for, as a lost tree
+// split takes them.
+func (br *BackupReader) walk(ctx context.Context, trees Getter, path string, depth int, parent []byte, tree *proto.Tree, visit visitFn, short func(dir string)) error {
 	explained := false
 
 	for _, node := range tree.GetNodes() {
 		info := node.Stat
 		absPath := filepath.Join(path, string(info.Name))
 
-		err := walkFn(absPath, proto.GetOSFileInfo(info), node.Ref)
+		err := visit(absPath, depth, proto.GetOSFileInfo(info), node.Ref)
 		if err != nil {
 			return errors.Wrap(err, "WalkFn returned error")
 		}
@@ -107,7 +112,7 @@ func (br *BackupReader) walk(ctx context.Context, trees Getter, path string, par
 
 			explained = explained || subTree.Incomplete
 
-			err = br.walk(ctx, trees, absPath, token, subTree, walkFn, short)
+			err = br.walk(ctx, trees, absPath, depth+1, token, subTree, visit, short)
 			if err != nil {
 				return err
 			}
@@ -155,14 +160,16 @@ func (br *BackupReader) getTree(ctx context.Context, ref *proto.Ref, parent []by
 // for the root of a commit). A store that can stream a subtree hands over
 // every tree below ref in one call.
 func (br *BackupReader) WalkTree(ctx context.Context, ref *proto.Ref, parent []byte, walkFn WalkFn) error {
-	_, err := br.walkTree(ctx, ref, parent, walkFn, nil)
+	_, err := br.walkTree(ctx, ref, parent, func(path string, _ int, info os.FileInfo, ref *proto.Ref) error {
+		return walkFn(path, info, ref)
+	}, nil)
 
 	return err
 }
 
-// walkTree is WalkTree, handing short what walk does, and reporting whether
-// any tree it read is marked incomplete.
-func (br *BackupReader) walkTree(ctx context.Context, ref *proto.Ref, parent []byte, walkFn WalkFn, short func(dir string)) (bool, error) {
+// walkTree is WalkTree visiting as walk does, and reporting whether the
+// tree at ref is marked incomplete.
+func (br *BackupReader) walkTree(ctx context.Context, ref *proto.Ref, parent []byte, visit visitFn, short func(dir string)) (bool, error) {
 	trees := &subtree{store: br.store}
 	trees.fetcher, _ = br.store.(TreeFetcher)
 
@@ -171,7 +178,7 @@ func (br *BackupReader) walkTree(ctx context.Context, ref *proto.Ref, parent []b
 		return false, errors.Wrapf(err, "Couldn't get tree %x from store", ref.Hash)
 	}
 
-	return tree.Incomplete, br.walk(ctx, trees, "", parent, tree, walkFn, short)
+	return tree.Incomplete, br.walk(ctx, trees, "", 0, parent, tree, visit, short)
 }
 
 // subtree serves the trees below the first ref it is asked for from one

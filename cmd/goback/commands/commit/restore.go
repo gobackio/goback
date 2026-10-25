@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -156,12 +157,17 @@ func (c *commit) restore() error {
 
 	stopProgress := func() {}
 
-	var unrestored atomic.Int64
+	var (
+		unrestored  atomic.Int64
+		unsupported []string
+		mtx         sync.Mutex
+	)
 
 	err = c.restorer.RestoreTree(c.ctx, commit, c.base, backup.TreeOptions{
 		From:             c.from,
 		Delete:           c.delete,
 		DeleteIncomplete: c.force,
+		EscapeNames:      c.escapeNames,
 		Listed: func(files, bytes int64) {
 			progress.filesTotal, progress.bytesTotal = files, bytes
 			stopProgress = progress.report(c.progressInterval)
@@ -186,6 +192,12 @@ func (c *commit) restore() error {
 				log.Printf("cannot restore %s: %v", f.Path, err)
 
 				return nil
+			}
+
+			if f.Outcome == backup.OutcomeUnsupportedName {
+				mtx.Lock()
+				unsupported = append(unsupported, f.Path)
+				mtx.Unlock()
 			}
 
 			if f.Outcome != backup.OutcomeUnchanged && f.Outcome != backup.OutcomeSkipped {
@@ -217,12 +229,13 @@ func (c *commit) restore() error {
 	incomplete := commit.GetIncomplete() || stats.Lost > 0 || stats.PartialDirs > 0 || stats.MetadataLost > 0
 
 	common.Result(struct {
-		Commit     views.CommitView    `json:"commit"`
-		DryRun     bool                `json:"dry_run"`
-		Incomplete bool                `json:"incomplete"`
-		Stats      backup.RestoreStats `json:"stats"`
-		Unrestored int64               `json:"unrestored"`
-	}{common.View.Commit(commit), c.restorer.DryRun, incomplete, stats, int64(missed)}, func() {
+		Commit      views.CommitView    `json:"commit"`
+		DryRun      bool                `json:"dry_run"`
+		Incomplete  bool                `json:"incomplete"`
+		Stats       backup.RestoreStats `json:"stats"`
+		Unrestored  int64               `json:"unrestored"`
+		Unsupported []string            `json:"unsupported,omitempty"`
+	}{common.View.Commit(commit), c.restorer.DryRun, incomplete, stats, int64(missed), unsupported}, func() {
 		logStats(stats)
 
 		if missed > 0 {
@@ -234,7 +247,7 @@ func (c *commit) restore() error {
 		}
 	})
 
-	if incomplete {
+	if incomplete || len(unsupported) > 0 {
 		return errLeftOut
 	}
 
@@ -270,6 +283,14 @@ func logStats(stats backup.RestoreStats) {
 
 	if stats.MetadataLost > 0 {
 		log.Printf("%d entries restored without metadata the store lost: a security descriptor, a stream or an extended attribute", stats.MetadataLost)
+	}
+
+	if stats.NamesLeftOut > 0 {
+		log.Printf("%d entries left out, with all they hold: this system cannot hold their names; --escape-names restores them under escaped names", stats.NamesLeftOut)
+	}
+
+	if stats.NamesEscaped > 0 {
+		log.Printf("%d entries restored under escaped names: this system cannot hold theirs", stats.NamesEscaped)
 	}
 
 	if stats.PartialDirs > 0 {
@@ -346,17 +367,19 @@ func restoreAction(c *cli.Context) {
 	restorer := common.Restorer(c, repo)
 
 	s := &commit{
-		ctx:      common.Context(c),
-		index:    index,
-		base:     base,
-		when:     when,
-		ref:      ref,
-		from:     c.String("from"),
-		delete:   c.Bool("delete"),
-		force:    c.Bool("force"),
-		restorer: restorer,
-		store:    store,
-		set:      c.GlobalString("set"),
+		ctx:    common.Context(c),
+		index:  index,
+		base:   base,
+		when:   when,
+		ref:    ref,
+		from:   c.String("from"),
+		delete: c.Bool("delete"),
+		force:  c.Bool("force"),
+
+		escapeNames: c.Bool("escape-names"),
+		restorer:    restorer,
+		store:       store,
+		set:         c.GlobalString("set"),
 
 		progressInterval: c.Duration("progress-interval"),
 	}
@@ -462,6 +485,10 @@ var restoreCmd = cli.Command{
 		cli.BoolFlag{
 			Name:  "delete",
 			Usage: "delete files in the target that are not in the commit",
+		},
+		cli.BoolFlag{
+			Name:  "escape-names",
+			Usage: "restore an entry whose name this system cannot hold, such as one with a colon on Windows, under its name with the offending characters percent-escaped and .goback-escaped added; a backup records it by its name again",
 		},
 		cli.BoolFlag{
 			Name:  "force",

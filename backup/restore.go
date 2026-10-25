@@ -88,6 +88,9 @@ const (
 	// OutcomeLinked means the file was made a hard link to another file the
 	// restore wrote, as the backup recorded it.
 	OutcomeLinked
+	// OutcomeUnsupportedName means the entry, with all it holds, was left
+	// out: this platform cannot hold its name.
+	OutcomeUnsupportedName
 )
 
 // A Hole is a range of a salvaged file that no source could fill; the
@@ -119,6 +122,8 @@ func (o Outcome) String() string {
 		return "lost"
 	case OutcomeLinked:
 		return "linked"
+	case OutcomeUnsupportedName:
+		return "unsupported name"
 	}
 
 	return "unknown"
@@ -169,6 +174,11 @@ type RestoreStats struct {
 	// MetadataLost counts the entries restored without the security
 	// descriptor, streams or extended attributes the store lost.
 	MetadataLost int64 `json:"metadata_lost"`
+	// NamesLeftOut counts the entries left out, with all they hold,
+	// because this platform cannot hold their names, and NamesEscaped
+	// those restored under EscapeName's name instead.
+	NamesLeftOut int64 `json:"names_left_out"`
+	NamesEscaped int64 `json:"names_escaped"`
 
 	BytesFromDestination int64 `json:"bytes_from_destination"`
 	BytesFromSeeds       int64 `json:"bytes_from_seeds"`
@@ -294,6 +304,8 @@ func (r *Restorer) Stats() RestoreStats {
 		Lost:                 atomic.LoadInt64(&r.stats.Lost),
 		PartialDirs:          atomic.LoadInt64(&r.stats.PartialDirs),
 		MetadataLost:         atomic.LoadInt64(&r.stats.MetadataLost),
+		NamesLeftOut:         atomic.LoadInt64(&r.stats.NamesLeftOut),
+		NamesEscaped:         atomic.LoadInt64(&r.stats.NamesEscaped),
 		BytesFromDestination: atomic.LoadInt64(&r.stats.BytesFromDestination),
 		BytesFromSeeds:       atomic.LoadInt64(&r.stats.BytesFromSeeds),
 		BytesFromRestored:    atomic.LoadInt64(&r.stats.BytesFromRestored),

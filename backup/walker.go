@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -923,7 +924,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, listed os.FileInf
 	if root && w.Carry != nil {
 		listed := make(map[string]bool, len(entries))
 		for _, entry := range entries {
-			listed[entry.name] = true
+			listed[recordedName(entry.name)] = true
 		}
 
 		carried = map[string]bool{}
@@ -956,7 +957,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, listed os.FileInf
 		name := entry.name
 		childRel := path.Join(rel, name)
 		childPath := fsys.Join(dir, name)
-		baseNode := baseByName[name]
+		baseNode := baseByName[recordedName(name)]
 
 		if entry.excluded {
 			atomic.AddInt64(&w.result.Excluded, 1)
@@ -988,7 +989,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, listed os.FileInf
 			results[i] = baseNode
 		case info.IsDir():
 			index := i
-			token := NameToken(w.Key, parent, []byte(name))
+			token := NameToken(w.Key, parent, []byte(recordedName(name)))
 
 			walk := func(ctx context.Context) error {
 				node, childChanged, err := w.walkChildDir(ctx, childPath, childRel, token, info, baseNode)
@@ -1160,7 +1161,7 @@ func (w *Walker) walkDir(ctx context.Context, dir, rel string, listed os.FileInf
 				return nil, false, err
 			}
 
-			err = w.checkpoint(ctx, results[:i+1], base, carried, []byte(name))
+			err = w.checkpoint(ctx, results[:i+1], base, carried, []byte(recordedName(name)))
 			if err != nil {
 				return nil, false, err
 			}
@@ -1741,9 +1742,26 @@ func (w *Walker) stat(info os.FileInfo, linkTarget string) *proto.FileInfo {
 	if ids, ok := w.fs().(OwnerIDFS); ok {
 		stat.Uid, stat.Gid = ids.OwnerIDs(info)
 	}
+	stat.Name = []byte(recordedName(info.Name()))
 	recordPlatform(stat, info)
 
 	return stat
+}
+
+// unescapesNames is whether a walk records an entry a restore wrote under
+// EscapeName's name by its original name, as it does on Windows.
+var unescapesNames = runtime.GOOS == "windows"
+
+// recordedName is the name a walk records an entry named name on the disk
+// by.
+func recordedName(name string) string {
+	if unescapesNames {
+		if original, ok := UnescapeName(name); ok {
+			return original
+		}
+	}
+
+	return name
 }
 
 // metaEqual is the change test on stat data alone.
