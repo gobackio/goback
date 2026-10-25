@@ -36,12 +36,19 @@ type ScrubFailure struct {
 // object written before it in the archive.
 var ErrBrokenChain = errors.New("object header names the wrong predecessor")
 
-// Scrub rehashes every object in every archive and reports the ones that no
-// longer match their ref or break their archive's predecessor chain. It
-// never modifies the store.
+// Scrub rehashes every object in every archive closed to writes and reports
+// the ones that no longer match their ref or break their archive's
+// predecessor chain. It never modifies the store.
 func (ps *PackStorage) Scrub(ctx context.Context) (*ScrubReport, error) {
+	var archives []*archive
+
+	// an archive still being written has no stored bytes to check yet
 	ps.mtx.RLock()
-	archives := append([]*archive(nil), ps.archives...)
+	for _, a := range ps.archives {
+		if a.readOnlyNow() {
+			archives = append(archives, a)
+		}
+	}
 	ps.mtx.RUnlock()
 
 	report := &ScrubReport{Sealed: make(map[string]uint64)}
@@ -93,7 +100,9 @@ func (ps *PackStorage) Scrub(ctx context.Context) (*ScrubReport, error) {
 
 			return nil
 		})
-		if err != nil {
+		if err != nil && notExist(err) && ps.isRetired(a.name) {
+			ps.logger.Info("skipping an archive a rewrite retired while it was scrubbed", "archive", a.name)
+		} else if err != nil {
 			return report, errors.Wrapf(err, "scrubbing archive %s", a.name)
 		}
 

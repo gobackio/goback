@@ -129,6 +129,24 @@ func TestScrubWithoutTheAtRestKeyFails(t *testing.T) {
 	require.ErrorIs(t, err, ErrAtRestKeyMissing)
 }
 
+func TestScrubPassesOverArchivesStillBeingWritten(t *testing.T) {
+	store, err := NewPackStorage(WithArchiveStorage(newMemBucket().view()), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	t.Cleanup(func() { _ = store.Close() })
+
+	stored := makeTestData(t, 5)
+	putAll(t, store, stored)
+
+	session, _ := beginSession(t, store, "agent")
+	require.NoError(t, store.Put(session, makeTestData(t, 1)[0]))
+
+	report, err := store.Scrub(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, len(stored), report.Objects)
+	require.Empty(t, report.Corrupt)
+}
+
 func TestRepairKeepsAnObjectAnotherArchiveHolds(t *testing.T) {
 	base := t.TempDir()
 	ctx := context.Background()

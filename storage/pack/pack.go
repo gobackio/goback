@@ -891,6 +891,14 @@ func (ps *PackStorage) archiveByName(name string) (*archive, error) {
 	return ps.openArchive(name, nil, nil)
 }
 
+// isRetired reports whether a rewrite replaced the archive.
+func (ps *PackStorage) isRetired(name string) bool {
+	ps.mtx.RLock()
+	defer ps.mtx.RUnlock()
+
+	return ps.retired[name]
+}
+
 // retireArchive unloads an archive a rewrite replaced and keeps it from
 // being opened again while its index rows and files go.
 func (ps *PackStorage) retireArchive(a *archive) {
