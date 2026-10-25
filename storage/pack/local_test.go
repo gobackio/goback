@@ -70,6 +70,15 @@ var stamps struct {
 }
 
 func (f *stampedFile) Close() error {
+	// a bucket stores what a writer closes, so a file another process
+	// deleted while it was open, as POSIX allows, comes back
+	if _, err := os.Stat(f.Name()); errors.Is(err, fs.ErrNotExist) {
+		if err := f.restore(); err != nil {
+			_ = f.File.Close()
+			return err
+		}
+	}
+
 	if err := f.File.Close(); err != nil {
 		return err
 	}
@@ -83,6 +92,21 @@ func (f *stampedFile) Close() error {
 	stamps.Unlock()
 
 	return os.Chtimes(f.Name(), stamp, stamp)
+}
+
+// restore writes what the open file holds back to its name.
+func (f *stampedFile) restore() error {
+	info, err := f.File.Stat()
+	if err != nil {
+		return err
+	}
+
+	data, err := io.ReadAll(io.NewSectionReader(f.File, 0, info.Size()))
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(f.Name(), data, 0644)
 }
 
 func (las *localArchiveStorage) CreateNew(name string, data []byte) error {
