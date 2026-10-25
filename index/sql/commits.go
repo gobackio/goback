@@ -765,27 +765,25 @@ func setRef(ctx context.Context, c *ent.Client, setID int64, hash []byte) error 
 }
 
 // flatten records a tree and its split trees and returns the flat node
-// list, like backup.LoadTree.
+// list, like backup.LoadTree. A split tree that holds one split twice
+// names its nodes twice and is refused.
 func (d *treeDiff) flatten(ctx context.Context, dir string, ref *proto.Ref, t *proto.Tree) (*proto.Tree, error) {
-	return d.flattenWithin(ctx, dir, ref, t, map[string]bool{})
+	return d.flattenOnce(ctx, dir, ref, t, map[string]bool{})
 }
 
-// flattenWithin is flatten below the split trees above, which a split
-// must not name again.
-func (d *treeDiff) flattenWithin(ctx context.Context, dir string, ref *proto.Ref, t *proto.Tree, above map[string]bool) (*proto.Tree, error) {
+func (d *treeDiff) flattenOnce(ctx context.Context, dir string, ref *proto.Ref, t *proto.Tree, splits map[string]bool) (*proto.Tree, error) {
 	d.ref(ref.GetHash())
 
 	if len(t.Splits) == 0 {
 		return t, nil
 	}
 
-	above[string(ref.GetHash())] = true
-	defer delete(above, string(ref.GetHash()))
-
 	for _, split := range t.Splits {
-		if above[string(split.GetHash())] {
-			return nil, fmt.Errorf("tree %x of %q splits into itself", split.GetHash(), dir)
+		if splits[string(split.GetHash())] {
+			return nil, fmt.Errorf("%w: tree %x holds split %x twice", proto.ErrInvalidObject, ref.GetHash(), split.GetHash())
 		}
+
+		splits[string(split.GetHash())] = true
 	}
 
 	objects, errs := backup.ReadObjects(ctx, d.store, t.Splits)
@@ -806,7 +804,7 @@ func (d *treeDiff) flattenWithin(ctx context.Context, dir string, ref *proto.Ref
 			return nil, fmt.Errorf("split %x is not a tree", split.GetHash())
 		}
 
-		sub, err := d.flattenWithin(ctx, dir, split, obj.GetTree(), above)
+		sub, err := d.flattenOnce(ctx, dir, split, obj.GetTree(), splits)
 		if err != nil {
 			return nil, err
 		}

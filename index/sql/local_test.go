@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"crypto/sha256"
+	"runtime"
 	"testing"
 	"time"
 
@@ -265,6 +266,38 @@ func TestIndexesASplitRoot(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, files, 1, name)
 	}
+}
+
+func TestRefusesARootThatRepeatsASplitBeforeExpandingIt(t *testing.T) {
+	l := newLocalIndex(t)
+
+	file := proto.NewObject(&proto.File{Inline: []byte("x")})
+	require.NoError(t, l.x.Put(l.ctx, file))
+
+	tree := proto.NewObject(&proto.Tree{Nodes: []*proto.TreeNode{{
+		Stat: &proto.FileInfo{Name: []byte("a.dat"), Type: proto.NodeType_NODE_FILE, MtimeNs: 1, Size: 1, Mode: 0644},
+		Ref:  file.Ref(),
+	}}})
+	require.NoError(t, l.x.Put(l.ctx, tree))
+
+	for range 3 {
+		splits := make([]*proto.Ref, 60)
+		for i := range splits {
+			splits[i] = tree.Ref()
+		}
+
+		tree = proto.NewObject(&proto.Tree{Splits: splits})
+		require.NoError(t, l.x.Put(l.ctx, tree))
+	}
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	err := l.x.Put(l.ctx, proto.NewObject(&proto.Commit{Timestamp: 1, Tree: tree.Ref(), BackupSet: "a"}))
+	require.Error(t, err, "a split twice names its nodes twice")
+
+	runtime.ReadMemStats(&after)
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20), "the commit expanded the splits")
 }
 
 func TestUnknownSetIsEmpty(t *testing.T) {
