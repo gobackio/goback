@@ -67,7 +67,9 @@ type RestoredFile struct {
 // mode and time, deepest first; a directory already there that the tree
 // does not hold is made writable while the restore runs and then given
 // back its mode. A restore session holds the commit while it runs when the
-// store keeps sessions. It refuses a tree naming a path outside dir.
+// store keeps sessions. It refuses a tree naming a path outside dir, and
+// on the local disk writes nothing outside dir through a symlink, not even
+// one swapped in while it runs.
 func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir string, opts TreeOptions) error {
 	if err := r.check(); err != nil {
 		return err
@@ -123,6 +125,20 @@ func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir st
 
 	if !r.DryRun {
 		o := &opener{fsys: r.fs()}
+		o.open(ctx, dir)
+
+		if err := r.fs().MkdirAll(ctx, dir); err != nil {
+			o.close(ctx)
+			return err
+		}
+
+		release, err := r.confine(dir)
+		if err != nil {
+			o.close(ctx)
+			return err
+		}
+		defer release()
+		// before release, so the modes go back through the root
 		defer o.close(ctx)
 
 		for _, into := range l.into {

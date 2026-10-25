@@ -171,7 +171,7 @@ func (LocalFS) OpenFile(_ context.Context, path string) (RandomFile, error) {
 
 func isLocalWrite(fsys WriteFS) bool {
 	switch fsys.(type) {
-	case LocalFS, *LocalFS:
+	case LocalFS, *LocalFS, *rootedFS:
 		return true
 	}
 

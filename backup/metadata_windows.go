@@ -203,11 +203,19 @@ var _ MetadataWriteFS = LocalFS{}
 
 // WriteStream implements MetadataWriteFS.
 func (LocalFS) WriteStream(_ context.Context, path, name string, r io.Reader) error {
+	return writeStream(path, name, r, func() (*os.File, error) {
+		return os.OpenFile(path+":"+name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+	})
+}
+
+// writeStream writes r into the stream name of path, which create opens
+// to write, emptied.
+func writeStream(path, name string, r io.Reader, create func() (*os.File, error)) error {
 	if name == "" || strings.ContainsAny(name, "\\/:\x00") {
 		return fmt.Errorf("%s: %q is not a stream name", path, name)
 	}
 
-	file, err := os.OpenFile(path+":"+name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+	file, err := create()
 	if err != nil {
 		return err
 	}
@@ -220,10 +228,18 @@ func (LocalFS) WriteStream(_ context.Context, path, name string, r io.Reader) er
 	return err
 }
 
+// metadataOpener opens an entry itself, a directory or a reparse point
+// too, with backup semantics and the access asked for.
+type metadataOpener func(access uint32) (windows.Handle, error)
+
 // SetSecurity implements MetadataWriteFS. It sets the descriptor on path
 // alone, without the propagation to what a directory holds that
 // SetNamedSecurityInfo would do.
 func (LocalFS) SetSecurity(_ context.Context, path string, sd []byte) error {
+	return putSecurityOn(path, sd, func(access uint32) (windows.Handle, error) { return openForMetadata(path, access) })
+}
+
+func putSecurityOn(path string, sd []byte, open metadataOpener) error {
 	privileges := writePrivileges()
 	if !privileges[seRestorePrivilege] {
 		return ErrNotPrivileged
@@ -246,7 +262,7 @@ func (LocalFS) SetSecurity(_ context.Context, path string, sd []byte) error {
 		access |= windows.ACCESS_SYSTEM_SECURITY
 	}
 
-	handle, err := openForMetadata(path, access)
+	handle, err := open(access)
 	if err != nil {
 		return err
 	}
@@ -276,6 +292,10 @@ type fileBasicInfo struct {
 
 // SetAttributes implements MetadataWriteFS.
 func (LocalFS) SetAttributes(_ context.Context, path string, birth time.Time, attributes uint32) error {
+	return putAttributesOn(path, birth, attributes, func(access uint32) (windows.Handle, error) { return openForMetadata(path, access) })
+}
+
+func putAttributesOn(path string, birth time.Time, attributes uint32, open metadataOpener) error {
 	writePrivileges()
 
 	info := fileBasicInfo{FileAttributes: attributes & settableAttributes}
@@ -288,7 +308,7 @@ func (LocalFS) SetAttributes(_ context.Context, path string, birth time.Time, at
 		info.CreationTime = int64(ft.HighDateTime)<<32 | int64(ft.LowDateTime)
 	}
 
-	handle, err := openForMetadata(path, windows.FILE_WRITE_ATTRIBUTES)
+	handle, err := open(windows.FILE_WRITE_ATTRIBUTES)
 	if err != nil {
 		return err
 	}

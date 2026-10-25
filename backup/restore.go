@@ -227,6 +227,8 @@ type Restorer struct {
 
 	stats       RestoreStats
 	descriptors restoredDescriptors
+	// local is the local disk the restore writes when FS is nil or LocalFS
+	local rootedFS
 
 	accounts accounts
 	once     sync.Once
@@ -300,11 +302,24 @@ func (r *Restorer) countFile(ctx context.Context, outcome Outcome) {
 }
 
 func (r *Restorer) fs() WriteFS {
-	if r.FS == nil {
-		return LocalFS{}
+	switch r.FS.(type) {
+	case nil, LocalFS, *LocalFS:
+		return &r.local
 	}
 
 	return r.FS
+}
+
+// confine makes every path under dir, which exists, reached without
+// following a symlink to outside it until release is called, on the
+// local disk.
+func (r *Restorer) confine(dir string) (release func(), err error) {
+	local, ok := r.fs().(*rootedFS)
+	if !ok {
+		return func() {}, nil
+	}
+
+	return local.confine(dir)
 }
 
 // check refuses, before anything is written, what the tree restored into

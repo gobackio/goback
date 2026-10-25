@@ -134,6 +134,87 @@ func TestRestoreTreeRefusesAnEntryNamedOutsideItsDirectory(t *testing.T) {
 	}
 }
 
+func TestRestoreTreeWritesNothingThroughADirectorySwappedForALink(t *testing.T) {
+	ctx := context.Background()
+	b := newTreeBuilder(t)
+
+	outside := t.TempDir()
+	require.NoError(t, os.Chmod(outside, 0o700))
+
+	before, err := os.Stat(outside)
+	require.NoError(t, err)
+
+	commit := b.commit(b.dir("sub", 0o777, b.file("f0", "zero", 0o666), b.file("f1", "one", 0o666), b.file("f2", "two", 0o666)))
+
+	dst := t.TempDir()
+	sub := filepath.Join(dst, "sub")
+
+	var swapped bool
+
+	err = (&Restorer{Store: b.store, Workers: 1}).RestoreTree(ctx, commit, dst, TreeOptions{
+		Done: func(RestoredFile) error {
+			if !swapped {
+				swapped = true
+
+				require.NoError(t, os.Rename(sub, filepath.Join(dst, "moved")))
+				if err := os.Symlink(outside, sub); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			}
+
+			return nil
+		},
+	})
+	require.Error(t, err)
+
+	entries, err := os.ReadDir(outside)
+	require.NoError(t, err)
+	require.Empty(t, entries, "nothing is written through the link")
+
+	after, err := os.Stat(outside)
+	require.NoError(t, err)
+	require.Equal(t, before.Mode(), after.Mode())
+}
+
+func TestRestoredLinksLeadWhereTheyPoint(t *testing.T) {
+	b := newTreeBuilder(t)
+
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "there"))
+
+	dst := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dst, "probe")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	commit := b.commit(
+		b.dir("d", 0o755, b.file("f", "x", 0o644)),
+		b.link("file", "d/f"),
+		b.link("in", "d"),
+		b.link("out", outside),
+		b.link("out-file", filepath.Join(outside, "there")),
+	)
+	require.NoError(t, (&Restorer{Store: b.store}).RestoreTree(context.Background(), commit, dst, TreeOptions{}))
+
+	for name, target := range map[string]string{"file": "d/f", "in": "d", "out": outside, "out-file": filepath.Join(outside, "there")} {
+		got, err := os.Readlink(filepath.Join(dst, name))
+		require.NoError(t, err)
+		require.Equal(t, filepath.FromSlash(target), got)
+	}
+
+	for _, dir := range []string{"in", "out"} {
+		entries, err := os.ReadDir(filepath.Join(dst, dir))
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+	}
+
+	for _, file := range []string{"file", "out-file"} {
+		content, err := os.ReadFile(filepath.Join(dst, file))
+		require.NoError(t, err)
+		require.Equal(t, "x", string(content))
+	}
+}
+
 func TestRemoveUnrestoredKeepsWhatTheRestoreWroteUnderAnotherSpelling(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, filepath.Join(base, "world", "level.dat"))
