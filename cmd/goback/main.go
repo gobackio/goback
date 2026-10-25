@@ -24,9 +24,48 @@ import (
 	"github.com/gobackio/goback/cmd/goback/commands/server"
 	"github.com/gobackio/goback/cmd/goback/commands/set"
 
-	_ "github.com/joho/godotenv/autoload"
+	"github.com/joho/godotenv"
 	"github.com/urfave/cli"
 )
+
+// loadEnvFile sets the variables of --env-file that the environment lacks,
+// and gives the global flags read from them their values, since those flags
+// took theirs from the environment before the file was read.
+func loadEnvFile(c *cli.Context) error {
+	path := c.GlobalString("env-file")
+	if path == "" {
+		return nil
+	}
+
+	unset := map[string]string{}
+	for _, f := range c.App.Flags {
+		var name, env string
+		switch f := f.(type) {
+		case cli.StringFlag:
+			name, env = f.Name, f.EnvVar
+		case cli.BoolFlag:
+			name, env = f.Name, f.EnvVar
+		}
+
+		if env != "" && !c.GlobalIsSet(name) {
+			unset[name] = env
+		}
+	}
+
+	if err := godotenv.Load(path); err != nil {
+		return fmt.Errorf("reading the env file: %w", err)
+	}
+
+	for name, env := range unset {
+		if v, ok := os.LookupEnv(env); ok {
+			if err := c.GlobalSet(name, v); err != nil {
+				return fmt.Errorf("%s from the env file: %w", env, err)
+			}
+		}
+	}
+
+	return nil
+}
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU() + 1)
@@ -54,6 +93,11 @@ func main() {
 		docsCommand,
 	}
 	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:   "env-file",
+			Usage:  "file of NAME=value lines to set in the environment, for variables not set already",
+			EnvVar: "GOBACK_ENV_FILE",
+		},
 		cli.BoolFlag{
 			Name:   "json",
 			Usage:  "print results and errors as JSON on stdout; logs go to stderr as JSON lines",
@@ -112,6 +156,10 @@ func main() {
 	}
 
 	app.Before = func(c *cli.Context) error {
+		if err := loadEnvFile(c); err != nil {
+			return err
+		}
+
 		common.SetOutput(c.GlobalBool("json"))
 
 		return nil
