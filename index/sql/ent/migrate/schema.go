@@ -226,6 +226,14 @@ var (
 					Where: "ref IS NOT NULL",
 				},
 			},
+			{
+				Name:    "files_by_ref",
+				Unique:  false,
+				Columns: []*schema.Column{FilesColumns[5]},
+				Annotation: &entsql.IndexAnnotation{
+					Where: "ref IS NOT NULL",
+				},
+			},
 		},
 	}
 	// ObjectsColumns holds the columns for the "objects" table.

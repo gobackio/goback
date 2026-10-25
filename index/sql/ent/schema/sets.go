@@ -178,6 +178,8 @@ func (File) Indexes() []ent.Index {
 		index.Fields("set_id").Annotations(entsql.IndexWhere("lost AND valid_until IS NULL")).StorageKey("files_open_lost"),
 		index.Fields("set_id", "ref", "size", "valid_from", "valid_until").Annotations(entsql.IndexWhere("ref IS NOT NULL")).
 			StorageKey("files_versions"),
+		// the versions of a file object, whatever set holds them
+		index.Fields("ref").Annotations(entsql.IndexWhere("ref IS NOT NULL")).StorageKey("files_by_ref"),
 	}
 }
 
