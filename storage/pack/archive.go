@@ -673,6 +673,33 @@ func (a *archive) putVersioned(ctx context.Context, hdr *proto.ObjectHeader, byt
 	return nil
 }
 
+// exactAhead is the most readExactly allocates before the bytes arrive.
+const exactAhead = 4 << 20
+
+// readExactly reads n bytes of r, allocating for those past exactAhead only
+// as they arrive, so a corrupt n fails at the end of r.
+func readExactly(r io.Reader, n uint64) ([]byte, error) {
+	buf := make([]byte, min(n, exactAhead))
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, err
+	}
+
+	if n == uint64(len(buf)) {
+		return buf, nil
+	}
+
+	rest, err := io.ReadAll(io.LimitReader(r, int64(min(n-uint64(len(buf)), math.MaxInt64))))
+	if err != nil {
+		return nil, err
+	}
+
+	if uint64(len(buf)+len(rest)) != n {
+		return nil, io.ErrUnexpectedEOF
+	}
+
+	return append(buf, rest...), nil
+}
+
 type loadPredicate func(*proto.ObjectHeader) bool
 
 func loadAll(hdr *proto.ObjectHeader) bool  { return true }
@@ -733,13 +760,8 @@ func (a *archive) walkReader(reader io.Reader, load loadPredicate, open bool, ca
 			return err
 		}
 
-		hdrBytes := make([]byte, hdrSize)
-		n, err := io.ReadFull(bufReader, hdrBytes)
-		if n != int(hdrSize) {
-			return errors.Wrap(io.ErrUnexpectedEOF, "Failed reading object header")
-		}
-
-		if err != nil && err != io.EOF {
+		hdrBytes, err := readExactly(bufReader, hdrSize)
+		if err != nil {
 			return errors.Wrap(err, "Failed reading object header")
 		}
 

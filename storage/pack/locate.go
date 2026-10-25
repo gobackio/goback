@@ -272,12 +272,12 @@ func (ps *PackStorage) signRun(ctx context.Context, signer RangeSigner, a *archi
 // DecodeRecord turns the body a Location yields back into its object,
 // opening it with the location's at-rest key when it is sealed.
 func DecodeRecord(record []byte, atRestKey []byte) (*proto.Object, error) {
-	size, consumed := proto.DecodeVarint(record)
-	if consumed <= 0 || uint64(len(record)) < uint64(consumed)+size {
-		return nil, errors.New("record is truncated")
+	headerBytes, sealed, err := splitRecord(record)
+	if err != nil {
+		return nil, err
 	}
 
-	header, err := proto.NewObjectHeaderFromBytes(record[consumed : uint64(consumed)+size])
+	header, err := proto.NewObjectHeaderFromBytes(headerBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +290,7 @@ func DecodeRecord(record []byte, atRestKey []byte) (*proto.Object, error) {
 		}
 	}
 
-	stored, err := openAtRest(key, header, record[uint64(consumed)+size:])
+	stored, err := openAtRest(key, header, sealed)
 	if err != nil {
 		return nil, err
 	}

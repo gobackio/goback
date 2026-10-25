@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tink-crypto/tink-go/v2/insecurecleartextkeyset"
 	"github.com/tink-crypto/tink-go/v2/keyset"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -251,4 +253,24 @@ func TestARunCoversNoRecordThatWasNotAskedFor(t *testing.T) {
 			t.Fatalf("a run of %d records", len(located))
 		}
 	}
+}
+
+func TestARecordWhoseHeaderOverrunsItIsRefused(t *testing.T) {
+	for _, size := range []uint64{math.MaxUint64, math.MaxUint64 - 5, 17} {
+		record := append(protowire.AppendVarint(nil, size), make([]byte, 16)...)
+
+		_, err := DecodeRecord(record, nil)
+		require.Error(t, err, "a header of %d bytes", size)
+	}
+}
+
+func TestReadingMoreThanAStreamHoldsFails(t *testing.T) {
+	for _, n := range []uint64{math.MaxUint64, 1 << 40, exactAhead + 1} {
+		_, err := readExactly(bytes.NewReader(make([]byte, 100)), n)
+		require.ErrorIs(t, err, io.ErrUnexpectedEOF, "%d bytes", n)
+	}
+
+	read, err := readExactly(bytes.NewReader(make([]byte, exactAhead+10)), exactAhead+10)
+	require.NoError(t, err)
+	require.Len(t, read, exactAhead+10)
 }
