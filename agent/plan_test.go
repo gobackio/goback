@@ -126,10 +126,29 @@ func TestEveryAcrossDSTIsElapsedTime(t *testing.T) {
 }
 
 func TestStaleAfterIsThreeIntervals(t *testing.T) {
-	now := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
+	last := time.Date(2026, 10, 11, 3, 0, 0, 0, time.UTC)
 
-	require.Equal(t, 3*time.Minute, Every(time.Minute).staleAfter(now))
-	require.Equal(t, 72*time.Hour, cronPlan(t, "0 3 * * *", time.UTC).staleAfter(now))
+	require.Equal(t, 3*time.Minute, Every(time.Minute).staleAfter(last))
+	require.Equal(t, 72*time.Hour, cronPlan(t, "0 3 * * *", time.UTC).staleAfter(last))
+}
+
+func TestACronTaskIsStaleOnlyOnceThreeSlotsPassedSinceItsLastSuccess(t *testing.T) {
+	friday := time.Date(2026, 10, 9, 2, 30, 0, 0, time.UTC)
+	tuesday := time.Date(2026, 10, 13, 2, 30, 0, 0, time.UTC)
+
+	for _, c := range []struct {
+		expr      string
+		last      time.Time
+		fresh     time.Time
+		staleFrom time.Time
+	}{
+		{"0 2 * * 1-5", friday, time.Date(2026, 10, 12, 2, 0, 30, 0, time.UTC), time.Date(2026, 10, 14, 2, 0, 0, 0, time.UTC)},
+		{"0 2 * * 1,2", tuesday, time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC), time.Date(2026, 10, 26, 2, 0, 0, 0, time.UTC)},
+	} {
+		bound := cronPlan(t, c.expr, time.UTC).staleAfter(c.last)
+		require.LessOrEqual(t, c.fresh.Sub(c.last), bound, c.expr)
+		require.Equal(t, c.staleFrom.Sub(c.last), bound, c.expr)
+	}
 }
 
 type commitsIndex struct {

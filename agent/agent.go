@@ -1029,8 +1029,13 @@ func (l *loop) writeStatus() error {
 		}
 
 		if e.known && e.task.Plan != nil {
+			since := j.LastSuccess
+			if since.IsZero() {
+				since = l.started
+			}
+
 			j.NextDue = e.due
-			j.StaleAfter = int64(e.task.Plan.staleAfter(now) / time.Second)
+			j.StaleAfter = int64(e.task.Plan.staleAfter(since) / time.Second)
 		}
 
 		if e.task.Serve != nil {

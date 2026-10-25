@@ -119,18 +119,20 @@ func (p *Plan) Due(offset time.Duration, last, now time.Time) time.Time {
 	return next
 }
 
-// staleAfter is how long without a success makes a task with this plan
-// stale: three intervals, or for cron three times the gap between the next
-// two slots after now.
-func (p *Plan) staleAfter(now time.Time) time.Duration {
+// staleAfter is how long after since, the task's last success, a task with
+// this plan is stale without another: three intervals, or for cron until
+// the third slot after since.
+func (p *Plan) staleAfter(since time.Time) time.Duration {
 	if p.cron == nil {
 		return 3 * p.every
 	}
 
-	first := p.next(now)
-	second := p.next(first)
+	slot := since
+	for range 3 {
+		slot = p.next(slot)
+	}
 
-	return 3 * second.Sub(first)
+	return slot.Sub(since)
 }
 
 // JitterOffset is the offset in [0, window) every slot of the named task
