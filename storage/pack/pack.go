@@ -1701,12 +1701,16 @@ func (ps *PackStorage) Close() error {
 	return nil
 }
 
-// Open implements backup.ObjectStore.
+// Open implements backup.ObjectStore. It logs how long each step took.
 func (ps *PackStorage) Open() error {
+	steps := laps.Start()
+
 	names, listed, err := ps.archiveNames()
 	if err != nil {
 		return errors.Wrap(err, "failed listing archive names")
 	}
+
+	steps.Lap("list")
 
 	// a process that retired these may have stopped before their rows went
 	retired, err := ps.retiredArchives()
@@ -1715,16 +1719,21 @@ func (ps *PackStorage) Open() error {
 	}
 
 	ps.forgetArchives(slices.Collect(maps.Keys(retired)))
+	steps.Lap("retired")
 
 	// sessions first: an archive of a live session is indexed pending under it
 	if err := ps.reconcileSessions(listed); err != nil {
 		return err
 	}
 
+	steps.Lap("sessions")
+
 	marks, err := listMarks(ps.storage)
 	if err != nil {
 		return errors.Wrap(err, "failed listing gc results")
 	}
+
+	steps.Lap("marks")
 
 	sem := semaphore.NewWeighted(indexOpenerThreads)
 	group, ctx := errgroup.WithContext(context.Background())
@@ -1743,7 +1752,14 @@ func (ps *PackStorage) Open() error {
 		})
 	}
 
-	return group.Wait()
+	if err := group.Wait(); err != nil {
+		return err
+	}
+
+	steps.Lap("archives")
+	ps.logger.Info("opened archives", append([]any{"archives", len(names), "marks", len(marks)}, steps.Attrs()...)...)
+
+	return nil
 }
 
 // refreshArchives catches the loaded archives up with the storage and the
