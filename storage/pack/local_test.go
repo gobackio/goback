@@ -145,6 +145,22 @@ func (las *localArchiveStorage) Delete(name string) error {
 	return nil
 }
 
+func (las *localArchiveStorage) Move(from, to string) error {
+	if err := os.MkdirAll(filepath.Dir(las.path(to)), 0755); err != nil {
+		return err
+	}
+
+	if err := os.Rename(las.path(from), las.path(to)); errors.Is(err, fs.ErrNotExist) {
+		return ErrFileNotFound
+	} else if err != nil {
+		return err
+	}
+
+	las.pruneDirs(from)
+
+	return nil
+}
+
 // pruneDirs removes the directories the named file leaves empty.
 func (las *localArchiveStorage) pruneDirs(name string) {
 	for dir := filepath.Dir(las.path(name)); dir != las.base && strings.HasPrefix(dir, las.base); dir = filepath.Dir(dir) {

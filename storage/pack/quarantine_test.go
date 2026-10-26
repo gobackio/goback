@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -99,29 +100,43 @@ func TestACollectionWhoseClockRunsAheadOfTheStoragePurgesNothingEarly(t *testing
 }
 
 func TestRestoringAQuarantinedArchiveBringsItsObjectsBack(t *testing.T) {
-	store := newGCStore(t, t.TempDir())
-	t.Cleanup(func() { _ = store.Close() })
-	ctx := context.Background()
+	for _, moved := range []bool{false, true} {
+		t.Run(fmt.Sprintf("moved=%t", moved), func(t *testing.T) {
+			store := newGCStore(t, t.TempDir())
+			t.Cleanup(func() { _ = store.Close() })
+			ctx := context.Background()
 
-	gone, _ := retiredChain(t, store)
+			gone, _ := retiredChain(t, store)
 
-	_, err := store.Collect(ctx, gcOptions(t, 0))
-	require.NoError(t, err)
-	opts := gcOptions(t, 48*time.Hour)
-	opts.Quarantine = 7 * 24 * time.Hour
-	_, err = store.Collect(ctx, opts)
-	require.NoError(t, err)
-	requireStored(t, store, gone, false)
+			_, err := store.Collect(ctx, gcOptions(t, 0))
+			require.NoError(t, err)
+			opts := gcOptions(t, 48*time.Hour)
+			opts.Quarantine = 7 * 24 * time.Hour
+			_, err = store.Collect(ctx, opts)
+			require.NoError(t, err)
+			requireStored(t, store, gone, false)
 
-	retired, err := store.retiredArchives()
-	require.NoError(t, err)
+			retired, err := store.retiredArchives()
+			require.NoError(t, err)
 
-	for name := range retired {
-		require.NoError(t, store.RestoreQuarantined(name))
+			if moved {
+				n, err := store.moveRetired(time.Now().Add(movedAfter))
+				require.NoError(t, err)
+				require.Len(t, retired, n)
+
+				for name := range retired {
+					require.False(t, store.hasIndexFile(name))
+				}
+			}
+
+			for name := range retired {
+				require.NoError(t, store.RestoreQuarantined(name))
+			}
+
+			requireStored(t, store, gone, true)
+			require.ErrorIs(t, store.RestoreQuarantined("no-such-archive"), ErrNotQuarantined)
+		})
 	}
-
-	requireStored(t, store, gone, true)
-	require.ErrorIs(t, store.RestoreQuarantined("no-such-archive"), ErrNotQuarantined)
 }
 
 func TestThePurgeGoesByTheDayAMarkerNamesAndNeverBeforeItWasStored(t *testing.T) {
@@ -312,6 +327,55 @@ func TestAPurgeGoesByTheDayARetirementNamesAndNeverBeforeItWasFirstStored(t *tes
 	names, _, err := store.archiveNames()
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"live", "same-day-1"}, names)
+}
+
+func TestArchivesRetiredADayAgoMoveIntoTheQuarantineUntilThePurge(t *testing.T) {
+	day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	bucket := newMemBucket()
+
+	store, err := NewPackStorage(WithArchiveStorage(bucket.view()), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	t.Cleanup(func() { _ = store.Close() })
+
+	storeRetirementAt(t, bucket, "old", retirement{Day: day.Format(quarantineDay), Archives: []string{"a", "half"}}, day)
+	storeRetirementAt(t, bucket, "new", retirement{Day: day.Format(quarantineDay), Archives: []string{"b"}}, day.Add(25*time.Hour))
+	bucket.files["a"+GCExt] = memObject{created: day}
+	bucket.files["live"+ArchiveSuffix] = memObject{data: make([]byte, 1000), created: day}
+
+	// a move cut short after the index
+	require.NoError(t, bucket.Move("half"+IndexExt, "half"+IndexExt+QuarantineExt))
+
+	moved, err := store.moveRetired(day.Add(24 * time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 2, moved)
+
+	for _, file := range []string{"a" + ArchiveSuffix, "a" + IndexExt, "a" + GCExt, "half" + ArchiveSuffix, "half" + IndexExt} {
+		require.NotContains(t, bucket.files, file)
+		require.Contains(t, bucket.files, file+QuarantineExt)
+	}
+
+	listed, err := bucket.List(ArchiveSuffix)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"b" + ArchiveSuffix, "live" + ArchiveSuffix}, listed)
+
+	retired, err := store.retiredBytes()
+	require.NoError(t, err)
+	require.Equal(t, uint64(len("a")+len("half")+len("b")), retired)
+
+	again, err := store.moveRetired(day.Add(24 * time.Hour))
+	require.NoError(t, err)
+	require.Zero(t, again)
+
+	purged, err := store.PurgeQuarantine(DefaultQuarantine, day.Add(DefaultQuarantine+24*time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 2, purged)
+
+	for name := range bucket.files {
+		require.False(t, strings.HasPrefix(name, "a.") || strings.HasPrefix(name, "half."), "%s is purged", name)
+	}
+
+	require.Contains(t, bucket.files, "b"+ArchiveSuffix)
 }
 
 func TestAPurgeThatCannotDeleteARetiredArchiveTriesAgainNextRun(t *testing.T) {

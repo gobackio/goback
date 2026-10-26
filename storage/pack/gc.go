@@ -616,6 +616,11 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 		return nil, errors.Wrap(err, "reading when the gc state was stored")
 	}
 
+	moved, err := ps.moveRetired(purgeNow)
+	if err != nil {
+		return nil, errors.Wrap(err, "moving retired archives into the quarantine")
+	}
+
 	report.Purged, err = ps.PurgeQuarantine(opts.Quarantine, purgeNow)
 	if err != nil {
 		return nil, errors.Wrap(err, "purging the quarantine")
@@ -628,7 +633,7 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 
 	phase.Finish()
 
-	ps.logger.Info("gc purged the quarantine", "generation", run.gen, "purged", report.Purged,
+	ps.logger.Info("gc purged the quarantine", "generation", run.gen, "moved", moved, "purged", report.Purged,
 		"retired", humanize.Bytes(report.RetiredBytes), "took", time.Since(purgeStart).Round(time.Millisecond))
 
 	var horizons [][]string

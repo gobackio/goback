@@ -26,6 +26,8 @@ const (
 	OpList Operation = "list"
 	// OpDelete removes an object.
 	OpDelete Operation = "delete"
+	// OpCopy copies an object within the bucket.
+	OpCopy Operation = "copy"
 )
 
 var (

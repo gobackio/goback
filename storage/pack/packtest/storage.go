@@ -34,6 +34,7 @@ func TestArchiveStorage(t *testing.T, store pack.ArchiveStorage) {
 		{"list files with sizes and times", testListInfo},
 		{"nested names", testNestedNames},
 		{"create new", testCreateNew},
+		{"move", testMove},
 		{"test delete all", testDeleteAll},
 	}
 
@@ -349,4 +350,27 @@ func testCreateNew(t *testing.T, store pack.ArchiveStorage, _ []file) {
 	require.Equal(t, "first", string(data), "a taken name keeps what it held")
 
 	require.NoError(t, store.Delete("marker.new"))
+}
+
+func testMove(t *testing.T, store pack.ArchiveStorage, _ []file) {
+	require.NoError(t, store.CreateNew("s1/moved.goback", []byte("moved")))
+	require.NoError(t, store.CreateNew("s1/moved.goback.quarantine", []byte("replaced")))
+	require.NoError(t, store.Move("s1/moved.goback", "s1/moved.goback.quarantine"))
+
+	_, err := store.Open("s1/moved.goback")
+	require.ErrorIs(t, err, pack.ErrFileNotFound)
+
+	names, err := store.List(".quarantine")
+	require.NoError(t, err)
+	require.Equal(t, []string{"s1/moved.goback.quarantine"}, names)
+
+	file, err := store.Open("s1/moved.goback.quarantine")
+	require.NoError(t, err)
+	data, err := io.ReadAll(file)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	require.Equal(t, "moved", string(data))
+
+	require.ErrorIs(t, store.Move("s1/moved.goback", "s1/elsewhere.goback"), pack.ErrFileNotFound)
+	require.NoError(t, store.Delete("s1/moved.goback.quarantine"))
 }

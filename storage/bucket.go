@@ -639,6 +639,30 @@ func (c *BucketStore) Delete(name string) error {
 	return c.timedOut(ctx, err)
 }
 
+// Move implements pack.ArchiveStorage by copying within the bucket and
+// deleting the original.
+func (c *BucketStore) Move(from, to string) error {
+	c.count(OpCopy, 0)
+
+	ctx, cancel := c.request()
+	defer cancel()
+
+	err := c.bucket.Copy(ctx, c.key(to), c.key(from), nil)
+	if gcerrors.Code(err) == gcerrors.NotFound {
+		return pack.ErrFileNotFound
+	}
+
+	if err != nil {
+		return c.timedOut(ctx, err)
+	}
+
+	if err := c.Delete(from); err != nil && !errors.Is(err, pack.ErrFileNotFound) {
+		return err
+	}
+
+	return nil
+}
+
 // listPageSize is how many keys one listing request asks for, which is
 // the most either S3 or Cloud Storage answers with.
 const listPageSize = 1000

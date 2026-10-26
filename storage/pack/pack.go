@@ -1884,6 +1884,9 @@ type ArchiveStorage interface {
 	Open(name string) (File, error)
 	List(extension string) ([]string, error)
 	Delete(name string) error
+	// Move stores the file under to in place of from, replacing what to
+	// held; a missing from is ErrFileNotFound.
+	Move(from, to string) error
 	DeleteAll() error
 }
 

@@ -209,6 +209,19 @@ func (c *indexCache) Delete(name string) error {
 	return err
 }
 
+// Move drops the copy of a moved index, whose new name the storage stamps
+// with a time of its own.
+func (c *indexCache) Move(from, to string) error {
+	err := c.ArchiveStorage.Move(from, to)
+
+	if strings.HasSuffix(from, IndexExt) {
+		_ = os.Remove(c.path(from))
+		_ = os.Remove(c.written(from))
+	}
+
+	return err
+}
+
 // SignRange implements RangeSigner when the storage underneath does.
 func (c *indexCache) SignRange(ctx context.Context, name string, offset, length int64, ttl time.Duration) (*proto.Location, error) {
 	signer, ok := c.ArchiveStorage.(RangeSigner)

@@ -139,6 +139,22 @@ func (b *memBucket) Delete(name string) error {
 	return nil
 }
 
+// Move stamps the moved file anew, as a copy within a bucket is.
+func (b *memBucket) Move(from, to string) error {
+	b.mtx.Lock()
+	defer b.mtx.Unlock()
+
+	obj, ok := b.files[from]
+	if !ok {
+		return ErrFileNotFound
+	}
+
+	delete(b.files, from)
+	b.files[to] = memObject{data: obj.data, created: b.stamp()}
+
+	return nil
+}
+
 func (b *memBucket) DeleteAll() error {
 	b.mtx.Lock()
 	defer b.mtx.Unlock()

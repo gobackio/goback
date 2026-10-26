@@ -34,11 +34,26 @@ type retirement struct {
 	Archives []string  `json:"archives"`
 }
 
+// QuarantineExt names a retired archive's file moved out of the way:
+// <archive>.goback.quarantine and so on, which the store neither lists
+// nor loads, until a collection purges it or RestoreQuarantined moves it
+// back.
+const QuarantineExt = ".quarantine"
+
 const quarantineDay = "2006-01-02"
 
 // DefaultQuarantine is how long a retired archive is kept by default, so
 // reads already under way, in this process or another, finish against it.
 const DefaultQuarantine = 24 * time.Hour
+
+// movedAfter is how long a retired archive's files stay where readers
+// that loaded it before it was retired look for them.
+const movedAfter = 24 * time.Hour
+
+// archiveExts are the extensions of an archive's files. The data file
+// moves into the quarantine last and out of it first, so an archive
+// whose data file is quarantined has all its files there.
+var archiveExts = []string{IndexExt, GCExt, CommittedExt, ArchiveSuffix}
 
 // archiveNames lists the archives in the storage that are not retired,
 // and, when the storage is an InfoLister, what the listing said of each
@@ -250,6 +265,124 @@ func (ps *PackStorage) cutRetirement(r storedRetirement, out map[string]bool) er
 // under way at once.
 const fileWorkers = 16
 
+// moveRetired moves the files of the archives retired at least movedAfter
+// before now into the quarantine and returns how many archives it moved.
+func (ps *PackStorage) moveRetired(now time.Time) (int, error) {
+	retirements, err := ps.retirements()
+	if err != nil {
+		return 0, err
+	}
+
+	listed, err := ps.storage.List(ArchiveSuffix)
+	if err != nil {
+		return 0, err
+	}
+
+	inPlace := make(map[string]bool, len(listed))
+	for _, name := range listed {
+		inPlace[strings.TrimSuffix(name, ArchiveSuffix)] = true
+	}
+
+	var moved atomic.Int64
+
+	grp := new(errgroup.Group)
+	grp.SetLimit(fileWorkers)
+
+	for _, r := range retirements {
+		if now.Sub(r.since()) < movedAfter {
+			continue
+		}
+
+		for _, name := range r.Archives {
+			if !inPlace[name] {
+				continue
+			}
+
+			delete(inPlace, name)
+
+			grp.Go(func() error {
+				if ps.quarantineFiles(name) {
+					moved.Add(1)
+				}
+
+				return nil
+			})
+		}
+	}
+
+	_ = grp.Wait()
+
+	return int(moved.Load()), nil
+}
+
+// quarantineFiles moves the archive's files into the quarantine and
+// reports whether all of them moved.
+func (ps *PackStorage) quarantineFiles(name string) bool {
+	for _, ext := range archiveExts {
+		err := ps.storage.Move(name+ext, name+ext+QuarantineExt)
+		if err != nil && !notExist(err) {
+			ps.logger.Warn("moving a retired archive's file into the quarantine failed", "file", name+ext, "err", err)
+			return false
+		}
+	}
+
+	return true
+}
+
+// unquarantineFiles moves the archive's files back out of the quarantine.
+func (ps *PackStorage) unquarantineFiles(name string) error {
+	for _, ext := range slices.Backward(archiveExts) {
+		err := ps.storage.Move(name+ext+QuarantineExt, name+ext)
+		if err != nil && !notExist(err) {
+			return fmt.Errorf("moving %s out of the quarantine: %w", name+ext, err)
+		}
+	}
+
+	return nil
+}
+
+// quarantined lists the files in the quarantine with their sizes.
+func (ps *PackStorage) quarantined() (map[string]int64, error) {
+	files, err := ListInfo(ps.storage, QuarantineExt)
+	if err != nil {
+		return nil, err
+	}
+
+	sizes := make(map[string]int64, len(files))
+	for _, file := range files {
+		sizes[file.Name] = file.Size
+	}
+
+	return sizes, nil
+}
+
+// purgeArchive deletes a retired archive's files that quarantined lists
+// and, unless its data file is among them, those in place, and reports
+// whether its index and data are gone.
+func (ps *PackStorage) purgeArchive(name string, quarantined map[string]int64) bool {
+	_, moved := quarantined[name+ArchiveSuffix+QuarantineExt]
+	gone := moved || ps.deleteArchiveFiles(name)
+
+	for _, ext := range archiveExts {
+		file := name + ext + QuarantineExt
+		if _, ok := quarantined[file]; !ok {
+			continue
+		}
+
+		err := ps.storage.Delete(file)
+		if err != nil && !notExist(err) {
+			ps.logger.Warn("deleting a quarantined file failed", "file", file, "err", err)
+			gone = gone && ext != IndexExt && ext != ArchiveSuffix
+		}
+
+		if err == nil && ext == ArchiveSuffix {
+			ps.archivesDeleted([]string{name})
+		}
+	}
+
+	return gone
+}
+
 // PurgeQuarantine deletes the archives retired longer than period ago and
 // returns how many it deleted.
 func (ps *PackStorage) PurgeQuarantine(period time.Duration, now time.Time) (int, error) {
@@ -305,14 +438,19 @@ func (ps *PackStorage) PurgeQuarantine(period time.Duration, now time.Time) (int
 		return int(purged.Load()), err
 	}
 
-	n, err := ps.purgeRetirements(due)
+	quarantined, err := ps.quarantined()
+	if err != nil {
+		return int(purged.Load()), err
+	}
+
+	n, err := ps.purgeRetirements(due, quarantined)
 
 	return int(purged.Load()) + n, err
 }
 
 // purgeRetirements deletes the archives of every retirement due by both
-// the day it names and the day the storage stored it.
-func (ps *PackStorage) purgeRetirements(due func(day time.Time) bool) (int, error) {
+// the day it names and the day the storage stored it, quarantined or not.
+func (ps *PackStorage) purgeRetirements(due func(day time.Time) bool, quarantined map[string]int64) (int, error) {
 	retirements, err := ps.retirements()
 	if err != nil {
 		return 0, err
@@ -346,7 +484,7 @@ func (ps *PackStorage) purgeRetirements(due func(day time.Time) bool) (int, erro
 
 	for name := range archives {
 		grp.Go(func() error {
-			if ps.deleteArchiveFiles(name) {
+			if ps.purgeArchive(name, quarantined) {
 				mtx.Lock()
 				gone[name] = true
 				mtx.Unlock()
@@ -386,11 +524,22 @@ func (ps *PackStorage) retiredBytes() (uint64, error) {
 		return 0, err
 	}
 
+	quarantined, err := ps.quarantined()
+	if err != nil {
+		return 0, err
+	}
+
 	var total uint64
 
 	for _, archive := range archives {
 		if retired[strings.TrimSuffix(archive.Name, ArchiveSuffix)] {
 			total += uint64(archive.Size)
+		}
+	}
+
+	for name, size := range quarantined {
+		if strings.HasSuffix(name, ArchiveSuffix+QuarantineExt) {
+			total += uint64(size)
 		}
 	}
 
@@ -419,8 +568,12 @@ var ErrNotQuarantined = errors.New("the quarantine holds no such archive")
 // RestoreQuarantined puts a retired archive back, where the store picks
 // it up as committed.
 func (ps *PackStorage) RestoreQuarantined(name string) error {
-	if !ps.hasIndexFile(name) {
+	if !ps.hasIndexFile(name) && !ps.stored(name+IndexExt+QuarantineExt) {
 		return fmt.Errorf("%w: %s", ErrNotQuarantined, name)
+	}
+
+	if err := ps.unquarantineFiles(name); err != nil {
+		return err
 	}
 
 	err := ps.storage.Delete(name + RetiredExt)
