@@ -120,7 +120,7 @@ func (s *partStream) fetch(ctx context.Context, i int) streamed {
 		return streamed{data: data, counter: counter, source: source}
 	}
 
-	obj, err := r.Store.Get(ctx, part.Ref)
+	obj, err := reader.stored(ctx, i)
 	if err != nil {
 		if r.Salvage && errors.Is(err, ErrNotFound) {
 			s.mtx.Lock()

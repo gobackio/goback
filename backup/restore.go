@@ -1123,7 +1123,7 @@ func (r *Restorer) getPart(ctx context.Context, dst target, reader *fileReader, 
 
 	if obj == nil {
 		var err error
-		if obj, err = r.Store.Get(ctx, part.Ref); err != nil {
+		if obj, err = reader.stored(ctx, i); err != nil {
 			if r.Salvage && errors.Is(err, ErrNotFound) {
 				return true, nil
 			}

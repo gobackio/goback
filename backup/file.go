@@ -680,24 +680,39 @@ func counted(parts []*proto.FilePart) []*proto.FilePart {
 // FileParts returns a file's parts with its splits flattened, in order,
 // each hole's length counted in Length; an inline file has none.
 func FileParts(ctx context.Context, store Getter, file *proto.File) ([]*proto.FilePart, error) {
+	parts, _, err := heldParts(ctx, store, nil, file)
+
+	return parts, err
+}
+
+// holder is a file object that holds parts directly, the first of them at
+// index first of the parts it is listed with.
+type holder struct {
+	ref   *proto.Ref
+	first int
+}
+
+// heldParts is FileParts with the holders of the parts; ref is file's.
+func heldParts(ctx context.Context, store Getter, ref *proto.Ref, file *proto.File) ([]*proto.FilePart, []holder, error) {
 	if len(file.GetSplits()) == 0 {
-		return counted(file.GetParts()), nil
+		return counted(file.GetParts()), []holder{{ref: ref}}, nil
 	}
 
 	subFiles, err := loadSplits(ctx, store, file.GetSplits())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var (
-		parts []*proto.FilePart
-		start uint64
+		parts   []*proto.FilePart
+		holders []holder
+		start   uint64
 	)
 
 	for i, sub := range subFiles {
-		held, err := FileParts(ctx, store, sub)
+		held, below, err := heldParts(ctx, store, file.GetSplits()[i], sub)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		if file.GetSplitDepth() > 0 {
@@ -705,10 +720,14 @@ func FileParts(ctx context.Context, store Getter, file *proto.File) ([]*proto.Fi
 			start += file.GetSplitLengths()[i]
 		}
 
+		for _, h := range below {
+			holders = append(holders, holder{ref: h.ref, first: len(parts) + h.first})
+		}
+
 		parts = append(parts, held...)
 	}
 
-	return parts, nil
+	return parts, holders, nil
 }
 
 // loadSplits reads the sub-file objects of a split file together.
@@ -787,25 +806,40 @@ func SubFiles(ctx context.Context, store Getter, file *proto.File, visit func(re
 }
 
 func newFileReader(ctx context.Context, store ObjectStore, file *proto.File, key *storekey.Key) *fileReader {
-	return &fileReader{
+	reader := &fileReader{
 		store: store,
 		file:  file,
 		key:   key,
 		ctx:   ctx,
 		total: -1,
 	}
+
+	if streams, ok := store.(PartReader); ok {
+		reader.streams = streams
+		reader.ref = proto.NewObject(file).Ref()
+	}
+
+	return reader
 }
 
 type fileReader struct {
 	store ObjectStore
-	file  *proto.File
-	key   *storekey.Key
-	// all is every part, once something needed them all
-	all    []*proto.FilePart
-	inline []byte
+	// streams, when set, fetches the parts in place of Get, which a store
+	// server answers for no blob; ref is then the file's
+	streams PartReader
+	ref     *proto.Ref
+	file    *proto.File
+	key     *storekey.Key
+	// all is every part, once something needed them all, and allHeld the
+	// file objects holding them
+	all     []*proto.FilePart
+	allHeld []holder
+	inline  []byte
 	// parts is the run of parts a read is in: one sub-file object's of a
-	// measured split file, all of them otherwise
+	// measured split file, all of them otherwise; held are the file
+	// objects holding them
 	parts     []*proto.FilePart
+	held      []holder
 	partIndex int
 	blob      *proto.Object
 	offset    int64
@@ -855,12 +889,12 @@ func (bfr *fileReader) locate(ctx context.Context) error {
 	bfr.blob = nil
 
 	if !runHolds(bfr.parts, bfr.offset) {
-		parts, err := bfr.partsAt(ctx, uint64(bfr.offset))
+		parts, held, err := bfr.partsAt(ctx, uint64(bfr.offset))
 		if err != nil {
 			return err
 		}
 
-		bfr.parts = parts
+		bfr.parts, bfr.held = parts, held
 	}
 
 	bfr.partIndex = sort.Search(len(bfr.parts), bfr.search)
@@ -882,20 +916,24 @@ func runHolds(parts []*proto.FilePart, offset int64) bool {
 	return offset >= int64(parts[0].Offset) && offset < int64(last.Offset+last.Length)
 }
 
-func (bfr *fileReader) partsAt(ctx context.Context, offset uint64) ([]*proto.FilePart, error) {
+func (bfr *fileReader) partsAt(ctx context.Context, offset uint64) ([]*proto.FilePart, []holder, error) {
 	if bfr.file.GetSplitDepth() == 0 {
-		return bfr.getFileParts(ctx)
+		parts, err := bfr.getFileParts(ctx)
+		return parts, bfr.allHeld, err
 	}
 
 	file := bfr.file
-	var start uint64
+	var (
+		start uint64
+		ref   *proto.Ref
+	)
 
 	length := sum(file.GetSplitLengths())
 
 	for file.GetSplitDepth() > 0 {
 		lengths := file.GetSplitLengths()
 		if len(lengths) == 0 || len(lengths) != len(file.GetSplits()) || sum(lengths) != length {
-			return nil, errors.Errorf("a split of file %x does not hold the length recorded for it", bfr.fileRef())
+			return nil, nil, errors.Errorf("a split of file %x does not hold the length recorded for it", bfr.fileRef())
 		}
 
 		i := 0
@@ -903,19 +941,21 @@ func (bfr *fileReader) partsAt(ctx context.Context, offset uint64) ([]*proto.Fil
 			start += lengths[i]
 		}
 
-		sub, err := loadSplit(ctx, bfr.store, i, file.GetSplits()[i])
+		ref = file.GetSplits()[i]
+
+		sub, err := loadSplit(ctx, bfr.store, i, ref)
 		if err != nil {
-			return nil, errors.Wrapf(err, "file %x", bfr.fileRef())
+			return nil, nil, errors.Wrapf(err, "file %x", bfr.fileRef())
 		}
 
 		file, length = sub, lengths[i]
 	}
 
 	if end, ok := contiguous(file.GetParts()); !ok || end != length {
-		return nil, errors.Errorf("a split of file %x does not hold the length recorded for it", bfr.fileRef())
+		return nil, nil, errors.Errorf("a split of file %x does not hold the length recorded for it", bfr.fileRef())
 	}
 
-	return rebased(file.GetParts(), int64(start)), nil
+	return rebased(file.GetParts(), int64(start)), []holder{{ref: ref}}, nil
 }
 
 type partResponse struct {
@@ -944,7 +984,7 @@ func (bfr *fileReader) getPart(ctx context.Context, index int, part *proto.FileP
 		return &proto.Blob{Data: bfr.inline}, nil
 	}
 
-	obj, err := bfr.store.Get(ctx, part.Ref)
+	obj, err := bfr.stored(ctx, index)
 	if err != nil {
 		return nil, errors.Wrapf(err, "part %d (%x) of file %x", index, part.Ref.Hash, bfr.fileRef())
 	}
@@ -955,6 +995,56 @@ func (bfr *fileReader) getPart(ctx context.Context, index int, part *proto.FileP
 	}
 
 	return &proto.Blob{Data: data}, nil
+}
+
+// stored fetches the stored object of part index of the run, through the
+// stream of the file object holding it when the store streams parts.
+func (bfr *fileReader) stored(ctx context.Context, index int) (*proto.Object, error) {
+	if bfr.streams == nil {
+		return bfr.store.Get(ctx, bfr.parts[index].Ref)
+	}
+
+	k := sort.Search(len(bfr.held), func(k int) bool { return bfr.held[k].first > index }) - 1
+	in, end := bfr.held[k], len(bfr.parts)
+
+	if k+1 < len(bfr.held) {
+		end = bfr.held[k+1].first
+	}
+
+	want := index - in.first
+
+	skip := make([]int, 0, end-in.first-1)
+	for i := range end - in.first {
+		if i != want {
+			skip = append(skip, i)
+		}
+	}
+
+	var (
+		mtx sync.Mutex
+		obj *proto.Object
+	)
+
+	err := bfr.streams.ReadParts(ctx, in.ref, skip, func(i int, streamed *proto.Object) error {
+		if i != want {
+			return errors.Errorf("file %x streamed part %d, not %d", in.ref.Hash, i, want)
+		}
+
+		mtx.Lock()
+		obj = streamed
+		mtx.Unlock()
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if obj == nil {
+		return nil, errors.Wrapf(ErrNotFound, "file %x streamed no part %d", in.ref.Hash, want)
+	}
+
+	return obj, nil
 }
 
 // openPart returns the plaintext of a part's stored object.
@@ -1000,7 +1090,7 @@ func (bfr *fileReader) getFileParts(ctx context.Context) ([]*proto.FilePart, err
 		return bfr.all, nil
 	}
 
-	parts, err := bfr.loadParts(ctx)
+	parts, held, err := bfr.loadParts(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1010,8 +1100,8 @@ func (bfr *fileReader) getFileParts(ctx context.Context) ([]*proto.FilePart, err
 		return nil, errors.Errorf("the parts of file %x do not run back to back over its length", bfr.fileRef())
 	}
 
-	bfr.all = parts
-	bfr.parts = parts
+	bfr.all, bfr.allHeld = parts, held
+	bfr.parts, bfr.held = parts, held
 	bfr.partIndex = 0
 	bfr.blob = nil
 	bfr.total = 0
@@ -1049,7 +1139,8 @@ func sum(lengths []uint64) uint64 {
 	return total
 }
 
-func (bfr *fileReader) loadParts(ctx context.Context) ([]*proto.FilePart, error) {
+func (bfr *fileReader) loadParts(ctx context.Context) ([]*proto.FilePart, []holder, error) {
+	whole := []holder{{ref: bfr.ref}}
 
 	switch {
 	case len(bfr.file.Inline) > 0:
@@ -1057,24 +1148,24 @@ func (bfr *fileReader) loadParts(ctx context.Context) ([]*proto.FilePart, error)
 
 		if bfr.file.InlineEncryption == proto.Encryption_SEALED {
 			if bfr.key == nil {
-				return nil, errors.Wrapf(storekey.ErrNoKey, "inline content of file %x", bfr.fileRef())
+				return nil, nil, errors.Wrapf(storekey.ErrNoKey, "inline content of file %x", bfr.fileRef())
 			}
 
 			inline, err := bfr.key.OpenInline(bfr.file.Inline)
 			if err != nil {
-				return nil, errors.Wrapf(err, "inline content of file %x", bfr.fileRef())
+				return nil, nil, errors.Wrapf(err, "inline content of file %x", bfr.fileRef())
 			}
 
 			bfr.inline = inline
 		}
 
-		return []*proto.FilePart{{Offset: 0, Length: uint64(len(bfr.inline))}}, nil
+		return []*proto.FilePart{{Offset: 0, Length: uint64(len(bfr.inline))}}, whole, nil
 	case len(bfr.file.Splits) > 0:
-		return FileParts(ctx, bfr.store, bfr.file)
+		return heldParts(ctx, bfr.store, bfr.ref, bfr.file)
 	case bfr.file.Parts != nil:
-		return counted(bfr.file.Parts), nil
+		return counted(bfr.file.Parts), whole, nil
 	default:
-		return []*proto.FilePart{}, nil
+		return []*proto.FilePart{}, whole, nil
 	}
 }
 

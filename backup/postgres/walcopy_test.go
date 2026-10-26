@@ -72,49 +72,59 @@ func TestTheWALCopiedHoldsWhatRecoveryReadsUpToOneSegmentAfterTheMoment(t *testi
 }
 
 func TestARestoreWithoutARestoreCommandCopiesTheWALIntoTheDataDirectory(t *testing.T) {
-	for name, fsys := range map[string]backup.WriteFS{"local": nil, "front to back": frontToBack{backup.LocalFS{}}} {
-		t.Run(name, func(t *testing.T) {
-			f := newWALFixture(t)
+	for _, served := range []bool{false, true} {
+		for name, fsys := range map[string]backup.WriteFS{"local": nil, "front to back": frontToBack{backup.LocalFS{}}} {
+			t.Run(fmt.Sprintf("%s/served=%v", name, served), func(t *testing.T) {
+				f := newWALFixture(t)
 
-			_, err := f.runBase(baseTar(t, 42), nil)
-			require.NoError(t, err)
+				_, err := f.runBase(baseTar(t, 42), nil)
+				require.NoError(t, err)
 
-			seven := f.spoolSegment(7, 42)
-			want, err := os.ReadFile(filepath.Join(f.spool.Dir, seven))
-			require.NoError(t, err)
+				// larger than a file object holds inline, so its header is read from its parts
+				seven := walName(1, 7)
+				want := segmentContent(1, 7, 1<<20)
+				f.spoolAt(seven, want, time.Unix(0, 0))
 
-			f.spoolSegment(8, 42)
-			_, err = f.receive(f.receiving(1, 9, 1000))
-			require.NoError(t, err)
+				f.spoolSegment(8, 42)
+				_, err = f.receive(f.receiving(1, 9, 1000))
+				require.NoError(t, err)
 
-			dir := filepath.Join(t.TempDir(), "data")
-			r := &Restore{
-				Objects: f.index,
-				Latest:  func(ctx context.Context, set string) (*proto.Ref, error) { return f.index.LatestCommit(ctx, set) },
-				BaseSet: "db-base",
-				WALSet:  "db-wal",
-				FS:      fsys,
-			}
+				var objects backup.ObjectStore = f.index
+				if served {
+					objects, _ = f.served()
+				}
 
-			result, err := r.Run(f.ctx, dir)
-			require.NoError(t, err)
-			require.Equal(t, []string{seven, walName(1, 8), walName(1, 9)}, result.Copied)
-			require.Equal(t, fsys != nil, result.ModeUnset)
+				latest := objects.(backup.Index)
 
-			got, err := os.ReadFile(filepath.Join(dir, "pg_wal", seven))
-			require.NoError(t, err)
-			require.Equal(t, want, got, "the WAL set's copy over the base's")
+				dir := filepath.Join(t.TempDir(), "data")
+				r := &Restore{
+					Objects: objects,
+					Latest:  latest.LatestCommit,
+					BaseSet: "db-base",
+					WALSet:  "db-wal",
+					FS:      fsys,
+				}
 
-			got, err = os.ReadFile(filepath.Join(dir, "pg_wal", walName(1, 9)))
-			require.NoError(t, err)
-			require.Len(t, got, segSize, "the partial segment padded")
-			require.Equal(t, segmentContent(1, 9, 1000), got[:1000])
+				result, err := r.Run(f.ctx, dir)
+				require.NoError(t, err)
+				require.Equal(t, []string{seven, walName(1, 8), walName(1, 9)}, result.Copied)
+				require.Equal(t, fsys != nil, result.ModeUnset)
 
-			conf, err := os.ReadFile(filepath.Join(dir, "postgresql.auto.conf"))
-			require.NoError(t, err)
-			require.Contains(t, string(conf), "restore_command = 'exit 1'")
-			require.FileExists(t, filepath.Join(dir, "recovery.signal"))
-		})
+				got, err := os.ReadFile(filepath.Join(dir, "pg_wal", seven))
+				require.NoError(t, err)
+				require.Equal(t, want, got, "the WAL set's copy over the base's")
+
+				got, err = os.ReadFile(filepath.Join(dir, "pg_wal", walName(1, 9)))
+				require.NoError(t, err)
+				require.Len(t, got, segSize, "the partial segment padded")
+				require.Equal(t, segmentContent(1, 9, 1000), got[:1000])
+
+				conf, err := os.ReadFile(filepath.Join(dir, "postgresql.auto.conf"))
+				require.NoError(t, err)
+				require.Contains(t, string(conf), "restore_command = 'exit 1'")
+				require.FileExists(t, filepath.Join(dir, "recovery.signal"))
+			})
+		}
 	}
 }
 
