@@ -660,7 +660,7 @@ type commitDone struct {
 	err    error
 }
 
-func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
+func (s *session) run(ctx context.Context, stop <-chan struct{}) (err error) {
 	r := s.r
 	now := r.now()
 
@@ -679,10 +679,15 @@ func (s *session) run(ctx context.Context, stop <-chan struct{}) error {
 	commitCtx, abandon := context.WithCancel(ctx)
 	defer abandon()
 
+	// segments that filled during a commit still in flight when the session
+	// ends move into the spool, so the next one goes on after them even
+	// when the server no longer has them
 	defer func() {
 		if inflight != nil {
 			<-inflight
 		}
+
+		err = errors.Join(err, s.w.release())
 	}()
 
 	for {

@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
@@ -672,19 +672,24 @@ func (f *walFixture) latestRef(t *testing.T) *proto.Ref {
 	return ref
 }
 
-// downIndex fails every write while down is set, as an unreachable store
-// does.
+// downIndex holds every write until timeout is closed and then fails it,
+// as a store does that is unreachable; waiting is closed once one waits.
 type downIndex struct {
 	*sql.Index
-	down *atomic.Bool
+	waiting chan struct{}
+	once    *sync.Once
+	timeout chan struct{}
 }
 
-func (d downIndex) Put(ctx context.Context, obj *proto.Object) error {
-	if d.down.Load() {
-		return errors.New("the store is unreachable")
-	}
+func (d downIndex) Put(ctx context.Context, _ *proto.Object) error {
+	d.once.Do(func() { close(d.waiting) })
 
-	return d.Index.Put(ctx, obj)
+	select {
+	case <-d.timeout:
+		return errors.New("the store is unreachable")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func TestTheSpoolBridgesASlotLostWhileTheStoreIsDown(t *testing.T) {
@@ -698,15 +703,24 @@ func TestTheSpoolBridgesASlotLostWhileTheStoreIsDown(t *testing.T) {
 	x.caughtUp()
 	require.NoError(t, stop())
 
-	var down atomic.Bool
-	down.Store(true)
+	down := downIndex{x.f.index, make(chan struct{}), &sync.Once{}, make(chan struct{})}
 
 	r := x.receiver()
 	r.Walker = func() *backup.Walker {
-		return &backup.Walker{Index: downIndex{x.f.index, &down}, Objects: x.f.index, Set: "db-wal", AgentID: "a", Root: x.spool.Dir, Workers: 2}
+		return &backup.Walker{Index: down, Objects: x.f.index, Set: "db-wal", AgentID: "a", Root: x.spool.Dir, Workers: 2}
 	}
 
-	stop = x.start(r)
+	ended := make(chan error, 1)
+	go func() { ended <- r.Run(context.Background(), make(chan struct{})) }()
+
+	// the segments fill while a commit waits for the store
+	select {
+	case <-down.waiting:
+	case err := <-ended:
+		t.Fatalf("the receiver ended: %v", err)
+	case <-time.After(time.Minute):
+		t.Fatal("no commit started")
+	}
 
 	for range 8 {
 		x.insert("while the store is down")
@@ -718,9 +732,16 @@ func TestTheSpoolBridgesASlotLostWhileTheStoreIsDown(t *testing.T) {
 
 	x.pg.psql("CHECKPOINT")
 	x.pg.waitFor(`[ "$(psql -tAc "SELECT wal_status FROM pg_replication_slots WHERE slot_name = 'goback_db_wal'")" = lost ]`)
-	require.Error(t, stop(), "the server ends the connection of a slot it invalidates")
+	close(down.timeout)
 
-	down.Store(false)
+	// the receiver reads what is still on its way before the server's end
+	// of the connection, and a stop would cut that short
+	select {
+	case err := <-ended:
+		require.Error(t, err, "the server ends the connection of a slot it invalidates")
+	case <-time.After(time.Minute):
+		t.Fatal("the receiver went on after the server invalidated its slot")
+	}
 
 	stop = x.start(x.receiver())
 	x.insert("once it is back")

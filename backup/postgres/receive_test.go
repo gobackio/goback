@@ -81,6 +81,10 @@ func (f *fakeStream) next(_ context.Context, deadline time.Time) (any, error) {
 		f.script = f.script[1:]
 		f.mu.Unlock()
 
+		if err, ok := m.(error); ok {
+			return nil, err
+		}
+
 		return m, nil
 	}
 
@@ -346,6 +350,43 @@ func TestACommitThatHangsWhileTheServerShutsDownIsAbandoned(t *testing.T) {
 	err := s.run(context.Background(), stop)
 	require.Error(t, err)
 	require.Less(t, f.clock().Sub(start), time.Minute, "the shutdown waited for the store")
+}
+
+func TestSegmentsThatFilledDuringACommitReachTheSpoolWhenTheStreamFails(t *testing.T) {
+	f := &fakeStream{script: []any{xlogData{start: 0, data: wal(0, 100)}}}
+	start := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	terminated := errors.New("terminating connection due to administrator command")
+
+	f.tick = func(now time.Time) {
+		if now.Sub(start) == 2*time.Minute {
+			f.mu.Lock()
+			f.script = append(f.script, xlogData{start: 100, data: wal(100, 2*segSize)}, terminated)
+			f.mu.Unlock()
+		}
+	}
+
+	// the commit fails only once the stream has, so both segments fill
+	// while it reads the first
+	streamFailed := func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+
+		return f.now.Sub(start) >= 2*time.Minute && len(f.script) == 0
+	}
+
+	s := newSession(t, f, func(context.Context, *cut) (*backup.WalkResult, error) {
+		for !streamFailed() {
+			time.Sleep(time.Millisecond)
+		}
+
+		return nil, errors.New("the store is down")
+	})
+
+	require.ErrorIs(t, s.run(context.Background(), make(chan struct{})), terminated)
+
+	files, err := s.r.Spool.Files()
+	require.NoError(t, err)
+	require.Equal(t, []string{walName(1, 0), walName(1, 1)}, files, "the next session goes on after them, though the server may no longer have them")
 }
 
 func TestTheLastCommitHappensOnStop(t *testing.T) {
