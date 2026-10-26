@@ -739,7 +739,11 @@ func TestRestoreFilesFallsBackFileByFileWhenAGroupFails(t *testing.T) {
 	restoreFiles(t, &backup.Restorer{Store: client, Key: f.key, Workers: 8}, f, into)
 	requireRestored(t, f, into)
 
-	require.Greater(t, seen.calls.Load(), int64(100), "the files were read one by one")
+	// which files the failed fetch held depends on which fetch came first,
+	// so the count is measured against a restore where none fails
+	healthy, unbroken := serveShaped(t, f, link{}, true)
+	restoreFiles(t, &backup.Restorer{Store: healthy, Key: f.key, Workers: 8}, f, t.TempDir())
+	require.Greater(t, seen.calls.Load(), unbroken.calls.Load()+1, "the files were read one by one")
 }
 
 func TestRestoreFilesReadsLargeFilesOnTheirOwn(t *testing.T) {
