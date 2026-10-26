@@ -718,10 +718,10 @@ func TestADirtyRunIsNoSuccess(t *testing.T) {
 
 		task := h.fake("w", Every(time.Hour), 0, nil)
 		run := task.Run
-		clean := false
+		var clean atomic.Bool
 		task.Run = func(ctx context.Context, env *job.Env) (*backup.WalkResult, error) {
 			result, err := run(ctx, env)
-			if result != nil && !clean {
+			if result != nil && !clean.Load() {
 				result.Unreadable = 1
 			}
 
@@ -746,7 +746,7 @@ func TestADirtyRunIsNoSuccess(t *testing.T) {
 		require.Equal(t, 3, j.DirtyRuns)
 		require.Zero(t, j.Failures)
 
-		clean = true
+		clean.Store(true)
 		time.Sleep(time.Hour)
 
 		j = status()

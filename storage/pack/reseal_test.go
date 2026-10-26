@@ -6,6 +6,7 @@ import (
 	"io"
 	"math/rand"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -655,6 +656,7 @@ type recordingFollower struct {
 	pins    []Replacement
 	objects []Replacement
 	kept    []*proto.Ref
+	mu      sync.Mutex
 }
 
 func (r *recordingFollower) held(refs ...*proto.Ref) []bool {
@@ -692,6 +694,9 @@ func (r *recordingFollower) KeepCommit(_ context.Context, commit *proto.Ref) err
 }
 
 func (r *recordingFollower) ReplaceObject(_ context.Context, object Replacement) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.objects = append(r.objects, object)
 	return nil
 }

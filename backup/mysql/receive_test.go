@@ -339,33 +339,36 @@ func TestHeartbeatsMoveAQuietBinlogSetsCoverageOn(t *testing.T) {
 	heartbeat := streamed(eventBytes(heartbeatEvent, 1, 0, s.end, eventHeaderLen+len("binlog.000001"), 0))
 	stale := streamed(eventBytes(heartbeatEvent, 1, 0, s.end-50, eventHeaderLen+len("binlog.000001"), 0))
 
-	// each beat waits for the commits before it, so each lands in its own
+	// each beat waits for the commits before it, so each lands in its own,
+	// without holding the clock: the receiver starts the next commit only as
+	// the clock moves on
 	beats := []struct {
 		at      time.Duration
 		stored  int
 		message *streamEvent
 	}{{2 * time.Minute, 1, heartbeat}, {3 * time.Minute, 2, stale}, {4 * time.Minute, 2, heartbeat}}
 
-	rf.dump.tick = func(now time.Time) {
-		if len(beats) > 0 && now.Sub(t0) >= beats[0].at {
-			require.Eventually(t, func() bool { return len(rf.covered()) >= beats[0].stored }, 10*time.Second, time.Millisecond)
+	var sent []time.Time
 
+	rf.dump.tick = func(now time.Time) {
+		if len(beats) > 0 && now.Sub(t0) >= beats[0].at && len(rf.covered()) >= beats[0].stored {
 			rf.dump.mu.Lock()
 			rf.dump.script = append(rf.dump.script, beats[0].message)
 			rf.dump.mu.Unlock()
 
+			sent = append(sent, now)
 			beats = beats[1:]
 		}
 
-		if now.Sub(t0) >= 5*time.Minute {
+		if len(beats) == 0 && len(rf.covered()) >= 3 {
 			rf.stopped.Do(func() { close(rf.stop) })
 		}
 	}
 
 	require.NoError(t, rf.run())
 	require.Equal(t, [][2]time.Time{
-		{t0, t0.Add(4 * time.Minute)},
-		{t0, t0.Add(2 * time.Minute)},
+		{t0, sent[2]},
+		{t0, sent[0]},
 		{t0, t0.Add(time.Second)},
 	}, rf.covered(), "a heartbeat at another position than the received binlog's end confirms nothing")
 }

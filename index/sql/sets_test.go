@@ -330,6 +330,8 @@ func (f *fixture) reachable(ref *proto.Ref, sets ...string) bool {
 }
 
 func TestReachableAllAnswersMoreRefsAndSetsThanOneStatementBinds(t *testing.T) {
+	skipPastBindLimitUnderRace(t)
+
 	f := newFixture(t)
 	root := f.tree(f.file("a.txt", "one"))
 	f.commit("world", root, false)

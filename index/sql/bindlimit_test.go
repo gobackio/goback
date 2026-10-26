@@ -16,6 +16,14 @@ import (
 // pastBindLimit is more values than SQLite binds in one statement.
 const pastBindLimit = 33000
 
+// skipPastBindLimitUnderRace skips a test of pastBindLimit rows under the
+// race detector, where they take minutes.
+func skipPastBindLimitUnderRace(t *testing.T) {
+	if raceEnabled {
+		t.Skip("pastBindLimit rows take minutes under the race detector")
+	}
+}
+
 // rows adds n commit rows to the set, received before any the fixture
 // commits, tombstoned when asked, and returns their refs.
 func (f *fixture) rows(name string, n int, tombstoned bool) []*proto.Ref {
@@ -52,6 +60,8 @@ func (f *fixture) rows(name string, n int, tombstoned bool) []*proto.Ref {
 }
 
 func TestASetWithMoreCommitsThanOneStatementBindsKeepsWorking(t *testing.T) {
+	skipPastBindLimitUnderRace(t)
+
 	f := newFixture(t)
 
 	f.commit("s", f.tree(f.file("a", "1")), false)

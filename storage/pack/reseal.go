@@ -87,7 +87,8 @@ type ResealFollower interface {
 
 // ObjectFollower is a ResealFollower also told of every blob, file and
 // tree Reseal writes again under a new ref, as it writes it; one met
-// again in a later run is told again.
+// again in a later run is told again. ReplaceObject may be called from
+// several goroutines at once.
 type ObjectFollower interface {
 	ResealFollower
 	ReplaceObject(ctx context.Context, object Replacement) error
