@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"math/rand"
+	"slices"
 	"testing"
 	"time"
 
@@ -12,9 +13,11 @@ import (
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 	"github.com/tink-crypto/tink-go/v2/daead"
 	"github.com/tink-crypto/tink-go/v2/tink"
+	"google.golang.org/protobuf/testing/protocmp"
 )
 
 // legacy writes sealed data the way a store held it before Reseal: each
@@ -342,7 +345,7 @@ func TestResealPutsEveryCommitUnderBlobsItsSealedBytesName(t *testing.T) {
 	t.Cleanup(func() { _ = f.store.Close() })
 	ctx := context.Background()
 
-	report, err := f.store.Reseal(ctx, f.opener)
+	report, err := f.store.Reseal(ctx, f.opener, nil)
 	require.NoError(t, err)
 	require.Empty(t, report.Failed)
 	require.Zero(t, report.Current)
@@ -412,7 +415,7 @@ func TestResealPutsEveryCommitUnderBlobsItsSealedBytesName(t *testing.T) {
 		}
 	}
 
-	again, err := f.store.Reseal(ctx, f.opener)
+	again, err := f.store.Reseal(ctx, f.opener, nil)
 	require.NoError(t, err)
 	require.Empty(t, again.Resealed, "a resealed store is left as it is")
 	require.Zero(t, again.Blobs)
@@ -439,7 +442,7 @@ func TestAResealStoppedPartWayCarriesOnWhereItStopped(t *testing.T) {
 	whole := newResealFixture(t, a, b)
 	t.Cleanup(func() { _ = whole.store.Close() })
 
-	want, err := whole.store.Reseal(ctx, whole.opener)
+	want, err := whole.store.Reseal(ctx, whole.opener, nil)
 	require.NoError(t, err)
 
 	f := newResealFixture(t, a, b)
@@ -453,13 +456,13 @@ func TestAResealStoppedPartWayCarriesOnWhereItStopped(t *testing.T) {
 		}
 
 		return f.opener(ctx, keyID)
-	})
+	}, nil)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Len(t, first.Resealed, 1, "the commit before the stop is replaced")
 
 	f.reopen(t)
 
-	rest, err := f.store.Reseal(ctx, f.opener)
+	rest, err := f.store.Reseal(ctx, f.opener, nil)
 	require.NoError(t, err)
 	require.Empty(t, rest.Failed)
 	require.Equal(t, 1, rest.Current, "the replacement is found current")
@@ -478,7 +481,7 @@ func TestAResealFinishesAReplacementStoppedBeforeTheOldCommitWasRetired(t *testi
 	whole := newResealFixture(t, a, b)
 	t.Cleanup(func() { _ = whole.store.Close() })
 
-	want, err := whole.store.Reseal(ctx, whole.opener)
+	want, err := whole.store.Reseal(ctx, whole.opener, nil)
 	require.NoError(t, err)
 
 	f := newResealFixture(t, a, b)
@@ -508,7 +511,7 @@ func TestAResealFinishesAReplacementStoppedBeforeTheOldCommitWasRetired(t *testi
 	copyOver(c1)
 	require.NoError(t, f.store.Flush())
 
-	report, err := f.store.Reseal(ctx, f.opener)
+	report, err := f.store.Reseal(ctx, f.opener, nil)
 	require.NoError(t, err)
 	require.Empty(t, report.Failed)
 	require.Equal(t, replacements(want), replacements(report))
@@ -541,10 +544,13 @@ func TestAResealLeavesACommitWithAPlantedBlobAsItWas(t *testing.T) {
 	good := l.commit("world", 1, 200, l.tree(nil, fileNode("fine", 4, l.file([]byte("fine"), 4))), bad)
 	require.NoError(t, store.Flush())
 
-	report, err := store.Reseal(ctx, func(context.Context, []byte) (*storekey.Key, error) { return key, nil })
+	follower := &recordingFollower{t: t, store: store}
+	report, err := store.Reseal(ctx, func(context.Context, []byte) (*storekey.Key, error) { return key, nil }, follower)
 	require.NoError(t, err)
 	require.Len(t, report.Failed, 1)
 	require.True(t, report.Failed[0].Ref.Equal(bad))
+	require.Len(t, follower.kept, 1)
+	require.True(t, follower.kept[0].Equal(bad), "the follower is told of the commit left as it was")
 	require.ErrorIs(t, report.Failed[0].Err, storekey.ErrWrongKey)
 	require.Len(t, report.Resealed, 1, "the other commit is replaced, over the one left as its parent")
 
@@ -552,7 +558,7 @@ func TestAResealLeavesACommitWithAPlantedBlobAsItWas(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []bool{true, false}, has)
 
-	_, err = store.Reseal(ctx, func(context.Context, []byte) (*storekey.Key, error) { return other, nil })
+	_, err = store.Reseal(ctx, func(context.Context, []byte) (*storekey.Key, error) { return other, nil }, nil)
 	require.NoError(t, err, "a key that is not the one asked for fails the commits, not the run")
 }
 
@@ -562,7 +568,7 @@ func TestACollectionAfterAResealDropsWhatOnlyTheOldCommitsReached(t *testing.T) 
 	t.Cleanup(func() { _ = f.store.Close() })
 	ctx := context.Background()
 
-	report, err := f.store.Reseal(ctx, f.opener)
+	report, err := f.store.Reseal(ctx, f.opener, nil)
 	require.NoError(t, err)
 
 	for _, ref := range f.first.written {
@@ -607,7 +613,7 @@ func TestAResealTakesAReplacedParentOnlyFromItsOwnReplacement(t *testing.T) {
 	t.Cleanup(func() { _ = whole.Close() })
 	p, _, c := build(whole)
 
-	want, err := whole.Reseal(ctx, opener)
+	want, err := whole.Reseal(ctx, opener, nil)
 	require.NoError(t, err)
 
 	pNew := &proto.Ref{Hash: []byte(replacements(want)[string(p.Hash)])}
@@ -633,9 +639,100 @@ func TestAResealTakesAReplacedParentOnlyFromItsOwnReplacement(t *testing.T) {
 		require.NoError(t, store.Delete(ctx, p))
 		require.NoError(t, store.Flush())
 
-		report, err := store.Reseal(ctx, opener)
+		report, err := store.Reseal(ctx, opener, nil)
 		require.NoError(t, err)
 		require.Equal(t, replacements(want)[string(c.Hash)], replacements(report)[string(c.Hash)], "the child's parent is the parent's replacement")
 		require.NoError(t, store.Close())
+	}
+}
+
+// recordingFollower records what a reseal tells it, checking that each
+// change is durable and not yet final when it is told.
+type recordingFollower struct {
+	t       *testing.T
+	store   *PackStorage
+	commits []ResealedCommit
+	pins    []Replacement
+	objects []Replacement
+	kept    []*proto.Ref
+}
+
+func (r *recordingFollower) held(refs ...*proto.Ref) []bool {
+	has, err := r.store.HasAll(context.Background(), refs)
+	require.NoError(r.t, err)
+
+	return has
+}
+
+func (r *recordingFollower) ReplaceCommit(_ context.Context, commit ResealedCommit) error {
+	refs := []*proto.Ref{commit.Old, commit.New}
+	for _, pin := range commit.Pins {
+		refs = append(refs, pin.Old, pin.New)
+	}
+
+	for i, held := range r.held(refs...) {
+		require.True(r.t, held, "%x is live when the follower is told", refs[i].Hash)
+	}
+
+	r.commits = append(r.commits, commit)
+
+	return nil
+}
+
+func (r *recordingFollower) MovePin(_ context.Context, pin Replacement) error {
+	require.Equal(r.t, []bool{true, true}, r.held(pin.Old, pin.New), "both pins are live when the follower is told")
+	r.pins = append(r.pins, pin)
+
+	return nil
+}
+
+func (r *recordingFollower) KeepCommit(_ context.Context, commit *proto.Ref) error {
+	r.kept = append(r.kept, commit)
+	return nil
+}
+
+func (r *recordingFollower) ReplaceObject(_ context.Context, object Replacement) error {
+	r.objects = append(r.objects, object)
+	return nil
+}
+
+func TestAResealTellsItsFollowerOfEveryReplacementBeforeItIsFinal(t *testing.T) {
+	a, b := resealKeys(t)
+	f := newResealFixture(t, a, b)
+	t.Cleanup(func() { _ = f.store.Close() })
+	ctx := context.Background()
+
+	follower := &recordingFollower{t: t, store: f.store}
+	report, err := f.store.Reseal(ctx, f.opener, follower)
+	require.NoError(t, err)
+	require.Empty(t, report.Failed)
+	require.Empty(t, follower.kept)
+
+	require.Empty(t, cmp.Diff(report.Resealed, follower.commits, protocmp.Transform()), "the follower is told of each commit as the report has it")
+	for i, name := range []string{"c1", "c3", "c2"} {
+		require.True(t, follower.commits[i].Old.Equal(f.commits[name]), "the follower is told of %s in the order the commits were received", name)
+	}
+
+	require.Len(t, follower.commits[0].Pins, 1, "the commit's pin moves with it")
+	require.Empty(t, cmp.Diff(report.Moved, follower.pins, protocmp.Transform()))
+	require.Len(t, follower.pins, 1, "the tree's pin moves")
+
+	blobs := map[string]bool{}
+	for _, object := range follower.objects {
+		require.NotEqual(t, object.Old.Hash, object.New.Hash)
+
+		has, err := f.store.Has(ctx, object.New)
+		require.NoError(t, err)
+		require.True(t, has, "what a %s is replaced with is stored", object.Type)
+
+		if object.Type == proto.ObjectType_BLOB {
+			blobs[string(object.Old.Hash)] = true
+		}
+	}
+
+	require.Len(t, blobs, report.Blobs, "the follower is told of every blob sealed again")
+
+	for _, kind := range []proto.ObjectType{proto.ObjectType_FILE, proto.ObjectType_TREE} {
+		require.True(t, slices.ContainsFunc(follower.objects, func(object Replacement) bool { return object.Type == kind }), "the follower is told of a %s", kind)
 	}
 }

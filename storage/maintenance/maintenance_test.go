@@ -301,21 +301,36 @@ func TestRepairFindsTheRepairerBeneathWrappingStores(t *testing.T) {
 
 type fakeResealer struct {
 	backup.ObjectStore
-	report *pack.ResealReport
+	report   *pack.ResealReport
+	follower pack.ResealFollower
 }
 
-func (f *fakeResealer) Reseal(context.Context, pack.KeyOpener) (*pack.ResealReport, error) {
+func (f *fakeResealer) Reseal(_ context.Context, _ pack.KeyOpener, follower pack.ResealFollower) (*pack.ResealReport, error) {
+	f.follower = follower
 	return f.report, nil
+}
+
+// followingIndex is an index that follows a reseal.
+type followingIndex struct {
+	backup.Index
+	pack.ResealFollower
 }
 
 func TestResealFindsTheResealerBeneathWrappingStores(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := Reseal(ctx, &fakeArchives{}, nil)
+	_, err := Reseal(ctx, &fakeArchives{}, nil, nil)
 	require.ErrorIs(t, err, errors.ErrUnsupported)
 
 	want := &pack.ResealReport{Current: 1}
-	report, err := Reseal(ctx, wrapping{&fakeResealer{report: want}}, nil)
+	resealer := &fakeResealer{report: want}
+	report, err := Reseal(ctx, wrapping{resealer}, nil, nil)
 	require.NoError(t, err)
 	require.Same(t, want, report)
+	require.Nil(t, resealer.follower)
+
+	idx := followingIndex{}
+	_, err = Reseal(ctx, wrapping{resealer}, idx, nil)
+	require.NoError(t, err)
+	require.Equal(t, idx, resealer.follower, "an index that follows a reseal is kept agreeing")
 }

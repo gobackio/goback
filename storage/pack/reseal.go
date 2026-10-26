@@ -45,13 +45,52 @@ type ResealReport struct {
 	// replaced their target.
 	Blobs int
 	Pins  int
+	// Moved pairs each pin of a tree or file moved with the pin that
+	// replaced it.
+	Moved []Replacement
 	// Failed names the commits and pins left as they were, with why.
 	Failed []ResealFailure
 }
 
-// ResealedCommit is a commit Reseal replaced and its replacement.
+// ResealedCommit is a commit Reseal replaced and its replacement, with
+// each pin of the old commit paired with the pin moved to the replacement.
 type ResealedCommit struct {
 	Old, New *proto.Ref
+	Pins     []Replacement
+}
+
+// Replacement is an object Reseal replaced and the object that replaced
+// it, of the same type.
+type Replacement struct {
+	Type     proto.ObjectType
+	Old, New *proto.Ref
+}
+
+// ResealFollower is kept agreeing with a store while Reseal rewrites it,
+// as the store's index is. Reseal tells it of each change before the
+// change is final, so a run stopped in between tells it again; each call
+// must take a change it already followed as done.
+type ResealFollower interface {
+	// ReplaceCommit is told of a commit replaced, once the replacement,
+	// all it reaches and the moved pins are durable and before the old
+	// commit and its pins are tombstoned. Commits come in the order they
+	// were received.
+	ReplaceCommit(ctx context.Context, commit ResealedCommit) error
+	// MovePin is told of a pin of a tree or file moved to what that is
+	// resealed as, once the moved pin is durable and before the old pin
+	// is tombstoned.
+	MovePin(ctx context.Context, pin Replacement) error
+	// KeepCommit is told, once every commit was replaced, of each commit
+	// left as it was because it could not be resealed.
+	KeepCommit(ctx context.Context, commit *proto.Ref) error
+}
+
+// ObjectFollower is a ResealFollower also told of every blob, file and
+// tree Reseal writes again under a new ref, as it writes it; one met
+// again in a later run is told again.
+type ObjectFollower interface {
+	ResealFollower
+	ReplaceObject(ctx context.Context, object Replacement) error
 }
 
 // ResealFailure is a commit or pin Reseal left as it was, and why.
@@ -75,11 +114,11 @@ func (r *ResealReport) Summary() string {
 // commit above one with a commit of the same time, set and metadata that
 // takes over its pins, trash state and head, tombstoning the old one for a
 // collection to drop. A commit it cannot reseal is reported and left as it
-// was; a stopped run carries on when run again. Rebuild the index from the
-// store afterwards, into an empty database. It fails while a published plan
-// waits for its rewrite, and while another process maintains the store it
-// does nothing and sets Busy.
-func (ps *PackStorage) Reseal(ctx context.Context, keys KeyOpener) (*ResealReport, error) {
+// was; a stopped run carries on when run again. follower, when not nil,
+// is kept agreeing with the store throughout; pass the store's index. It
+// fails while a published plan waits for its rewrite, and while another
+// process maintains the store it does nothing and sets Busy.
+func (ps *PackStorage) Reseal(ctx context.Context, keys KeyOpener, follower ResealFollower) (*ResealReport, error) {
 	if _, ok := backup.SessionFromContext(ctx); ok {
 		return nil, errors.New("a reseal runs outside a session")
 	}
@@ -108,6 +147,7 @@ func (ps *PackStorage) Reseal(ctx context.Context, keys KeyOpener) (*ResealRepor
 	rs := &resealer{
 		ps:       ps,
 		keys:     keys,
+		follower: follower,
 		store:    resealStore{PackStorage: ps, reads: make(chan struct{}, resealReads)},
 		opened:   map[string]*storekey.Key{},
 		memo:     map[string]*resealed{},
@@ -169,9 +209,10 @@ type resealed struct {
 }
 
 type resealer struct {
-	ps    *PackStorage
-	keys  KeyOpener
-	store resealStore
+	ps       *PackStorage
+	keys     KeyOpener
+	store    resealStore
+	follower ResealFollower
 
 	keysMtx sync.Mutex
 	opened  map[string]*storekey.Key
@@ -207,6 +248,14 @@ func (rs *resealer) run(ctx context.Context) error {
 			}
 
 			rs.report.Failed = append(rs.report.Failed, ResealFailure{Ref: ref, Err: err})
+		}
+	}
+
+	if rs.follower != nil {
+		for _, failure := range rs.report.Failed {
+			if err := rs.follower.KeepCommit(ctx, failure.Ref); err != nil {
+				return fmt.Errorf("keeping commit %x: %w", failure.Ref.Hash, err)
+			}
 		}
 	}
 
@@ -381,12 +430,13 @@ func (rs *resealer) commit(ctx context.Context, ref *proto.Ref) error {
 		return fmt.Errorf("commit %x: %w", ref.Hash, err)
 	}
 
-	if err := rs.replace(ctx, ref, replacement); err != nil {
+	resealed, err := rs.replace(ctx, ref, replacement)
+	if err != nil {
 		return fmt.Errorf("commit %x: %w", ref.Hash, err)
 	}
 
 	rs.replaced[string(ref.Hash)] = replacement.Ref()
-	rs.report.Resealed = append(rs.report.Resealed, ResealedCommit{Old: ref, New: replacement.Ref()})
+	rs.report.Resealed = append(rs.report.Resealed, resealed)
 
 	return nil
 }
@@ -437,16 +487,20 @@ func receiptOf(obj *proto.Object) receipt {
 
 // replace moves the pins, trash state and head of the commit old to
 // replacement, which the store holds, then tombstones old and its pins.
-func (rs *resealer) replace(ctx context.Context, old *proto.Ref, replacement *proto.Object) error {
+func (rs *resealer) replace(ctx context.Context, old *proto.Ref, replacement *proto.Object) (ResealedCommit, error) {
+	resealed := ResealedCommit{Old: old, New: replacement.Ref()}
 	pins := rs.pins[string(old.Hash)]
 
 	for _, pin := range pins {
 		moved := pb.Clone(pin.GetPin()).(*proto.Pin)
 		moved.Target = replacement.Ref()
+		next := proto.NewObject(moved)
 
-		if err := rs.store.Put(ctx, proto.NewObject(moved)); err != nil {
-			return fmt.Errorf("moving pin %x: %w", pin.Ref().Hash, err)
+		if err := rs.store.Put(ctx, next); err != nil {
+			return resealed, fmt.Errorf("moving pin %x: %w", pin.Ref().Hash, err)
 		}
+
+		resealed.Pins = append(resealed.Pins, Replacement{Type: proto.ObjectType_PIN, Old: pin.Ref(), New: next.Ref()})
 	}
 
 	for _, policy := range rs.policies[string(old.Hash)] {
@@ -454,28 +508,35 @@ func (rs *resealer) replace(ctx context.Context, old *proto.Ref, replacement *pr
 		moved.GetCommit().Commit = replacement.Ref()
 
 		if err := rs.store.Put(ctx, proto.NewObject(moved)); err != nil {
-			return fmt.Errorf("moving policy %d: %w", policy.Sequence, err)
+			return resealed, fmt.Errorf("moving policy %d: %w", policy.Sequence, err)
 		}
 	}
 
-	// the tombstones go out only once what takes over is durable
+	// the tombstones go out only once what takes over is durable and
+	// followed
 	if err := rs.ps.Flush(); err != nil {
-		return err
+		return resealed, err
+	}
+
+	if rs.follower != nil {
+		if err := rs.follower.ReplaceCommit(ctx, resealed); err != nil {
+			return resealed, fmt.Errorf("following the replacement: %w", err)
+		}
 	}
 
 	if err := rs.ps.moveHead(old, replacement); err != nil {
-		return fmt.Errorf("moving the head: %w", err)
+		return resealed, fmt.Errorf("moving the head: %w", err)
 	}
 
 	for _, pin := range pins {
 		if err := rs.ps.Delete(ctx, pin.Ref()); err != nil {
-			return err
+			return resealed, err
 		}
 	}
 
 	rs.report.Pins += len(pins)
 
-	return rs.ps.Delete(ctx, old)
+	return resealed, rs.ps.Delete(ctx, old)
 }
 
 // pin moves a live pin of a tree or file to what that is resealed as.
@@ -487,8 +548,9 @@ func (rs *resealer) pin(ctx context.Context, pin *proto.Object) error {
 
 	moved := pb.Clone(pin.GetPin()).(*proto.Pin)
 	moved.Target = target
+	next := proto.NewObject(moved)
 
-	if err := rs.store.Put(ctx, proto.NewObject(moved)); err != nil {
+	if err := rs.store.Put(ctx, next); err != nil {
 		return err
 	}
 
@@ -496,7 +558,16 @@ func (rs *resealer) pin(ctx context.Context, pin *proto.Object) error {
 		return err
 	}
 
+	replacement := Replacement{Type: proto.ObjectType_PIN, Old: pin.Ref(), New: next.Ref()}
+
+	if rs.follower != nil {
+		if err := rs.follower.MovePin(ctx, replacement); err != nil {
+			return fmt.Errorf("following the move: %w", err)
+		}
+	}
+
 	rs.report.Pins++
+	rs.report.Moved = append(rs.report.Moved, replacement)
 
 	return rs.ps.Delete(ctx, pin.Ref())
 }
@@ -523,12 +594,16 @@ func (rs *resealer) rewrite(ctx context.Context, ref *proto.Ref) (*proto.Ref, er
 	rs.memo[key] = entry
 	rs.memoMtx.Unlock()
 
-	var blob bool
-	entry.ref, blob, entry.err = rs.rewriteObject(ctx, ref)
+	var kind proto.ObjectType
+	entry.ref, kind, entry.err = rs.rewriteObject(ctx, ref)
+
+	if objects, ok := rs.follower.(ObjectFollower); ok && entry.err == nil && !entry.ref.Equal(ref) {
+		entry.err = objects.ReplaceObject(ctx, Replacement{Type: kind, Old: ref, New: entry.ref})
+	}
 
 	// blobs far outnumber trees and files, and are rarely met twice; an
 	// error may be another walk's cancellation
-	if blob || entry.err != nil {
+	if kind == proto.ObjectType_BLOB || entry.err != nil {
 		rs.memoMtx.Lock()
 		if rs.memo[key] == entry {
 			delete(rs.memo, key)
@@ -541,29 +616,28 @@ func (rs *resealer) rewrite(ctx context.Context, ref *proto.Ref) (*proto.Ref, er
 	return entry.ref, entry.err
 }
 
-// rewriteObject is rewrite of the object ref names, which it reports
-// whether is a blob.
-func (rs *resealer) rewriteObject(ctx context.Context, ref *proto.Ref) (*proto.Ref, bool, error) {
+// rewriteObject is rewrite of the object ref names, whose type it reports.
+func (rs *resealer) rewriteObject(ctx context.Context, ref *proto.Ref) (*proto.Ref, proto.ObjectType, error) {
 	obj, err := rs.store.Get(ctx, ref)
 	if err != nil {
-		return nil, false, fmt.Errorf("%x: %w", ref.Hash, err)
+		return nil, proto.ObjectType_INVALID, fmt.Errorf("%x: %w", ref.Hash, err)
 	}
 
 	switch {
 	case obj.Sealed() != nil:
 		next, err := rs.blob(ctx, ref, obj.Sealed())
-		return next, true, err
+		return next, proto.ObjectType_BLOB, err
 	case obj.GetBlob() != nil:
-		return ref, true, nil
+		return ref, proto.ObjectType_BLOB, nil
 	case obj.GetTree() != nil:
 		next, err := rs.tree(ctx, ref, obj)
-		return next, false, err
+		return next, proto.ObjectType_TREE, err
 	case obj.GetFile() != nil:
 		next, err := rs.file(ctx, ref, obj)
-		return next, false, err
+		return next, proto.ObjectType_FILE, err
 	}
 
-	return nil, false, fmt.Errorf("%x is a %s, which no tree holds", ref.Hash, obj.Type())
+	return nil, obj.Type(), fmt.Errorf("%x is a %s, which no tree holds", ref.Hash, obj.Type())
 }
 
 // tree rewrites a tree over what its nodes, their metadata and its splits

@@ -10,6 +10,7 @@ import (
 	"github.com/gobackio/goback/cmd/goback/commands/common"
 	"github.com/gobackio/goback/cmd/goback/commands/common/views"
 	"github.com/gobackio/goback/storage/maintenance"
+	"github.com/gobackio/goback/storage/pack"
 
 	"github.com/urfave/cli"
 )
@@ -17,13 +18,14 @@ import (
 // Command is the reseal command.
 var Command = cli.Command{
 	Name:   "reseal",
-	Usage:  "Seal the store's blobs again under refs the server can check, replacing the commits above them; rebuild the index into an empty database afterwards",
+	Usage:  "Seal the store's blobs again under refs the server can check, replacing the commits above them and their pins in the store and its index",
 	Action: resealAction,
 }
 
 type replaced struct {
-	Old string `json:"old"`
-	New string `json:"new"`
+	Old  string     `json:"old"`
+	New  string     `json:"new"`
+	Pins []replaced `json:"pins,omitempty"`
 }
 
 type failed struct {
@@ -37,7 +39,7 @@ func resealAction(c *cli.Context) {
 	repo := common.OpenRepo(c)
 	defer common.CloseRepo(repo)
 
-	report, err := maintenance.Reseal(ctx, repo.Store, func(ctx context.Context, _ []byte) (*storekey.Key, error) {
+	report, err := maintenance.Reseal(ctx, repo.Store, repo.Index, func(ctx context.Context, _ []byte) (*storekey.Key, error) {
 		return repo.Key(ctx)
 	})
 	if errors.Is(err, errors.ErrUnsupported) {
@@ -48,9 +50,18 @@ func resealAction(c *cli.Context) {
 		common.Fatal(err)
 	}
 
+	pairs := func(replacements []pack.Replacement) []replaced {
+		out := make([]replaced, len(replacements))
+		for i, pair := range replacements {
+			out[i] = replaced{Old: views.Hex(pair.Old), New: views.Hex(pair.New)}
+		}
+
+		return out
+	}
+
 	commits := make([]replaced, len(report.Resealed))
 	for i, pair := range report.Resealed {
-		commits[i] = replaced{views.Hex(pair.Old), views.Hex(pair.New)}
+		commits[i] = replaced{Old: views.Hex(pair.Old), New: views.Hex(pair.New), Pins: pairs(pair.Pins)}
 	}
 
 	failures := make([]failed, len(report.Failed))
@@ -64,16 +75,13 @@ func resealAction(c *cli.Context) {
 		Current  int        `json:"current"`
 		Blobs    int        `json:"blobs"`
 		Pins     int        `json:"pins"`
+		Moved    []replaced `json:"moved"`
 		Failed   []failed   `json:"failed"`
-	}{report.Busy, commits, report.Current, report.Blobs, report.Pins, failures}, func() {
+	}{report.Busy, commits, report.Current, report.Blobs, report.Pins, pairs(report.Moved), failures}, func() {
 		log.Print(report.Summary())
 
 		for _, failure := range failures {
 			log.Printf("left %s as it was: %s", failure.Ref, failure.Error)
-		}
-
-		if len(commits) > 0 {
-			log.Print("Rebuild the index into an empty database with goback fix")
 		}
 	})
 }
