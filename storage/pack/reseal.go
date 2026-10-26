@@ -24,6 +24,8 @@ const (
 	resealReads = 32
 	// resealFanout bounds the entries of one tree or file resealed at once.
 	resealFanout = 16
+	// resealSets bounds the sets whose commits are replaced at once.
+	resealSets = 8
 	// resealMemo bounds the trees and files a reseal remembers the new
 	// refs of before it starts over.
 	resealMemo = 1 << 20
@@ -74,8 +76,8 @@ type Replacement struct {
 type ResealFollower interface {
 	// ReplaceCommit is told of a commit replaced, once the replacement,
 	// all it reaches and the moved pins are durable and before the old
-	// commit and its pins are tombstoned. Commits come in the order they
-	// were received.
+	// commit and its pins are tombstoned. A set's commits come in the order
+	// they were received, those of different sets at once.
 	ReplaceCommit(ctx context.Context, commit ResealedCommit) error
 	// MovePin is told of a pin of a tree or file moved to what that is
 	// resealed as, once the moved pin is durable and before the old pin
@@ -238,18 +240,21 @@ type resealer struct {
 	memo    map[string]*resealed
 
 	// all holds every commit the archives hold, live or not, live the refs
-	// of the live ones and received those by receipt; replaced maps each
-	// live commit handled so far to the commit that stands for it now
+	// of the live ones and received those by receipt
 	all      map[string]*proto.Object
 	live     map[string]bool
 	received map[receipt][]string
-	replaced map[string]*proto.Ref
 
 	pins     map[string][]*proto.Object
 	policies map[string][]*proto.Policy
 
-	blobs  atomic.Int64
-	report *ResealReport
+	blobs atomic.Int64
+
+	// mtx guards replaced, which maps each live commit handled so far to
+	// the commit that stands for it now, and report
+	mtx      sync.Mutex
+	replaced map[string]*proto.Ref
+	report   *ResealReport
 }
 
 func (rs *resealer) run(ctx context.Context) error {
@@ -260,16 +265,8 @@ func (rs *resealer) run(ctx context.Context) error {
 
 	rs.store.progress = progress.Start(ctx, progress.OpReseal, progress.PhaseCommits, int64(len(commits)), 0)
 
-	for _, ref := range commits {
-		if err := rs.commit(ctx, ref); err != nil {
-			if ctx.Err() != nil {
-				return err
-			}
-
-			rs.report.Failed = append(rs.report.Failed, ResealFailure{Ref: ref, Err: err})
-		}
-
-		rs.store.progress.Add(1, 0)
+	if err := rs.commits(ctx, commits); err != nil {
+		return err
 	}
 
 	rs.store.progress.Finish()
@@ -310,6 +307,60 @@ func (rs *resealer) run(ctx context.Context) error {
 	rs.store.progress.Finish()
 
 	return nil
+}
+
+// commits replaces the live commits, each set's in the order given and
+// resealSets sets at once, since a commit's parent is of its own set.
+func (rs *resealer) commits(ctx context.Context, commits []*proto.Ref) error {
+	var order []uint64
+	bySet := map[uint64][]*proto.Ref{}
+
+	for _, ref := range commits {
+		set := rs.all[string(ref.Hash)].GetCommit().GetSetId()
+		if bySet[set] == nil {
+			order = append(order, set)
+		}
+
+		bySet[set] = append(bySet[set], ref)
+	}
+
+	grp, gctx := errgroup.WithContext(ctx)
+	grp.SetLimit(resealSets)
+
+	for _, set := range order {
+		grp.Go(func() error {
+			for _, ref := range bySet[set] {
+				if err := rs.commit(gctx, ref); err != nil {
+					if gctx.Err() != nil {
+						return err
+					}
+
+					rs.fail(ref, err)
+				}
+
+				rs.store.progress.Add(1, 0)
+			}
+
+			return nil
+		})
+	}
+
+	return grp.Wait()
+}
+
+func (rs *resealer) fail(ref *proto.Ref, err error) {
+	rs.mtx.Lock()
+	defer rs.mtx.Unlock()
+
+	rs.report.Failed = append(rs.report.Failed, ResealFailure{Ref: ref, Err: err})
+}
+
+// stands records that by stands for the live commit ref now.
+func (rs *resealer) stands(ref, by *proto.Ref) {
+	rs.mtx.Lock()
+	defer rs.mtx.Unlock()
+
+	rs.replaced[string(ref.Hash)] = by
 }
 
 // load reads the store's commits, live pins and commit policies, and
@@ -436,7 +487,7 @@ func (rs *resealer) commit(ctx context.Context, ref *proto.Ref) error {
 	commit := obj.GetCommit()
 
 	if commit.KeyId != nil && len(commit.KeyId) == 0 {
-		rs.replaced[string(ref.Hash)] = ref
+		rs.stands(ref, ref)
 		return nil
 	}
 
@@ -448,8 +499,11 @@ func (rs *resealer) commit(ctx context.Context, ref *proto.Ref) error {
 	parent := rs.standIn(commit.Parent)
 
 	if tree.Equal(commit.Tree) && parent.Equal(commit.Parent) {
-		rs.replaced[string(ref.Hash)] = ref
+		rs.stands(ref, ref)
+
+		rs.mtx.Lock()
 		rs.report.Current++
+		rs.mtx.Unlock()
 
 		return nil
 	}
@@ -469,8 +523,11 @@ func (rs *resealer) commit(ctx context.Context, ref *proto.Ref) error {
 		return fmt.Errorf("commit %x: %w", ref.Hash, err)
 	}
 
-	rs.replaced[string(ref.Hash)] = replacement.Ref()
+	rs.stands(ref, replacement.Ref())
+
+	rs.mtx.Lock()
 	rs.report.Resealed = append(rs.report.Resealed, resealed)
+	rs.mtx.Unlock()
 
 	return nil
 }
@@ -481,6 +538,9 @@ func (rs *resealer) standIn(parent *proto.Ref) *proto.Ref {
 	if parent == nil {
 		return nil
 	}
+
+	rs.mtx.Lock()
+	defer rs.mtx.Unlock()
 
 	if ref, ok := rs.replaced[string(parent.Hash)]; ok {
 		return ref
@@ -568,7 +628,9 @@ func (rs *resealer) replace(ctx context.Context, old *proto.Ref, replacement *pr
 		}
 	}
 
+	rs.mtx.Lock()
 	rs.report.Pins += len(pins)
+	rs.mtx.Unlock()
 
 	return resealed, rs.ps.Delete(ctx, old)
 }
