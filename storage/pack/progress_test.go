@@ -13,12 +13,12 @@ import (
 
 // recordProgress returns a context that records the updates of one
 // operation, and a check that they came in the phases given, each moving
-// forward and ending at the totals it named.
-func recordProgress(t *testing.T, op string) (context.Context, func(phases ...string)) {
+// forward and ending at the totals it named, which returns them.
+func recordProgress(t *testing.T, op string) (context.Context, func(phases ...string) []progress.Update) {
 	var updates []progress.Update
 	ctx := progress.NewContext(context.Background(), func(u progress.Update) { updates = append(updates, u) })
 
-	return ctx, func(phases ...string) {
+	return ctx, func(phases ...string) []progress.Update {
 		t.Helper()
 
 		var seen []string
@@ -52,7 +52,11 @@ func recordProgress(t *testing.T, op string) (context.Context, func(phases ...st
 		}
 
 		require.Equal(t, phases, seen)
+
+		checked := updates
 		updates = nil
+
+		return checked
 	}
 }
 
@@ -92,4 +96,26 @@ func TestCompactAndScrubReportArchivesAndBytes(t *testing.T) {
 	_, err := store.Scrub(ctx)
 	require.NoError(t, err)
 	check(progress.PhaseScrub)
+}
+
+func TestResealReportsItsCommitsPinsAndBytes(t *testing.T) {
+	a, b := resealKeys(t)
+	f := newResealFixture(t, a, b)
+	t.Cleanup(func() { _ = f.store.Close() })
+
+	ctx, check := recordProgress(t, progress.OpReseal)
+
+	_, err := f.store.Reseal(ctx, f.opener, nil)
+	require.NoError(t, err)
+
+	last := map[string]progress.Update{}
+	for _, u := range check(progress.PhaseCommits, progress.PhasePins) {
+		last[u.Phase] = u
+	}
+
+	commits := last[progress.PhaseCommits]
+	require.EqualValues(t, len(f.commits)+1, commits.Total, "every live commit, the one in the clear too")
+	require.Equal(t, commits.Total, commits.Done)
+	require.Positive(t, commits.Bytes)
+	require.EqualValues(t, 1, last[progress.PhasePins].Done, "the pin of a tree")
 }

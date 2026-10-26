@@ -23,6 +23,7 @@ const (
 	OpReIndex = "reindex"
 	OpIngest  = "ingest"
 	OpCommit  = "commit"
+	OpReseal  = "reseal"
 )
 
 // Phases, the Phase of an Update. An operation enters its phases in the
@@ -48,7 +49,8 @@ const (
 	PhaseTombstones = "tombstones"
 	PhaseRows       = "rows"
 	PhasePrune      = "prune"
-	// reindex: tombstones, pins, commits, sets, policies, damage.
+	// reindex: tombstones, pins, commits, sets, policies, damage; reseal:
+	// commits, then pins.
 	PhasePins     = "pins"
 	PhaseCommits  = "commits"
 	PhaseSets     = "sets"

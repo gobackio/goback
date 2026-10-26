@@ -12,6 +12,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/storekey"
+	"github.com/gobackio/goback/progress"
 	"github.com/gobackio/goback/proto"
 
 	"golang.org/x/sync/errgroup"
@@ -118,7 +119,10 @@ func (r *ResealReport) Summary() string {
 // was; a stopped run carries on when run again. follower, when not nil,
 // is kept agreeing with the store throughout; pass the store's index. It
 // fails while a published plan waits for its rewrite, and while another
-// process maintains the store it does nothing and sets Busy.
+// process maintains the store it does nothing and sets Busy. It reports the
+// live commits it handles as progress.PhaseCommits, then the pins of trees
+// and files as progress.PhasePins, each with the stored bytes it reads and
+// the sealed bytes of the blobs it writes.
 func (ps *PackStorage) Reseal(ctx context.Context, keys KeyOpener, follower ResealFollower) (*ResealReport, error) {
 	if _, ok := backup.SessionFromContext(ctx); ok {
 		return nil, errors.New("a reseal runs outside a session")
@@ -149,7 +153,7 @@ func (ps *PackStorage) Reseal(ctx context.Context, keys KeyOpener, follower Rese
 		ps:       ps,
 		keys:     keys,
 		follower: follower,
-		store:    resealStore{PackStorage: ps, reads: make(chan struct{}, resealReads)},
+		store:    &resealStore{PackStorage: ps, reads: make(chan struct{}, resealReads)},
 		opened:   map[string]*storekey.Key{},
 		memo:     map[string]*resealed{},
 		replaced: map[string]*proto.Ref{},
@@ -172,25 +176,31 @@ func (ps *PackStorage) Reseal(ctx context.Context, keys KeyOpener, follower Rese
 type resealStore struct {
 	*PackStorage
 	reads chan struct{}
+	// progress counts the bytes moved; it is replaced only while no call
+	// runs
+	progress *progress.Phase
 }
 
 // Get implements backup.ObjectStore.
-func (s resealStore) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
+func (s *resealStore) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
 	s.reads <- struct{}{}
 	defer func() { <-s.reads }()
 
-	return s.PackStorage.Get(ctx, ref)
+	obj, err := s.PackStorage.Get(ctx, ref)
+	s.progress.Add(0, int64(len(obj.GetStored().GetData())))
+
+	return obj, err
 }
 
 // Put implements backup.ObjectStore.
-func (s resealStore) Put(ctx context.Context, object *proto.Object) error {
+func (s *resealStore) Put(ctx context.Context, object *proto.Object) error {
 	_, err := s.putAbsent(ctx, object)
 	return err
 }
 
 // putAbsent stores object unless the store holds it, and reports whether
 // it did.
-func (s resealStore) putAbsent(ctx context.Context, object *proto.Object) (bool, error) {
+func (s *resealStore) putAbsent(ctx context.Context, object *proto.Object) (bool, error) {
 	s.reads <- struct{}{}
 	defer func() { <-s.reads }()
 
@@ -199,7 +209,13 @@ func (s resealStore) putAbsent(ctx context.Context, object *proto.Object) (bool,
 		return false, err
 	}
 
-	return true, s.putWriteCache(ctx, object, s.put(ctx, object))
+	if err := s.putWriteCache(ctx, object, s.put(ctx, object)); err != nil {
+		return true, err
+	}
+
+	s.progress.Add(0, int64(len(object.Sealed().GetData())))
+
+	return true, nil
 }
 
 // resealed is what rewriting one tree or file came to, once done closes.
@@ -212,7 +228,7 @@ type resealed struct {
 type resealer struct {
 	ps       *PackStorage
 	keys     KeyOpener
-	store    resealStore
+	store    *resealStore
 	follower ResealFollower
 
 	keysMtx sync.Mutex
@@ -242,6 +258,8 @@ func (rs *resealer) run(ctx context.Context) error {
 		return err
 	}
 
+	rs.store.progress = progress.Start(ctx, progress.OpReseal, progress.PhaseCommits, int64(len(commits)), 0)
+
 	for _, ref := range commits {
 		if err := rs.commit(ctx, ref); err != nil {
 			if ctx.Err() != nil {
@@ -250,7 +268,11 @@ func (rs *resealer) run(ctx context.Context) error {
 
 			rs.report.Failed = append(rs.report.Failed, ResealFailure{Ref: ref, Err: err})
 		}
+
+		rs.store.progress.Add(1, 0)
 	}
+
+	rs.store.progress.Finish()
 
 	if rs.follower != nil {
 		for _, failure := range rs.report.Failed {
@@ -260,21 +282,32 @@ func (rs *resealer) run(ctx context.Context) error {
 		}
 	}
 
+	var loose []*proto.Object
 	for target, pins := range rs.pins {
-		if rs.all[target] != nil {
-			continue
-		}
-
-		for _, pin := range pins {
-			if err := rs.pin(ctx, pin); err != nil {
-				if ctx.Err() != nil {
-					return err
-				}
-
-				rs.report.Failed = append(rs.report.Failed, ResealFailure{Ref: pin.Ref(), Err: err})
-			}
+		if rs.all[target] == nil {
+			loose = append(loose, pins...)
 		}
 	}
+
+	if len(loose) == 0 {
+		return nil
+	}
+
+	rs.store.progress = progress.Start(ctx, progress.OpReseal, progress.PhasePins, int64(len(loose)), 0)
+
+	for _, pin := range loose {
+		if err := rs.pin(ctx, pin); err != nil {
+			if ctx.Err() != nil {
+				return err
+			}
+
+			rs.report.Failed = append(rs.report.Failed, ResealFailure{Ref: pin.Ref(), Err: err})
+		}
+
+		rs.store.progress.Add(1, 0)
+	}
+
+	rs.store.progress.Finish()
 
 	return nil
 }
