@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
 
 	"github.com/bits-and-blooms/bitset"
@@ -113,4 +114,19 @@ func TestCollectDropsOnlyCopiesOlderThanTheTombstone(t *testing.T) {
 
 	require.True(t, run.droppable(ga, unmarked, 0, older))
 	require.False(t, run.droppable(ga, unmarked, 0, newer))
+}
+
+func TestASessionBegunAfterASealTheProcessWroteBeginsAtIt(t *testing.T) {
+	store := newGCStore(t, t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+
+	require.NoError(t, store.writeSeal(seal{Generation: 7}))
+
+	s := &backup.Session{}
+	_, err := store.BeginSession(context.Background(), s)
+	require.NoError(t, err)
+
+	begin, err := store.markers.SessionBegin(s.ID)
+	require.NoError(t, err)
+	require.EqualValues(t, 7, begin.Sealed)
 }

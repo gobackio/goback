@@ -35,7 +35,19 @@ func (ps *PackStorage) writeSeal(s seal) error {
 		return err
 	}
 
-	return file.Close()
+	if err := file.Close(); err != nil {
+		return err
+	}
+
+	ps.sawSeal(s.Generation)
+
+	return nil
+}
+
+// sawSeal notes generation as one that left a seal.
+func (ps *PackStorage) sawSeal(generation uint64) {
+	for seen := ps.sealSeen.Load(); generation > seen && !ps.sealSeen.CompareAndSwap(seen, generation); seen = ps.sealSeen.Load() {
+	}
 }
 
 // sealGenerations lists the generations that left a seal, oldest first.
@@ -58,9 +70,7 @@ func (ps *PackStorage) sealGenerations() ([]uint64, error) {
 	slices.Sort(generations)
 
 	if len(generations) > 0 {
-		newest := generations[len(generations)-1]
-		for seen := ps.sealSeen.Load(); newest > seen && !ps.sealSeen.CompareAndSwap(seen, newest); seen = ps.sealSeen.Load() {
-		}
+		ps.sawSeal(generations[len(generations)-1])
 	}
 
 	return generations, nil
