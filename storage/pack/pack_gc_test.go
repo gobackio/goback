@@ -1376,7 +1376,7 @@ func TestACollectionCoversWhatAnotherProcessCommittedAfterItLoadedIt(t *testing.
 
 	report, err = collector.Collect(ctx, gcOptions(t, 0))
 	require.NoError(t, err)
-	require.Equal(t, 3, report.Archives, "the archive it had pending, the one holding the commit and the one holding its un-tombstone")
+	require.Equal(t, 2, report.Archives, "the archive it had pending and the one holding the commit and its un-tombstone")
 
 	require.NoError(t, writer.Close())
 	require.NoError(t, collector.Close())

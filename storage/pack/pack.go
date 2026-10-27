@@ -765,6 +765,17 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commits []*
 		return fmt.Errorf("session %s lost an archive: %w", ws.id, err)
 	}
 
+	// each commit's un-tombstone keeps everything the commit reaches; they
+	// are stored with the session's last archive, before resurrect reads
+	// the seals
+	if ws.session != nil {
+		for _, commit := range commits {
+			if err := ps.putTombstone(ctx, ws, proto.TombstoneRef(commit.Ref()), false); err != nil {
+				return fmt.Errorf("taking back the tombstones of what session %s relied on: %w", ws.id, err)
+			}
+		}
+	}
+
 	// an archive of ours that lapsed is lost now, which settle answers for
 	err := ps.flushSession(ws)
 	if err != nil && !lapsed(err) {
@@ -785,32 +796,15 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commits []*
 		steps.Lap("settle")
 	}
 
-	// a commit missing anything is refused before it takes anything back,
-	// so its session may store what is missing and commit again
+	// a commit missing anything is refused, and the refusal's tombstone is
+	// newer than its un-tombstone, so its session may store what is missing
+	// and commit again
 	skipped, whole, err := ps.checkCommits(ctx, ws, commits)
 	if err != nil {
 		return err
 	}
 
 	steps.Lap("check")
-
-	// each commit's un-tombstone keeps everything the commit reaches; they
-	// are stored before resurrect reads the seals
-	for _, commit := range commits {
-		if err := ps.putTombstone(ctx, ws, proto.TombstoneRef(commit.Ref()), false); err != nil {
-			return fmt.Errorf("taking back the tombstones of what session %s relied on: %w", ws.id, err)
-		}
-	}
-
-	if err := ps.flushSession(ws); err != nil {
-		if lapsed(err) {
-			return fmt.Errorf("%w: %w", backup.ErrSessionLost, err)
-		}
-
-		return err
-	}
-
-	steps.Lap("untombstone")
 
 	if ps.claims != nil {
 		for _, commit := range commits {

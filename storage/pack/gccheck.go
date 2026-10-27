@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/pkg/errors"
@@ -70,6 +71,16 @@ func (r *gcRun) confirmDrops(ctx context.Context) error {
 	if err := check.takeSnapshot(ctx); err != nil {
 		return err
 	}
+
+	// a session pending only since the run's snapshot wrote its
+	// un-tombstones after the previous seal, so its commit copies what the
+	// sweep drops under what it relied on before it can commit
+	marked := make(map[string]bool, len(r.pending))
+	for _, a := range r.pending {
+		marked[a.name] = true
+	}
+
+	check.pending = slices.DeleteFunc(check.pending, func(a *archive) bool { return !marked[a.name] })
 
 	if err := check.collectRoots(ctx); err != nil {
 		return err

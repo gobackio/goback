@@ -231,7 +231,6 @@ func TestARefusedCommitStaysAbsentWhenItsSessionCommitsAndThroughARebuild(t *tes
 	require.NoError(t, b.Close())
 
 	rebuilt := closing(t, newTestStore(t, base))
-	requireUntombed(t, rebuilt, []*proto.Object{refused}, false)
 	requirePresent(t, rebuilt, []*proto.Object{refused}, false)
 	requireVisible(t, rebuilt, t.Context(), blob, true)
 }
