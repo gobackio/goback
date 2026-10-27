@@ -79,7 +79,7 @@ func TestArchiveIndexCountsAndRestoreSessions(t *testing.T) {
 
 	require.ErrorIs(t, x.TouchSession("nope", now), backup.ErrNoSession)
 
-	require.NoError(t, x.DeleteArchives([]string{other.Name()}))
+	require.NoError(t, x.DeleteArchives([]string{"long-gone", other.Name()}))
 	total, _, err = x.CountObjects()
 	require.NoError(t, err)
 	require.EqualValues(t, 10, total, "the archive's objects go with it")

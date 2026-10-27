@@ -190,7 +190,16 @@ func (x *Index) DeleteArchives(names []string) error {
 
 	return x.tx(ctx, func(tx *ent.Tx) error {
 		for start := 0; start < len(names); start += objectBatch {
-			batch := names[start:min(start+objectBatch, len(names))]
+			// an archive's object rows live only as long as its row, so
+			// those of an archive the index no longer knows are gone already
+			batch, err := tx.Archive.Query().Where(archive.IDIn(names[start:min(start+objectBatch, len(names))]...)).IDs(ctx)
+			if err != nil {
+				return err
+			}
+
+			if len(batch) == 0 {
+				continue
+			}
 
 			if _, err := tx.Object.Delete().Where(object.ArchiveIDIn(batch...)).Exec(ctx); err != nil {
 				return err
