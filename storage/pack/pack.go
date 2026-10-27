@@ -15,6 +15,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gobackio/goback/backup"
@@ -140,6 +141,10 @@ type PackStorage struct {
 	// headMtx holds a set's head between reading and writing it, a set
 	// taking the lock its id falls on
 	headMtx [16]sync.Mutex
+
+	// sealSeen is the newest generation a listing of the seals found; a
+	// session begins at it, which is never newer than the newest seal
+	sealSeen atomic.Uint64
 
 	// claims is the index again when it lets several processes write one
 	// session, nil when this process is the only writer

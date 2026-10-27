@@ -261,8 +261,8 @@ func TestACommitAsksTheBucketForLittleBeyondWhatItWrites(t *testing.T) {
 			// the session's archive, and one with the commit's un-tombstone
 			most := map[string]int{
 				"put archive": 2, "put .idx": 2, "put .begin": 1, "put .end": 1,
-				// the seals at begin and at commit
-				"list .seal": 2,
+				// the seals at commit
+				"list .seal": 1,
 			}
 
 			if !reports {

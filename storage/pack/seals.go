@@ -57,6 +57,12 @@ func (ps *PackStorage) sealGenerations() ([]uint64, error) {
 
 	slices.Sort(generations)
 
+	if len(generations) > 0 {
+		newest := generations[len(generations)-1]
+		for seen := ps.sealSeen.Load(); newest > seen && !ps.sealSeen.CompareAndSwap(seen, newest); seen = ps.sealSeen.Load() {
+		}
+	}
+
 	return generations, nil
 }
 
