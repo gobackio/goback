@@ -36,6 +36,9 @@ type Schedule func(*sql.Selector)
 // Session is the predicate function for session builders.
 type Session func(*sql.Selector)
 
+// SessionMarker is the predicate function for sessionmarker builders.
+type SessionMarker func(*sql.Selector)
+
 // Set is the predicate function for set builders.
 type Set func(*sql.Selector)
 

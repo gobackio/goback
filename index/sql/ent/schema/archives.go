@@ -119,3 +119,24 @@ func (Session) Edges() []ent.Edge {
 		edge.To("archives", Archive.Type).Annotations(cascade()),
 	}
 }
+
+// SessionMarker is what a session began as and how it ended, kept until
+// no archive of the session is stored, so a rebuild tells its archives
+// committed or abandoned.
+type SessionMarker struct {
+	ent.Schema
+}
+
+// Fields of SessionMarker.
+func (SessionMarker) Fields() []ent.Field {
+	return []ent.Field{
+		field.String("id"),
+		field.String("agent_id"),
+		field.String("backup_set"),
+		field.Bytes("restore").Optional(),
+		field.Time("started"),
+		field.Uint64("sealed").Default(0),
+		field.String("outcome").Optional().Nillable(),
+		field.Time("ended_at").Optional().Nillable(),
+	}
+}

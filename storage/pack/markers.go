@@ -1,10 +1,9 @@
 package pack
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -14,41 +13,23 @@ import (
 
 // SessionBeginExt and SessionEndExt name a session's markers in the
 // storage: <id>.begin holds the session as it began and <id>.end how it
-// ended. An end is only ever created once, so a commit and anything ending
-// the session agree on a single outcome. The end is what says a session's
-// archives are committed, so it is only deleted after its begin, once no
-// archive of the session is stored, live or retired.
+// ended. The end is what says a session's archives are committed, so it is
+// only deleted after its begin, once no archive of the session is stored,
+// live or retired.
 const (
 	SessionBeginExt = ".begin"
 	SessionEndExt   = ".end"
 )
 
-type sessionOutcome string
+func (ps *PackStorage) markBegun(ctx context.Context, s *backup.Session, sealed uint64) error {
+	begin := SessionBegin{ID: s.ID, AgentID: s.AgentID, Set: s.Set, Restore: s.Restore.GetHash(), Started: s.Started, Sealed: sealed}
 
-const (
-	sessionCommitted sessionOutcome = "committed"
-	sessionAborted   sessionOutcome = "aborted"
-)
-
-type beginMarker struct {
-	ID      string    `json:"id"`
-	AgentID string    `json:"agent_id"`
-	Set     string    `json:"set"`
-	Restore []byte    `json:"restore,omitempty"`
-	Started time.Time `json:"started"`
-	// Sealed is the newest generation that had left a seal when the
-	// session began.
-	Sealed uint64 `json:"sealed,omitempty"`
-}
-
-func (ps *PackStorage) markBegun(s *backup.Session, sealed uint64) error {
-	data, err := json.Marshal(beginMarker{ID: s.ID, AgentID: s.AgentID, Set: s.Set, Restore: s.Restore.GetHash(), Started: s.Started, Sealed: sealed})
-	if err != nil {
-		return err
+	markers := ps.markers
+	if ps.inBucket == nil || ps.inBucket(ctx) {
+		markers = ps.bucketMarkers
 	}
 
-	err = ps.storage.CreateNew(s.ID+SessionBeginExt, data)
-	if err != nil {
+	if err := markers.MarkBegun(begin); err != nil {
 		return fmt.Errorf("marking session %s begun: %w", s.ID, err)
 	}
 
@@ -57,40 +38,19 @@ func (ps *PackStorage) markBegun(s *backup.Session, sealed uint64) error {
 
 // markEnded ends the session with want unless it has ended already, and
 // returns the outcome it has.
-func (ps *PackStorage) markEnded(id string, want sessionOutcome) (sessionOutcome, error) {
-	err := ps.storage.CreateNew(id+SessionEndExt, []byte(want))
-	if err == nil {
-		return want, nil
-	}
-
-	if !errors.Is(err, ErrFileExists) {
+func (ps *PackStorage) markEnded(id string, want SessionOutcome) (SessionOutcome, error) {
+	outcome, err := ps.markers.MarkEnded(id, want)
+	if err != nil {
 		return "", fmt.Errorf("marking session %s ended: %w", id, err)
 	}
 
-	outcome, _, err := ps.sessionEnd(id)
-
-	return outcome, err
+	return outcome, nil
 }
 
 // sessionEnd returns the outcome the session ended with, and whether it
 // ended.
-func (ps *PackStorage) sessionEnd(id string) (sessionOutcome, bool, error) {
-	file, err := ps.storage.Open(id + SessionEndExt)
-	if notExist(err) {
-		return "", false, nil
-	}
-
-	if err != nil {
-		return "", false, err
-	}
-	defer file.Close()
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return "", false, err
-	}
-
-	return sessionOutcome(data), true, nil
+func (ps *PackStorage) sessionEnd(id string) (SessionOutcome, bool, error) {
+	return ps.markers.SessionEnd(id)
 }
 
 // placeUnknown tells from its session's markers what an archive the index
@@ -113,7 +73,7 @@ func (ps *PackStorage) placeUnknown(name string) (ArchiveInfo, bool, error) {
 	}
 
 	if ended {
-		if outcome == sessionCommitted {
+		if outcome == SessionCommitted {
 			return committed, true, nil
 		}
 
@@ -139,8 +99,13 @@ func (ps *PackStorage) placeUnknown(name string) (ArchiveInfo, bool, error) {
 	}
 
 	// written before sessions left markers
-	if !ps.stored(id + SessionBeginExt) {
+	_, err = ps.markers.SessionBegin(id)
+	if notExist(err) {
 		return committed, true, nil
+	}
+
+	if err != nil {
+		return ArchiveInfo{}, false, err
 	}
 
 	return ArchiveInfo{}, false, nil
@@ -153,12 +118,12 @@ func (ps *PackStorage) placeUnknown(name string) (ArchiveInfo, bool, error) {
 func (ps *PackStorage) reconcileSessions(listed map[string]*ListedFile) error {
 	// ends before begins: a collection deletes a session's begin before its
 	// end, so a begin listed after its end was missed is one still stored
-	ended, err := ps.markerIDs(SessionEndExt)
+	ended, err := ps.markers.Ended()
 	if err != nil {
 		return err
 	}
 
-	begun, err := ps.markerIDs(SessionBeginExt)
+	begun, err := ps.markers.Begun()
 	if err != nil {
 		return err
 	}
@@ -172,7 +137,7 @@ func (ps *PackStorage) reconcileSessions(listed map[string]*ListedFile) error {
 	for _, s := range indexed {
 		known[s.ID] = true
 
-		if ended[s.ID] {
+		if _, ok := ended[s.ID]; ok {
 			if err := ps.endSession(s.ID); err != nil {
 				return err
 			}
@@ -187,7 +152,7 @@ func (ps *PackStorage) reconcileSessions(listed map[string]*ListedFile) error {
 	}
 
 	for id := range begun {
-		if ended[id] || known[id] {
+		if _, ok := ended[id]; ok || known[id] {
 			continue
 		}
 
@@ -224,15 +189,15 @@ func (ps *PackStorage) reconcileSessions(listed map[string]*ListedFile) error {
 // goes first, so a session never looks begun without its end, and a
 // session whose begin stays keeps its end.
 func (ps *PackStorage) pruneSessionMarkers(now time.Time, live map[string]bool, horizons ...[]string) (int, error) {
-	ends, err := ListInfo(ps.storage, SessionEndExt)
+	ends, err := ps.markers.Ended()
 	if err != nil {
 		return 0, err
 	}
 
 	ended := make(map[string]bool, len(ends))
-	for _, end := range ends {
-		if now.Sub(end.Modified) >= ps.claimLimit() {
-			ended[strings.TrimSuffix(end.Name, SessionEndExt)] = true
+	for id, at := range ends {
+		if now.Sub(at) >= ps.claimLimit() {
+			ended[id] = true
 		}
 	}
 
@@ -269,13 +234,8 @@ func (ps *PackStorage) pruneSessionMarkers(now time.Time, live map[string]bool, 
 			continue
 		}
 
-		if err := ps.storage.Delete(id + SessionBeginExt); err != nil && !notExist(err) {
-			ps.logger.Warn("deleting the begin of an ended session failed", "session", id, "err", err)
-			continue
-		}
-
-		if err := ps.storage.Delete(id + SessionEndExt); err != nil && !notExist(err) {
-			ps.logger.Warn("deleting the end of an ended session failed", "session", id, "err", err)
+		if err := ps.markers.DeleteMarkers(id); err != nil {
+			ps.logger.Warn("deleting the markers of an ended session failed", "session", id, "err", err)
 			continue
 		}
 
@@ -299,23 +259,8 @@ func (ps *PackStorage) markerIDs(ext string) (map[string]bool, error) {
 	return ids, nil
 }
 
-func (ps *PackStorage) readBeginMarker(id string) (*beginMarker, error) {
-	file, err := ps.storage.Open(id + SessionBeginExt)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var marker beginMarker
-	if err := json.NewDecoder(file).Decode(&marker); err != nil {
-		return nil, fmt.Errorf("reading the begin of session %s: %w", id, err)
-	}
-
-	return &marker, nil
-}
-
 func (ps *PackStorage) readBegin(id string) (*backup.Session, error) {
-	marker, err := ps.readBeginMarker(id)
+	marker, err := ps.markers.SessionBegin(id)
 	if err != nil {
 		return nil, err
 	}

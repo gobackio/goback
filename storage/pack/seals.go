@@ -123,7 +123,7 @@ func (ps *PackStorage) pruneSeals(live map[string]bool) error {
 	oldest := generations[len(generations)-1]
 
 	for id := range live {
-		marker, err := ps.readBeginMarker(id)
+		marker, err := ps.markers.SessionBegin(id)
 		if err != nil {
 			// a session without its begin may need every seal
 			return nil

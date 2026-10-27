@@ -34,6 +34,8 @@ type Tx struct {
 	Schedule *ScheduleClient
 	// Session is the client for interacting with the Session builders.
 	Session *SessionClient
+	// SessionMarker is the client for interacting with the SessionMarker builders.
+	SessionMarker *SessionMarkerClient
 	// Set is the client for interacting with the Set builders.
 	Set *SetClient
 	// SetRef is the client for interacting with the SetRef builders.
@@ -185,6 +187,7 @@ func (tx *Tx) init() {
 	tx.Reindex = NewReindexClient(tx.config)
 	tx.Schedule = NewScheduleClient(tx.config)
 	tx.Session = NewSessionClient(tx.config)
+	tx.SessionMarker = NewSessionMarkerClient(tx.config)
 	tx.Set = NewSetClient(tx.config)
 	tx.SetRef = NewSetRefClient(tx.config)
 	tx.Settings = NewSettingsClient(tx.config)

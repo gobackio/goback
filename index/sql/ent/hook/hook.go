@@ -129,6 +129,18 @@ func (f SessionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, err
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SessionMutation", m)
 }
 
+// The SessionMarkerFunc type is an adapter to allow the use of ordinary
+// function as SessionMarker mutator.
+type SessionMarkerFunc func(context.Context, *ent.SessionMarkerMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SessionMarkerFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SessionMarkerMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SessionMarkerMutation", m)
+}
+
 // The SetFunc type is an adapter to allow the use of ordinary
 // function as Set mutator.
 type SetFunc func(context.Context, *ent.SetMutation) (ent.Value, error)

@@ -96,7 +96,15 @@ func NewPackStorage(options ...PackOption) (*PackStorage, error) {
 
 	claims, _ := opts.index.(ClaimIndex)
 
+	var bucket SessionMarkers = bucketMarkers{storage: opts.storage}
+	markers := bucket
+	if opts.markers != nil {
+		markers = routedMarkers{bucket: bucket, other: opts.markers}
+	}
+
 	return &PackStorage{
+		markers:          markers,
+		bucketMarkers:    bucket,
 		claims:           claims,
 		claimOpen:        opts.claimOpen,
 		claimGrace:       opts.claimGrace,
@@ -116,6 +124,7 @@ func NewPackStorage(options ...PackOption) (*PackStorage, error) {
 		idleFinalize:     opts.idleFinalize,
 		sessionLease:     opts.sessionLease,
 		headsFor:         opts.headsFor,
+		inBucket:         opts.inBucket,
 		atRest:           atRest,
 		observer:         opts.observer,
 		logger:           opts.logger,
@@ -139,6 +148,11 @@ type PackStorage struct {
 	idleFinalize     time.Duration
 	sessionLease     time.Duration
 	headsFor         func(setID uint64) bool
+	// markers holds every session's markers, bucketMarkers those the
+	// storage keeps, which is all of them unless inBucket is set
+	markers       SessionMarkers
+	bucketMarkers SessionMarkers
+	inBucket      func(ctx context.Context) bool
 
 	// headMtx holds a set's head between reading and writing it, a set
 	// taking the lock its id falls on
@@ -834,12 +848,12 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commits []*
 		commitAfterResurrect()
 	}
 
-	outcome, err := ps.markEnded(ws.id, sessionCommitted)
+	outcome, err := ps.markEnded(ws.id, SessionCommitted)
 	if err != nil {
 		return err
 	}
 
-	if outcome != sessionCommitted {
+	if outcome != SessionCommitted {
 		return fmt.Errorf("session %s ended before it committed: %w", ws.id, backup.ErrNoSession)
 	}
 
@@ -868,7 +882,7 @@ func (ps *PackStorage) commit(ctx context.Context, ws *writeSession, commits []*
 	}
 	ps.mtx.RUnlock()
 
-	err = ps.closeSession(ws.id, sessionCommitted)
+	err = ps.closeSession(ws.id, SessionCommitted)
 	steps.Lap("close")
 
 	return err

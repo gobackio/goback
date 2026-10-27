@@ -8,6 +8,7 @@ import (
 	"github.com/gobackio/goback/index/sql/ent/file"
 	"github.com/gobackio/goback/index/sql/ent/object"
 	"github.com/gobackio/goback/index/sql/ent/schema"
+	"github.com/gobackio/goback/index/sql/ent/sessionmarker"
 	"github.com/gobackio/goback/index/sql/ent/set"
 	"github.com/gobackio/goback/index/sql/ent/settings"
 )
@@ -68,6 +69,12 @@ func init() {
 	objectDescIncomplete := objectFields[7].Descriptor()
 	// object.DefaultIncomplete holds the default value on creation for the incomplete field.
 	object.DefaultIncomplete = objectDescIncomplete.Default.(bool)
+	sessionmarkerFields := schema.SessionMarker{}.Fields()
+	_ = sessionmarkerFields
+	// sessionmarkerDescSealed is the schema descriptor for sealed field.
+	sessionmarkerDescSealed := sessionmarkerFields[5].Descriptor()
+	// sessionmarker.DefaultSealed holds the default value on creation for the sealed field.
+	sessionmarker.DefaultSealed = sessionmarkerDescSealed.Default.(uint64)
 	setFields := schema.Set{}.Fields()
 	_ = setFields
 	// setDescRetentionPaused is the schema descriptor for retention_paused field.

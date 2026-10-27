@@ -63,6 +63,9 @@ type Mapper interface {
 	// field:Started from:"StartedAt"
 	Session(in *ent.Session) *backup.Session
 
+	// field:Set from:"BackupSet"
+	SessionBegin(in *ent.SessionMarker) pack.SessionBegin
+
 	// field:Name from:"ID"
 	// field:Session from:"SessionID"
 	// field:Created from:"CreatedAt"

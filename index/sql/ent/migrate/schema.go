@@ -383,6 +383,23 @@ var (
 		Columns:    SessionsColumns,
 		PrimaryKey: []*schema.Column{SessionsColumns[0]},
 	}
+	// SessionMarkersColumns holds the columns for the "session_markers" table.
+	SessionMarkersColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString},
+		{Name: "agent_id", Type: field.TypeString},
+		{Name: "backup_set", Type: field.TypeString},
+		{Name: "restore", Type: field.TypeBytes, Nullable: true},
+		{Name: "started", Type: field.TypeTime},
+		{Name: "sealed", Type: field.TypeUint64, Default: 0},
+		{Name: "outcome", Type: field.TypeString, Nullable: true},
+		{Name: "ended_at", Type: field.TypeTime, Nullable: true},
+	}
+	// SessionMarkersTable holds the schema information for the "session_markers" table.
+	SessionMarkersTable = &schema.Table{
+		Name:       "session_markers",
+		Columns:    SessionMarkersColumns,
+		PrimaryKey: []*schema.Column{SessionMarkersColumns[0]},
+	}
 	// SetsColumns holds the columns for the "sets" table.
 	SetsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -544,6 +561,7 @@ var (
 		ReindexesTable,
 		SchedulesTable,
 		SessionsTable,
+		SessionMarkersTable,
 		SetsTable,
 		SetRefsTable,
 		SettingsTable,

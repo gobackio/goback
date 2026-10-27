@@ -77,7 +77,7 @@ func (ps *PackStorage) sealedAtBegin(ws *writeSession) (uint64, error) {
 		return ws.sealed, nil
 	}
 
-	marker, err := ps.readBeginMarker(ws.id)
+	marker, err := ps.markers.SessionBegin(ws.id)
 	if err != nil {
 		return 0, err
 	}

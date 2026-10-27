@@ -201,6 +201,21 @@ func (m MapperImpl) Session(in *ent.Session) *backup.Session {
 	}
 }
 
+func (m MapperImpl) SessionBegin(in *ent.SessionMarker) pack.SessionBegin {
+	if in == nil {
+		return pack.SessionBegin{}
+	}
+
+	return pack.SessionBegin{
+		ID:      in.ID,
+		AgentID: in.AgentID,
+		Set:     in.BackupSet,
+		Restore: in.Restore,
+		Started: in.Started,
+		Sealed:  in.Sealed,
+	}
+}
+
 func (m MapperImpl) Set(in *ent.Set) index.SetInfo {
 	if in == nil {
 		return index.SetInfo{}

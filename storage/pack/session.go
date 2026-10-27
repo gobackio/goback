@@ -116,7 +116,7 @@ func (ps *PackStorage) BeginSession(ctx context.Context, s *backup.Session) (con
 	// in for listing them, as an older generation only has it check more
 	sealed := ps.sealSeen.Load()
 
-	err = ps.markBegun(s, sealed)
+	err = ps.markBegun(ctx, s, sealed)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func (ps *PackStorage) LookupSession(_ context.Context, id string) (*backup.Sess
 
 func (ps *PackStorage) endSession(id string) error {
 	// a session that committed keeps its archives whatever the index says
-	outcome, err := ps.markEnded(id, sessionAborted)
+	outcome, err := ps.markEnded(id, SessionAborted)
 	if err != nil {
 		return err
 	}
@@ -187,7 +187,7 @@ func (ps *PackStorage) endSession(id string) error {
 }
 
 // closeSession drops a session whose end marker holds outcome.
-func (ps *PackStorage) closeSession(id string, outcome sessionOutcome) error {
+func (ps *PackStorage) closeSession(id string, outcome SessionOutcome) error {
 	ps.sessionsMtx.Lock()
 	ws := ps.sessions[id]
 	delete(ps.sessions, id)
@@ -216,7 +216,7 @@ func (ps *PackStorage) closeSession(id string, outcome sessionOutcome) error {
 
 		// an index restored from before the commit still has the archive
 		// pending; the marker says otherwise, and the marker wins
-		if outcome == sessionCommitted || ps.markedCommitted(name) {
+		if outcome == SessionCommitted || ps.markedCommitted(name) {
 			ps.logger.Warn("keeping an archive the index had pending, which a commit marked committed", "archive", name, "session", id)
 			ps.adoptArchive(name, loaded)
 

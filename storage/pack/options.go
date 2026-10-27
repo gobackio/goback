@@ -1,6 +1,7 @@
 package pack
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"time"
@@ -20,6 +21,8 @@ type packOptions struct {
 	idleFinalize    time.Duration
 	sessionLease    time.Duration
 	headsFor        func(setID uint64) bool
+	markers         SessionMarkers
+	inBucket        func(ctx context.Context) bool
 	claimOpen       time.Duration
 	claimGrace      time.Duration
 	localSessions   bool
@@ -98,6 +101,16 @@ func WithSessionLease(d time.Duration) PackOption {
 func WithHeadsFor(keep func(setID uint64) bool) PackOption {
 	return func(p *packOptions) {
 		p.headsFor = keep
+	}
+}
+
+// WithSessionMarkers has the store keep the markers of the sessions
+// inBucket reports false for, given the context the session began under,
+// in markers instead of the storage. A rebuild without markers treats
+// every archive of a session it finds no markers of as committed.
+func WithSessionMarkers(markers SessionMarkers, inBucket func(ctx context.Context) bool) PackOption {
+	return func(p *packOptions) {
+		p.markers, p.inBucket = markers, inBucket
 	}
 }
 

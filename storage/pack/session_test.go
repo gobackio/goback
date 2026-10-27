@@ -157,7 +157,7 @@ func leftBehind(t *testing.T, base string) string {
 	t.Helper()
 
 	id := uuid.New().String()
-	require.NoError(t, os.WriteFile(filepath.Join(base, id+SessionEndExt), []byte(sessionAborted), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(base, id+SessionEndExt), []byte(SessionAborted), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(base, id), 0o755))
 
 	orphan := filepath.Join(base, id, uuid.New().String()+ArchiveSuffix)
@@ -496,7 +496,7 @@ func TestOpenOverAFreshIndexTakesACommittedEndForTheArchives(t *testing.T) {
 	require.NoError(t, writer.Close())
 
 	// the commit won the end and stopped before it marked its archives
-	require.NoError(t, os.WriteFile(filepath.Join(base, session.ID+SessionEndExt), []byte(sessionCommitted), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(base, session.ID+SessionEndExt), []byte(SessionCommitted), 0o644))
 
 	rebuilt := newTestStore(t, base)
 	t.Cleanup(func() { _ = rebuilt.Close() })

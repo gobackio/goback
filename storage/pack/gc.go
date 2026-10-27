@@ -2378,12 +2378,12 @@ func (r *gcRun) horizon() ([]time.Time, []string, error) {
 // the index still holds is live even with an end marker, since its commit
 // may not have reached the index yet.
 func (r *gcRun) liveSessions() (map[string]bool, error) {
-	begun, err := r.ps.markerIDs(SessionBeginExt)
+	begun, err := r.ps.markers.Begun()
 	if err != nil {
 		return nil, err
 	}
 
-	ended, err := r.ps.markerIDs(SessionEndExt)
+	ended, err := r.ps.markers.Ended()
 	if err != nil {
 		return nil, err
 	}
@@ -2395,7 +2395,7 @@ func (r *gcRun) liveSessions() (map[string]bool, error) {
 
 	live := make(map[string]bool, len(begun)+len(indexed))
 	for id := range begun {
-		if !ended[id] {
+		if _, ok := ended[id]; !ok {
 			live[id] = true
 		}
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/gobackio/goback/index/sql/ent/reindex"
 	"github.com/gobackio/goback/index/sql/ent/schedule"
 	"github.com/gobackio/goback/index/sql/ent/session"
+	"github.com/gobackio/goback/index/sql/ent/sessionmarker"
 	"github.com/gobackio/goback/index/sql/ent/set"
 	"github.com/gobackio/goback/index/sql/ent/setref"
 	"github.com/gobackio/goback/index/sql/ent/settings"
@@ -48,6 +49,7 @@ const (
 	TypeReindex       = "Reindex"
 	TypeSchedule      = "Schedule"
 	TypeSession       = "Session"
+	TypeSessionMarker = "SessionMarker"
 	TypeSet           = "Set"
 	TypeSetRef        = "SetRef"
 	TypeSettings      = "Settings"
@@ -8391,6 +8393,758 @@ func (m *SessionMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown Session edge %s", name)
+}
+
+// SessionMarkerMutation represents an operation that mutates the SessionMarker nodes in the graph.
+type SessionMarkerMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *string
+	agent_id      *string
+	backup_set    *string
+	restore       *[]byte
+	started       *time.Time
+	sealed        *uint64
+	addsealed     *int64
+	outcome       *string
+	ended_at      *time.Time
+	clearedFields map[string]struct{}
+	done          bool
+	oldValue      func(context.Context) (*SessionMarker, error)
+	predicates    []predicate.SessionMarker
+}
+
+var _ ent.Mutation = (*SessionMarkerMutation)(nil)
+
+// sessionmarkerOption allows management of the mutation configuration using functional options.
+type sessionmarkerOption func(*SessionMarkerMutation)
+
+// newSessionMarkerMutation creates new mutation for the SessionMarker entity.
+func newSessionMarkerMutation(c config, op Op, opts ...sessionmarkerOption) *SessionMarkerMutation {
+	m := &SessionMarkerMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSessionMarker,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSessionMarkerID sets the ID field of the mutation.
+func withSessionMarkerID(id string) sessionmarkerOption {
+	return func(m *SessionMarkerMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SessionMarker
+		)
+		m.oldValue = func(ctx context.Context) (*SessionMarker, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SessionMarker.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSessionMarker sets the old SessionMarker of the mutation.
+func withSessionMarker(node *SessionMarker) sessionmarkerOption {
+	return func(m *SessionMarkerMutation) {
+		m.oldValue = func(context.Context) (*SessionMarker, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SessionMarkerMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SessionMarkerMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SessionMarker entities.
+func (m *SessionMarkerMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SessionMarkerMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SessionMarkerMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SessionMarker.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetAgentID sets the "agent_id" field.
+func (m *SessionMarkerMutation) SetAgentID(s string) {
+	m.agent_id = &s
+}
+
+// AgentID returns the value of the "agent_id" field in the mutation.
+func (m *SessionMarkerMutation) AgentID() (r string, exists bool) {
+	v := m.agent_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAgentID returns the old "agent_id" field's value of the SessionMarker entity.
+// If the SessionMarker object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SessionMarkerMutation) OldAgentID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAgentID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAgentID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAgentID: %w", err)
+	}
+	return oldValue.AgentID, nil
+}
+
+// ResetAgentID resets all changes to the "agent_id" field.
+func (m *SessionMarkerMutation) ResetAgentID() {
+	m.agent_id = nil
+}
+
+// SetBackupSet sets the "backup_set" field.
+func (m *SessionMarkerMutation) SetBackupSet(s string) {
+	m.backup_set = &s
+}
+
+// BackupSet returns the value of the "backup_set" field in the mutation.
+func (m *SessionMarkerMutation) BackupSet() (r string, exists bool) {
+	v := m.backup_set
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBackupSet returns the old "backup_set" field's value of the SessionMarker entity.
+// If the SessionMarker object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SessionMarkerMutation) OldBackupSet(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBackupSet is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBackupSet requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBackupSet: %w", err)
+	}
+	return oldValue.BackupSet, nil
+}
+
+// ResetBackupSet resets all changes to the "backup_set" field.
+func (m *SessionMarkerMutation) ResetBackupSet() {
+	m.backup_set = nil
+}
+
+// SetRestore sets the "restore" field.
+func (m *SessionMarkerMutation) SetRestore(b []byte) {
+	m.restore = &b
+}
+
+// Restore returns the value of the "restore" field in the mutation.
+func (m *SessionMarkerMutation) Restore() (r []byte, exists bool) {
+	v := m.restore
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRestore returns the old "restore" field's value of the SessionMarker entity.
+// If the SessionMarker object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SessionMarkerMutation) OldRestore(ctx context.Context) (v []byte, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRestore is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRestore requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRestore: %w", err)
+	}
+	return oldValue.Restore, nil
+}
+
+// ClearRestore clears the value of the "restore" field.
+func (m *SessionMarkerMutation) ClearRestore() {
+	m.restore = nil
+	m.clearedFields[sessionmarker.FieldRestore] = struct{}{}
+}
+
+// RestoreCleared returns if the "restore" field was cleared in this mutation.
+func (m *SessionMarkerMutation) RestoreCleared() bool {
+	_, ok := m.clearedFields[sessionmarker.FieldRestore]
+	return ok
+}
+
+// ResetRestore resets all changes to the "restore" field.
+func (m *SessionMarkerMutation) ResetRestore() {
+	m.restore = nil
+	delete(m.clearedFields, sessionmarker.FieldRestore)
+}
+
+// SetStarted sets the "started" field.
+func (m *SessionMarkerMutation) SetStarted(t time.Time) {
+	m.started = &t
+}
+
+// Started returns the value of the "started" field in the mutation.
+func (m *SessionMarkerMutation) Started() (r time.Time, exists bool) {
+	v := m.started
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStarted returns the old "started" field's value of the SessionMarker entity.
+// If the SessionMarker object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SessionMarkerMutation) OldStarted(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStarted is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStarted requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStarted: %w", err)
+	}
+	return oldValue.Started, nil
+}
+
+// ResetStarted resets all changes to the "started" field.
+func (m *SessionMarkerMutation) ResetStarted() {
+	m.started = nil
+}
+
+// SetSealed sets the "sealed" field.
+func (m *SessionMarkerMutation) SetSealed(u uint64) {
+	m.sealed = &u
+	m.addsealed = nil
+}
+
+// Sealed returns the value of the "sealed" field in the mutation.
+func (m *SessionMarkerMutation) Sealed() (r uint64, exists bool) {
+	v := m.sealed
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSealed returns the old "sealed" field's value of the SessionMarker entity.
+// If the SessionMarker object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SessionMarkerMutation) OldSealed(ctx context.Context) (v uint64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSealed is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSealed requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSealed: %w", err)
+	}
+	return oldValue.Sealed, nil
+}
+
+// AddSealed adds u to the "sealed" field.
+func (m *SessionMarkerMutation) AddSealed(u int64) {
+	if m.addsealed != nil {
+		*m.addsealed += u
+	} else {
+		m.addsealed = &u
+	}
+}
+
+// AddedSealed returns the value that was added to the "sealed" field in this mutation.
+func (m *SessionMarkerMutation) AddedSealed() (r int64, exists bool) {
+	v := m.addsealed
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSealed resets all changes to the "sealed" field.
+func (m *SessionMarkerMutation) ResetSealed() {
+	m.sealed = nil
+	m.addsealed = nil
+}
+
+// SetOutcome sets the "outcome" field.
+func (m *SessionMarkerMutation) SetOutcome(s string) {
+	m.outcome = &s
+}
+
+// Outcome returns the value of the "outcome" field in the mutation.
+func (m *SessionMarkerMutation) Outcome() (r string, exists bool) {
+	v := m.outcome
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOutcome returns the old "outcome" field's value of the SessionMarker entity.
+// If the SessionMarker object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SessionMarkerMutation) OldOutcome(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOutcome is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOutcome requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOutcome: %w", err)
+	}
+	return oldValue.Outcome, nil
+}
+
+// ClearOutcome clears the value of the "outcome" field.
+func (m *SessionMarkerMutation) ClearOutcome() {
+	m.outcome = nil
+	m.clearedFields[sessionmarker.FieldOutcome] = struct{}{}
+}
+
+// OutcomeCleared returns if the "outcome" field was cleared in this mutation.
+func (m *SessionMarkerMutation) OutcomeCleared() bool {
+	_, ok := m.clearedFields[sessionmarker.FieldOutcome]
+	return ok
+}
+
+// ResetOutcome resets all changes to the "outcome" field.
+func (m *SessionMarkerMutation) ResetOutcome() {
+	m.outcome = nil
+	delete(m.clearedFields, sessionmarker.FieldOutcome)
+}
+
+// SetEndedAt sets the "ended_at" field.
+func (m *SessionMarkerMutation) SetEndedAt(t time.Time) {
+	m.ended_at = &t
+}
+
+// EndedAt returns the value of the "ended_at" field in the mutation.
+func (m *SessionMarkerMutation) EndedAt() (r time.Time, exists bool) {
+	v := m.ended_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEndedAt returns the old "ended_at" field's value of the SessionMarker entity.
+// If the SessionMarker object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SessionMarkerMutation) OldEndedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEndedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEndedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEndedAt: %w", err)
+	}
+	return oldValue.EndedAt, nil
+}
+
+// ClearEndedAt clears the value of the "ended_at" field.
+func (m *SessionMarkerMutation) ClearEndedAt() {
+	m.ended_at = nil
+	m.clearedFields[sessionmarker.FieldEndedAt] = struct{}{}
+}
+
+// EndedAtCleared returns if the "ended_at" field was cleared in this mutation.
+func (m *SessionMarkerMutation) EndedAtCleared() bool {
+	_, ok := m.clearedFields[sessionmarker.FieldEndedAt]
+	return ok
+}
+
+// ResetEndedAt resets all changes to the "ended_at" field.
+func (m *SessionMarkerMutation) ResetEndedAt() {
+	m.ended_at = nil
+	delete(m.clearedFields, sessionmarker.FieldEndedAt)
+}
+
+// Where appends a list predicates to the SessionMarkerMutation builder.
+func (m *SessionMarkerMutation) Where(ps ...predicate.SessionMarker) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SessionMarkerMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SessionMarkerMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SessionMarker, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SessionMarkerMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SessionMarkerMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SessionMarker).
+func (m *SessionMarkerMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SessionMarkerMutation) Fields() []string {
+	fields := make([]string, 0, 7)
+	if m.agent_id != nil {
+		fields = append(fields, sessionmarker.FieldAgentID)
+	}
+	if m.backup_set != nil {
+		fields = append(fields, sessionmarker.FieldBackupSet)
+	}
+	if m.restore != nil {
+		fields = append(fields, sessionmarker.FieldRestore)
+	}
+	if m.started != nil {
+		fields = append(fields, sessionmarker.FieldStarted)
+	}
+	if m.sealed != nil {
+		fields = append(fields, sessionmarker.FieldSealed)
+	}
+	if m.outcome != nil {
+		fields = append(fields, sessionmarker.FieldOutcome)
+	}
+	if m.ended_at != nil {
+		fields = append(fields, sessionmarker.FieldEndedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SessionMarkerMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sessionmarker.FieldAgentID:
+		return m.AgentID()
+	case sessionmarker.FieldBackupSet:
+		return m.BackupSet()
+	case sessionmarker.FieldRestore:
+		return m.Restore()
+	case sessionmarker.FieldStarted:
+		return m.Started()
+	case sessionmarker.FieldSealed:
+		return m.Sealed()
+	case sessionmarker.FieldOutcome:
+		return m.Outcome()
+	case sessionmarker.FieldEndedAt:
+		return m.EndedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SessionMarkerMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sessionmarker.FieldAgentID:
+		return m.OldAgentID(ctx)
+	case sessionmarker.FieldBackupSet:
+		return m.OldBackupSet(ctx)
+	case sessionmarker.FieldRestore:
+		return m.OldRestore(ctx)
+	case sessionmarker.FieldStarted:
+		return m.OldStarted(ctx)
+	case sessionmarker.FieldSealed:
+		return m.OldSealed(ctx)
+	case sessionmarker.FieldOutcome:
+		return m.OldOutcome(ctx)
+	case sessionmarker.FieldEndedAt:
+		return m.OldEndedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SessionMarker field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SessionMarkerMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sessionmarker.FieldAgentID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAgentID(v)
+		return nil
+	case sessionmarker.FieldBackupSet:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBackupSet(v)
+		return nil
+	case sessionmarker.FieldRestore:
+		v, ok := value.([]byte)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRestore(v)
+		return nil
+	case sessionmarker.FieldStarted:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStarted(v)
+		return nil
+	case sessionmarker.FieldSealed:
+		v, ok := value.(uint64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSealed(v)
+		return nil
+	case sessionmarker.FieldOutcome:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOutcome(v)
+		return nil
+	case sessionmarker.FieldEndedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEndedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SessionMarker field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SessionMarkerMutation) AddedFields() []string {
+	var fields []string
+	if m.addsealed != nil {
+		fields = append(fields, sessionmarker.FieldSealed)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SessionMarkerMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case sessionmarker.FieldSealed:
+		return m.AddedSealed()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SessionMarkerMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case sessionmarker.FieldSealed:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSealed(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SessionMarker numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SessionMarkerMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(sessionmarker.FieldRestore) {
+		fields = append(fields, sessionmarker.FieldRestore)
+	}
+	if m.FieldCleared(sessionmarker.FieldOutcome) {
+		fields = append(fields, sessionmarker.FieldOutcome)
+	}
+	if m.FieldCleared(sessionmarker.FieldEndedAt) {
+		fields = append(fields, sessionmarker.FieldEndedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SessionMarkerMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SessionMarkerMutation) ClearField(name string) error {
+	switch name {
+	case sessionmarker.FieldRestore:
+		m.ClearRestore()
+		return nil
+	case sessionmarker.FieldOutcome:
+		m.ClearOutcome()
+		return nil
+	case sessionmarker.FieldEndedAt:
+		m.ClearEndedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SessionMarker nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SessionMarkerMutation) ResetField(name string) error {
+	switch name {
+	case sessionmarker.FieldAgentID:
+		m.ResetAgentID()
+		return nil
+	case sessionmarker.FieldBackupSet:
+		m.ResetBackupSet()
+		return nil
+	case sessionmarker.FieldRestore:
+		m.ResetRestore()
+		return nil
+	case sessionmarker.FieldStarted:
+		m.ResetStarted()
+		return nil
+	case sessionmarker.FieldSealed:
+		m.ResetSealed()
+		return nil
+	case sessionmarker.FieldOutcome:
+		m.ResetOutcome()
+		return nil
+	case sessionmarker.FieldEndedAt:
+		m.ResetEndedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SessionMarker field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SessionMarkerMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SessionMarkerMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SessionMarkerMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SessionMarkerMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SessionMarkerMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SessionMarkerMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SessionMarkerMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SessionMarker unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SessionMarkerMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SessionMarker edge %s", name)
 }
 
 // SetMutation represents an operation that mutates the Set nodes in the graph.

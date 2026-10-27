@@ -36,14 +36,14 @@ func TestASessionLeavesABeginAndTheOutcomeItEndedWith(t *testing.T) {
 	blob := makeTestData(t, 1)[0]
 	require.NoError(t, store.Put(ctx, blob))
 	require.NoError(t, store.Put(ctx, commitObject(blob.Ref())))
-	require.Equal(t, string(sessionCommitted), readMarker(t, store, committed.ID+SessionEndExt))
+	require.Equal(t, string(SessionCommitted), readMarker(t, store, committed.ID+SessionEndExt))
 
 	require.NoError(t, store.EndSession(ctx))
-	require.Equal(t, string(sessionCommitted), readMarker(t, store, committed.ID+SessionEndExt), "an end is never replaced")
+	require.Equal(t, string(SessionCommitted), readMarker(t, store, committed.ID+SessionEndExt), "an end is never replaced")
 
 	ctx, aborted := beginSession(t, store, "agent-b")
 	require.NoError(t, store.EndSession(ctx))
-	require.Equal(t, string(sessionAborted), readMarker(t, store, aborted.ID+SessionEndExt))
+	require.Equal(t, string(SessionAborted), readMarker(t, store, aborted.ID+SessionEndExt))
 }
 
 func TestACommitLosesToAnEndAlreadyTaken(t *testing.T) {
@@ -56,7 +56,7 @@ func TestACommitLosesToAnEndAlreadyTaken(t *testing.T) {
 	require.NoError(t, store.Flush())
 
 	// another process's reaper ended the session
-	require.NoError(t, store.storage.CreateNew(session.ID+SessionEndExt, []byte(sessionAborted)))
+	require.NoError(t, store.storage.CreateNew(session.ID+SessionEndExt, []byte(SessionAborted)))
 
 	require.ErrorIs(t, store.Put(ctx, commitObject(obj.Ref())), backup.ErrNoSession)
 	requireVisible(t, store, context.Background(), obj, false)
@@ -72,7 +72,7 @@ func TestACommittedEndKeepsTheArchivesTheIndexStillHadPending(t *testing.T) {
 	require.NoError(t, store.Flush())
 
 	// the commit won the end and stopped before it marked its archives
-	require.NoError(t, store.storage.CreateNew(session.ID+SessionEndExt, []byte(sessionCommitted)))
+	require.NoError(t, store.storage.CreateNew(session.ID+SessionEndExt, []byte(SessionCommitted)))
 
 	require.NoError(t, store.EndSession(ctx))
 	requireVisible(t, store, context.Background(), obj, true)
@@ -86,7 +86,7 @@ func TestOpeningAStoreBringsTheIndexInLineWithTheMarkers(t *testing.T) {
 	_, ended := beginSession(t, first, "agent-b")
 	require.NoError(t, first.Close())
 
-	require.NoError(t, first.storage.CreateNew(ended.ID+SessionEndExt, []byte(sessionAborted)))
+	require.NoError(t, first.storage.CreateNew(ended.ID+SessionEndExt, []byte(SessionAborted)))
 
 	index := NewInMemoryIndex()
 	require.NoError(t, index.BeginSession(ended))

@@ -25,6 +25,7 @@ import (
 	"github.com/gobackio/goback/index/sql/ent/reindex"
 	"github.com/gobackio/goback/index/sql/ent/schedule"
 	"github.com/gobackio/goback/index/sql/ent/session"
+	"github.com/gobackio/goback/index/sql/ent/sessionmarker"
 	"github.com/gobackio/goback/index/sql/ent/set"
 	"github.com/gobackio/goback/index/sql/ent/setref"
 	"github.com/gobackio/goback/index/sql/ent/settings"
@@ -59,6 +60,8 @@ type Client struct {
 	Schedule *ScheduleClient
 	// Session is the client for interacting with the Session builders.
 	Session *SessionClient
+	// SessionMarker is the client for interacting with the SessionMarker builders.
+	SessionMarker *SessionMarkerClient
 	// Set is the client for interacting with the Set builders.
 	Set *SetClient
 	// SetRef is the client for interacting with the SetRef builders.
@@ -90,6 +93,7 @@ func (c *Client) init() {
 	c.Reindex = NewReindexClient(c.config)
 	c.Schedule = NewScheduleClient(c.config)
 	c.Session = NewSessionClient(c.config)
+	c.SessionMarker = NewSessionMarkerClient(c.config)
 	c.Set = NewSetClient(c.config)
 	c.SetRef = NewSetRefClient(c.config)
 	c.Settings = NewSettingsClient(c.config)
@@ -197,6 +201,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		Reindex:       NewReindexClient(cfg),
 		Schedule:      NewScheduleClient(cfg),
 		Session:       NewSessionClient(cfg),
+		SessionMarker: NewSessionMarkerClient(cfg),
 		Set:           NewSetClient(cfg),
 		SetRef:        NewSetRefClient(cfg),
 		Settings:      NewSettingsClient(cfg),
@@ -231,6 +236,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		Reindex:       NewReindexClient(cfg),
 		Schedule:      NewScheduleClient(cfg),
 		Session:       NewSessionClient(cfg),
+		SessionMarker: NewSessionMarkerClient(cfg),
 		Set:           NewSetClient(cfg),
 		SetRef:        NewSetRefClient(cfg),
 		Settings:      NewSettingsClient(cfg),
@@ -266,8 +272,8 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.Archive, c.CommitRow, c.DamagedPath, c.DeletedRef, c.File, c.Object, c.Pin,
-		c.Reindex, c.Schedule, c.Session, c.Set, c.SetRef, c.Settings, c.Tree,
-		c.WalkedArchive,
+		c.Reindex, c.Schedule, c.Session, c.SessionMarker, c.Set, c.SetRef, c.Settings,
+		c.Tree, c.WalkedArchive,
 	} {
 		n.Use(hooks...)
 	}
@@ -278,8 +284,8 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.Archive, c.CommitRow, c.DamagedPath, c.DeletedRef, c.File, c.Object, c.Pin,
-		c.Reindex, c.Schedule, c.Session, c.Set, c.SetRef, c.Settings, c.Tree,
-		c.WalkedArchive,
+		c.Reindex, c.Schedule, c.Session, c.SessionMarker, c.Set, c.SetRef, c.Settings,
+		c.Tree, c.WalkedArchive,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -308,6 +314,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Schedule.mutate(ctx, m)
 	case *SessionMutation:
 		return c.Session.mutate(ctx, m)
+	case *SessionMarkerMutation:
+		return c.SessionMarker.mutate(ctx, m)
 	case *SetMutation:
 		return c.Set.mutate(ctx, m)
 	case *SetRefMutation:
@@ -1765,6 +1773,139 @@ func (c *SessionClient) mutate(ctx context.Context, m *SessionMutation) (Value, 
 	}
 }
 
+// SessionMarkerClient is a client for the SessionMarker schema.
+type SessionMarkerClient struct {
+	config
+}
+
+// NewSessionMarkerClient returns a client for the SessionMarker from the given config.
+func NewSessionMarkerClient(c config) *SessionMarkerClient {
+	return &SessionMarkerClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `sessionmarker.Hooks(f(g(h())))`.
+func (c *SessionMarkerClient) Use(hooks ...Hook) {
+	c.hooks.SessionMarker = append(c.hooks.SessionMarker, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `sessionmarker.Intercept(f(g(h())))`.
+func (c *SessionMarkerClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SessionMarker = append(c.inters.SessionMarker, interceptors...)
+}
+
+// Create returns a builder for creating a SessionMarker entity.
+func (c *SessionMarkerClient) Create() *SessionMarkerCreate {
+	mutation := newSessionMarkerMutation(c.config, OpCreate)
+	return &SessionMarkerCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SessionMarker entities.
+func (c *SessionMarkerClient) CreateBulk(builders ...*SessionMarkerCreate) *SessionMarkerCreateBulk {
+	return &SessionMarkerCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SessionMarkerClient) MapCreateBulk(slice any, setFunc func(*SessionMarkerCreate, int)) *SessionMarkerCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SessionMarkerCreateBulk{err: fmt.Errorf("calling to SessionMarkerClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SessionMarkerCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SessionMarkerCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SessionMarker.
+func (c *SessionMarkerClient) Update() *SessionMarkerUpdate {
+	mutation := newSessionMarkerMutation(c.config, OpUpdate)
+	return &SessionMarkerUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SessionMarkerClient) UpdateOne(_m *SessionMarker) *SessionMarkerUpdateOne {
+	mutation := newSessionMarkerMutation(c.config, OpUpdateOne, withSessionMarker(_m))
+	return &SessionMarkerUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SessionMarkerClient) UpdateOneID(id string) *SessionMarkerUpdateOne {
+	mutation := newSessionMarkerMutation(c.config, OpUpdateOne, withSessionMarkerID(id))
+	return &SessionMarkerUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SessionMarker.
+func (c *SessionMarkerClient) Delete() *SessionMarkerDelete {
+	mutation := newSessionMarkerMutation(c.config, OpDelete)
+	return &SessionMarkerDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SessionMarkerClient) DeleteOne(_m *SessionMarker) *SessionMarkerDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SessionMarkerClient) DeleteOneID(id string) *SessionMarkerDeleteOne {
+	builder := c.Delete().Where(sessionmarker.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SessionMarkerDeleteOne{builder}
+}
+
+// Query returns a query builder for SessionMarker.
+func (c *SessionMarkerClient) Query() *SessionMarkerQuery {
+	return &SessionMarkerQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSessionMarker},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SessionMarker entity by its id.
+func (c *SessionMarkerClient) Get(ctx context.Context, id string) (*SessionMarker, error) {
+	return c.Query().Where(sessionmarker.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SessionMarkerClient) GetX(ctx context.Context, id string) *SessionMarker {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SessionMarkerClient) Hooks() []Hook {
+	return c.hooks.SessionMarker
+}
+
+// Interceptors returns the client interceptors.
+func (c *SessionMarkerClient) Interceptors() []Interceptor {
+	return c.inters.SessionMarker
+}
+
+func (c *SessionMarkerClient) mutate(ctx context.Context, m *SessionMarkerMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SessionMarkerCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SessionMarkerUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SessionMarkerUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SessionMarkerDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SessionMarker mutation op: %q", m.Op())
+	}
+}
+
 // SetClient is a client for the Set schema.
 type SetClient struct {
 	config
@@ -2530,11 +2671,13 @@ func (c *WalkedArchiveClient) mutate(ctx context.Context, m *WalkedArchiveMutati
 type (
 	hooks struct {
 		Archive, CommitRow, DamagedPath, DeletedRef, File, Object, Pin, Reindex,
-		Schedule, Session, Set, SetRef, Settings, Tree, WalkedArchive []ent.Hook
+		Schedule, Session, SessionMarker, Set, SetRef, Settings, Tree,
+		WalkedArchive []ent.Hook
 	}
 	inters struct {
 		Archive, CommitRow, DamagedPath, DeletedRef, File, Object, Pin, Reindex,
-		Schedule, Session, Set, SetRef, Settings, Tree, WalkedArchive []ent.Interceptor
+		Schedule, Session, SessionMarker, Set, SetRef, Settings, Tree,
+		WalkedArchive []ent.Interceptor
 	}
 )
 

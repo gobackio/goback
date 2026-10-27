@@ -34,6 +34,9 @@ type simulation struct {
 	maintainer *PackStorage
 	// handoff has collections publish their sweeps for a rewriter process
 	handoff bool
+	// markers, when set, keeps the markers of every other writer's
+	// sessions outside the bucket
+	markers *memMarkers
 
 	writers []*simWriter
 	pool    []*proto.Object
@@ -55,13 +58,17 @@ type simWriter struct {
 	closure []*proto.Object
 }
 
-func newSimulation(t *testing.T, seed int64, handoff bool) *simulation {
+func newSimulation(t *testing.T, seed int64, handoff, routed bool) *simulation {
 	sim := &simulation{
 		t:       t,
 		handoff: handoff,
 		rng:     rand.New(rand.NewSource(seed)),
 		bucket:  newMemBucket(),
 		index:   NewInMemoryIndex(),
+	}
+
+	if routed {
+		sim.markers = newMemMarkers()
 	}
 
 	sim.servers = []*PackStorage{sim.open(), sim.open()}
@@ -72,13 +79,19 @@ func newSimulation(t *testing.T, seed int64, handoff bool) *simulation {
 }
 
 func (sim *simulation) open() *PackStorage {
-	store, err := NewPackStorage(
+	options := []PackOption{
 		WithArchiveStorage(sim.bucket.view()),
 		WithMaxParallel(16),
 		WithArchiveIndex(sim.index),
-		WithMaxSize(64*1024),
+		WithMaxSize(64 * 1024),
 		WithSessionLease(simLease),
-	)
+	}
+
+	if sim.markers != nil {
+		options = append(options, WithSessionMarkers(sim.markers, markedInBucket))
+	}
+
+	store, err := NewPackStorage(options...)
 	require.NoError(sim.t, err)
 	require.NoError(sim.t, store.Open())
 
@@ -131,7 +144,7 @@ func (sim *simulation) step(i int) {
 	if w == nil {
 		server := sim.rng.Intn(len(sim.servers))
 
-		ctx, err := sim.servers[server].BeginSession(context.Background(), &backup.Session{AgentID: fmt.Sprintf("agent-%d", i), Set: "world"})
+		ctx, err := sim.servers[server].BeginSession(context.WithValue(context.Background(), inBucketKey{}, i%2 == 0), &backup.Session{AgentID: fmt.Sprintf("agent-%d", i), Set: "world"})
 		require.NoError(sim.t, err)
 
 		objects, commit := sim.backup()
@@ -339,10 +352,10 @@ func TestSimulatedStoresKeepEveryCommittedBackup(t *testing.T) {
 	var reclaimed uint64
 	var live, retired, lost int
 
-	for _, handoff := range []bool{false, true} {
+	for _, mode := range []struct{ handoff, routed bool }{{false, false}, {true, false}, {false, true}} {
 		for seed := range int64(seeds) {
-			t.Run(fmt.Sprintf("handoff-%v/seed-%d", handoff, seed), func(t *testing.T) {
-				sim := newSimulation(t, seed, handoff)
+			t.Run(fmt.Sprintf("handoff-%v/routed-%v/seed-%d", mode.handoff, mode.routed, seed), func(t *testing.T) {
+				sim := newSimulation(t, seed, mode.handoff, mode.routed)
 				sim.run(steps)
 
 				reclaimed += sim.reclaimed
