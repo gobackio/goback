@@ -329,6 +329,29 @@ func TestAPurgeGoesByTheDayARetirementNamesAndNeverBeforeItWasFirstStored(t *tes
 	require.ElementsMatch(t, []string{"live", "same-day-1"}, names)
 }
 
+func TestAPurgeDeletesTheArchivesRetiredWithAGraceOnceItIsOver(t *testing.T) {
+	day := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	bucket := newMemBucket()
+
+	store, err := NewPackStorage(WithArchiveStorage(bucket.view()), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+	t.Cleanup(func() { _ = store.Close() })
+
+	storeRetirementAt(t, bucket, "graced", retirement{Day: day.Format(quarantineDay), Grace: time.Hour, Archives: []string{"a"}}, day)
+	storeRetirementAt(t, bucket, "quarantined", retirement{Day: day.Format(quarantineDay), Archives: []string{"b"}}, day)
+
+	purged, err := store.PurgeQuarantine(DefaultQuarantine, day.Add(59*time.Minute))
+	require.NoError(t, err)
+	require.Zero(t, purged)
+
+	purged, err = store.PurgeQuarantine(DefaultQuarantine, day.Add(time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 1, purged)
+	require.NotContains(t, bucket.files, "a"+ArchiveSuffix)
+	require.Contains(t, bucket.files, "b"+ArchiveSuffix)
+}
+
 func TestArchivesRetiredADayAgoMoveIntoTheQuarantineUntilThePurge(t *testing.T) {
 	day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	bucket := newMemBucket()

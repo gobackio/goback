@@ -123,6 +123,12 @@ type CompactionConfig struct {
 	// Chunk is how many archives a rewrite takes at a time, retiring each
 	// chunk as it finishes; zero means 1000.
 	Chunk int
+	// Grace is how long the archives Compact merged are kept before a
+	// later Compact or PurgeQuarantine deletes them; zero keeps them for
+	// the quarantine period. Set it only where every process reading the
+	// store shares its index, as one with an index of its own may still
+	// look for objects in them.
+	Grace time.Duration
 }
 
 // WithCompaction tunes Compact.

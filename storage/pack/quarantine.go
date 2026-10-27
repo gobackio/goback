@@ -30,8 +30,11 @@ type retirement struct {
 	Day string `json:"day"`
 	// Stored is when the storage stored the retirement this one was cut
 	// from, zero for one written by a rewrite
-	Stored   time.Time `json:"stored,omitzero"`
-	Archives []string  `json:"archives"`
+	Stored time.Time `json:"stored,omitzero"`
+	// Grace, when set, is how long after Stored the archives are due, in
+	// place of the quarantine period
+	Grace    time.Duration `json:"grace,omitzero"`
+	Archives []string      `json:"archives"`
 }
 
 // QuarantineExt names a retired archive's file moved out of the way:
@@ -211,9 +214,9 @@ func (ps *PackStorage) readRetirement(file ListedFile) (retirement, error) {
 }
 
 // quarantineArchives retires the archives together, keeping their files
-// for the quarantine period.
-func (ps *PackStorage) quarantineArchives(names []string, now time.Time) error {
-	return ps.storeRetirement(retirement{Day: now.UTC().Format(quarantineDay), Archives: names})
+// for grace or, when it is zero, the quarantine period.
+func (ps *PackStorage) quarantineArchives(names []string, now time.Time, grace time.Duration) error {
+	return ps.storeRetirement(retirement{Day: now.UTC().Format(quarantineDay), Grace: grace, Archives: names})
 }
 
 func (ps *PackStorage) storeRetirement(r retirement) error {
@@ -237,7 +240,7 @@ func (ps *PackStorage) storeRetirement(r retirement) error {
 // cutRetirement takes the archives in out from a stored retirement. The
 // rest stay retired as before, under a retirement of their own.
 func (ps *PackStorage) cutRetirement(r storedRetirement, out map[string]bool) error {
-	rest := retirement{Day: r.Day, Stored: r.since()}
+	rest := retirement{Day: r.Day, Stored: r.since(), Grace: r.Grace}
 	for _, name := range r.Archives {
 		if !out[name] {
 			rest.Archives = append(rest.Archives, name)
@@ -383,8 +386,9 @@ func (ps *PackStorage) purgeArchive(name string, quarantined map[string]int64) b
 	return gone
 }
 
-// PurgeQuarantine deletes the archives retired longer than period ago and
-// returns how many it deleted.
+// PurgeQuarantine deletes the archives retired longer than period ago, or
+// longer than the grace they were retired with, and returns how many it
+// deleted.
 func (ps *PackStorage) PurgeQuarantine(period time.Duration, now time.Time) (int, error) {
 	markers, err := ListInfo(ps.storage, RetiredExt)
 	if err != nil {
@@ -443,14 +447,43 @@ func (ps *PackStorage) PurgeQuarantine(period time.Duration, now time.Time) (int
 		return int(purged.Load()), err
 	}
 
-	n, err := ps.purgeRetirements(due, quarantined)
+	n, err := ps.purgeRetirements(func(r storedRetirement) bool {
+		if r.Grace > 0 {
+			return graceOver(r, now)
+		}
+
+		day, err := time.Parse(quarantineDay, r.Day)
+		if err != nil {
+			ps.logger.Warn("reading when archives were retired failed", "retirement", r.file.Name, "err", err)
+			return false
+		}
+
+		return due(day) && due(dayOf(r.since()))
+	}, quarantined)
 
 	return int(purged.Load()) + n, err
 }
 
-// purgeRetirements deletes the archives of every retirement due by both
-// the day it names and the day the storage stored it, quarantined or not.
-func (ps *PackStorage) purgeRetirements(due func(day time.Time) bool, quarantined map[string]int64) (int, error) {
+// purgeGraced deletes the archives of every retirement with a grace that
+// is over, and returns how many it deleted.
+func (ps *PackStorage) purgeGraced(now time.Time) (int, error) {
+	quarantined, err := ps.quarantined()
+	if err != nil {
+		return 0, err
+	}
+
+	return ps.purgeRetirements(func(r storedRetirement) bool {
+		return r.Grace > 0 && graceOver(r, now)
+	}, quarantined)
+}
+
+func graceOver(r storedRetirement, now time.Time) bool {
+	return now.Sub(r.since()) >= r.Grace
+}
+
+// purgeRetirements deletes the archives of every retirement due says is
+// due, quarantined or not.
+func (ps *PackStorage) purgeRetirements(due func(r storedRetirement) bool, quarantined map[string]int64) (int, error) {
 	retirements, err := ps.retirements()
 	if err != nil {
 		return 0, err
@@ -460,13 +493,7 @@ func (ps *PackStorage) purgeRetirements(due func(day time.Time) bool, quarantine
 	archives := make(map[string]bool)
 
 	for _, r := range retirements {
-		day, err := time.Parse(quarantineDay, r.Day)
-		if err != nil {
-			ps.logger.Warn("reading when archives were retired failed", "retirement", r.file.Name, "err", err)
-			continue
-		}
-
-		if !due(day) || !due(dayOf(r.since())) {
+		if !due(r) {
 			continue
 		}
 

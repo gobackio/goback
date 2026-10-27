@@ -37,6 +37,9 @@ type compactionGroup struct {
 	// it has none for; each class is written apart.
 	classes *classes
 	classed func(a *archive) *classed
+	// grace, when set, is how long the retired candidates are kept in
+	// place of the quarantine period
+	grace time.Duration
 	// progress counts the candidates rewritten and their bytes.
 	progress *progress.Phase
 
@@ -82,7 +85,10 @@ type CompactReport struct {
 	Superseded uint64
 	// ReclaimedBytes is ReadBytes less WrittenBytes, or zero.
 	ReclaimedBytes uint64
-	Duration       time.Duration
+	// Purged counts the archives of earlier compactions deleted once their
+	// grace was over.
+	Purged   int
+	Duration time.Duration
 }
 
 // Summary renders the report as a line for a log or an operator.
@@ -95,13 +101,18 @@ func (r *CompactReport) Summary() string {
 		return "Compaction left to another process maintaining the store"
 	}
 
-	if r.Rewritten == 0 {
-		return fmt.Sprintf("Compaction merged nothing: %d small archives (%s)", r.Candidates, humanize.Bytes(r.CandidateBytes))
+	purged := ""
+	if r.Purged > 0 {
+		purged = fmt.Sprintf("; purged %d archives of earlier compactions", r.Purged)
 	}
 
-	return fmt.Sprintf("Compaction rewrote %d of %d small archives (%s) into %d (%s): moved %d objects (%s), %d superseded, reclaimed %s, %s",
+	if r.Rewritten == 0 {
+		return fmt.Sprintf("Compaction merged nothing: %d small archives (%s)%s", r.Candidates, humanize.Bytes(r.CandidateBytes), purged)
+	}
+
+	return fmt.Sprintf("Compaction rewrote %d of %d small archives (%s) into %d (%s): moved %d objects (%s), %d superseded, reclaimed %s, %s%s",
 		r.Rewritten, r.Candidates, humanize.Bytes(r.ReadBytes), r.Written, humanize.Bytes(r.WrittenBytes), r.Moved, humanize.Bytes(r.CopiedBytes),
-		r.Superseded, humanize.Bytes(r.ReclaimedBytes), r.Duration.Round(time.Millisecond))
+		r.Superseded, humanize.Bytes(r.ReclaimedBytes), r.Duration.Round(time.Millisecond), purged)
 }
 
 // Compact merges the small committed archives into archives at the root
@@ -158,6 +169,7 @@ func (ps *PackStorage) Compact(ctx context.Context) (*CompactReport, error) {
 	}
 
 	group = ps.compactionCandidates()
+	group.grace = ps.compaction.Grace
 	report := &CompactReport{Candidates: len(group.candidates), CandidateBytes: group.total}
 
 	if ps.compaction.due(group) {
@@ -174,6 +186,14 @@ func (ps *PackStorage) Compact(ctx context.Context) (*CompactReport, error) {
 		}
 
 		group.progress.Finish()
+	}
+
+	if ps.compaction.Grace > 0 {
+		report.Purged, err = ps.purgeGraced(time.Now())
+		if err != nil {
+			report.Duration = time.Since(started)
+			return report, errors.Wrap(err, "purging the archives of earlier compactions")
+		}
 	}
 
 	report.Duration = time.Since(started)
@@ -533,7 +553,7 @@ func (rw *rewrite) chunk(ctx context.Context, chunk []*archive, workers int) err
 		byName[a.name] = indexes[i]
 	}
 
-	retired, retiredBytes := rw.ps.retireRewritten(obsolete, byName)
+	retired, retiredBytes := rw.ps.retireRewritten(obsolete, byName, rw.group.grace)
 
 	rw.mtx.Lock()
 	rw.group.retired += retired
@@ -701,7 +721,7 @@ func (rw *rewrite) lookUp(ctx context.Context, chunk []*archive, workers int) ([
 // indexed, so readers that still land on one find their copy elsewhere;
 // indexes holds the index of each input by name. It returns how many it
 // retired and what they took up.
-func (ps *PackStorage) retireRewritten(obsolete []*archive, indexes map[string]IndexFile) (int, uint64) {
+func (ps *PackStorage) retireRewritten(obsolete []*archive, indexes map[string]IndexFile, grace time.Duration) (int, uint64) {
 	if len(obsolete) == 0 {
 		return 0, 0
 	}
@@ -712,7 +732,7 @@ func (ps *PackStorage) retireRewritten(obsolete []*archive, indexes map[string]I
 	}
 
 	// stored before the index forgets them, so no process loads them again
-	if err := ps.quarantineArchives(names, time.Now()); err != nil {
+	if err := ps.quarantineArchives(names, time.Now(), grace); err != nil {
 		ps.logger.Warn("retiring obsolete archives failed", "archives", len(names), "err", err)
 		return 0, 0
 	}

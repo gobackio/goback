@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gobackio/goback/proto"
 
@@ -276,6 +277,47 @@ func TestACompactionKeepsTheNewestTombstoneOfAnObject(t *testing.T) {
 
 	compact(t, ctx, store)
 	requirePresent(t, store, obj, false)
+}
+
+func TestTheArchivesACompactionMergedArePurgedOnceTheirGraceIsOver(t *testing.T) {
+	store := newTestStore(t, t.TempDir(), WithCompaction(CompactionConfig{MinimumCandidates: 0, Grace: time.Hour}))
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	objects := makeTestData(t, 3)
+	for _, obj := range objects {
+		require.NoError(t, store.Put(ctx, obj))
+		require.NoError(t, store.Flush())
+	}
+
+	report, err := store.Compact(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 3, report.Rewritten)
+	require.Zero(t, report.Purged)
+
+	retirements, err := store.retirements()
+	require.NoError(t, err)
+	require.Len(t, retirements, 1)
+	require.Equal(t, time.Hour, retirements[0].Grace)
+
+	merged := retirements[0].Archives
+	for _, name := range merged {
+		require.True(t, store.stored(name+ArchiveSuffix), "%s is kept for its grace", name)
+	}
+
+	purged, err := store.purgeGraced(time.Now().Add(59 * time.Minute))
+	require.NoError(t, err)
+	require.Zero(t, purged)
+
+	purged, err = store.purgeGraced(time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 3, purged)
+
+	for _, name := range merged {
+		require.False(t, store.stored(name+ArchiveSuffix), "%s is purged", name)
+	}
+
+	requirePresent(t, store, objects, true)
 }
 
 // refusingRetirement refuses to store retirements while refusing is set.
