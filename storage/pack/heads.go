@@ -110,12 +110,18 @@ func (ps *PackStorage) AdvanceHead(object *proto.Object) error {
 	defer held.Unlock()
 
 	if ps.headsFor != nil && !ps.headsFor(commit.GetSetId()) {
-		err := ps.storage.Delete(headName(commit.GetSetId()))
-		if notExist(err) {
+		if _, dropped := ps.headless.Load(commit.GetSetId()); dropped {
 			return nil
 		}
 
-		return err
+		err := ps.storage.Delete(headName(commit.GetSetId()))
+		if err != nil && !notExist(err) {
+			return err
+		}
+
+		ps.headless.Store(commit.GetSetId(), true)
+
+		return nil
 	}
 
 	// a head that does not decode is replaced

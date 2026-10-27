@@ -148,6 +148,8 @@ type PackStorage struct {
 	idleFinalize     time.Duration
 	sessionLease     time.Duration
 	headsFor         func(setID uint64) bool
+	// headless are the sets whose head this process deleted
+	headless sync.Map
 	// markers holds every session's markers, bucketMarkers those the
 	// storage keeps, which is all of them unless inBucket is set
 	markers       SessionMarkers
