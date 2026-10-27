@@ -19,6 +19,7 @@ type packOptions struct {
 	cache           backup.ObjectStore
 	idleFinalize    time.Duration
 	sessionLease    time.Duration
+	headsFor        func(setID uint64) bool
 	claimOpen       time.Duration
 	claimGrace      time.Duration
 	localSessions   bool
@@ -88,6 +89,15 @@ func WithIdleFinalize(d time.Duration) PackOption {
 func WithSessionLease(d time.Duration) PackOption {
 	return func(p *packOptions) {
 		p.sessionLease = d
+	}
+}
+
+// WithHeadsFor has the store keep a head only for the sets keep reports
+// true for, deleting the head of any other; without it every set keeps
+// one. A set without a head is found from the index or by a rebuild.
+func WithHeadsFor(keep func(setID uint64) bool) PackOption {
+	return func(p *packOptions) {
+		p.headsFor = keep
 	}
 }
 

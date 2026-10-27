@@ -77,3 +77,30 @@ func TestAHeadThatDoesNotDecodeIsLeftOutAndReplaced(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, heads, Head{SetID: 2, Set: "world", Commit: replaced.Ref().Hash, ReceivedAtNs: 5})
 }
+
+func TestAStoreKeepsHeadsOnlyForTheSetsItIsToldTo(t *testing.T) {
+	base := t.TempDir()
+	tree := makeTestData(t, 1)[0]
+
+	commit := func(store *PackStorage, set uint64, received int64) *proto.Object {
+		obj := proto.NewObject(&proto.Commit{Tree: tree.Ref(), BackupSet: "world"})
+		obj.Stamp(set, time.Unix(0, received))
+		putAll(t, store, []*proto.Object{obj})
+
+		return obj
+	}
+
+	before := newGCStore(t, base)
+	putAll(t, before, []*proto.Object{tree})
+	commit(before, 2, 10)
+	require.NoError(t, before.Close())
+
+	store := closing(t, newTestStore(t, base, WithHeadsFor(func(set uint64) bool { return set == 1 })))
+	kept := commit(store, 1, 20)
+	commit(store, 2, 30)
+
+	heads, err := store.Heads()
+	require.NoError(t, err)
+	require.Equal(t, []Head{{SetID: 1, Set: "world", Commit: kept.Ref().Hash, ReceivedAtNs: 20}}, heads,
+		"the head the other set had is gone rather than left behind")
+}

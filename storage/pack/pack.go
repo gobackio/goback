@@ -115,6 +115,7 @@ func NewPackStorage(options ...PackOption) (*PackStorage, error) {
 		index:            opts.index,
 		idleFinalize:     opts.idleFinalize,
 		sessionLease:     opts.sessionLease,
+		headsFor:         opts.headsFor,
 		atRest:           atRest,
 		observer:         opts.observer,
 		logger:           opts.logger,
@@ -137,6 +138,7 @@ type PackStorage struct {
 	index            ArchiveIndex
 	idleFinalize     time.Duration
 	sessionLease     time.Duration
+	headsFor         func(setID uint64) bool
 
 	// headMtx holds a set's head between reading and writing it, a set
 	// taking the lock its id falls on
