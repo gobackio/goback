@@ -163,9 +163,9 @@ func Duration(seconds int64) time.Duration {
 	const most = math.MaxInt64 / int64(time.Second)
 
 	switch {
-	case seconds > most:
+	case seconds >= most:
 		return math.MaxInt64
-	case seconds < -most:
+	case seconds <= -most:
 		return math.MinInt64
 	}
 
