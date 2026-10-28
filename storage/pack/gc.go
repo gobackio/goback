@@ -872,16 +872,11 @@ func (r *gcRun) collectRoots(ctx context.Context) error {
 	tombstoned := make(map[refKey]bool)
 	// tombOf maps a tombstone's own ref to its target
 	tombOf := make(map[refKey]refKey)
-	commits := make(map[refKey]bool)
 
 	for _, ga := range r.order {
 		tombs := r.reads.tombs[ga.a.name]
 
 		ga.each(func(pos int, rec *IndexRecord) {
-			if proto.ObjectType(rec.Type) == proto.ObjectType_COMMIT {
-				commits[keyOf(rec.Sum[:])] = true
-			}
-
 			hdr := tombs[pos]
 			if proto.ObjectType(rec.Type) != proto.ObjectType_TOMBSTONE || !hdr.named {
 				return
@@ -994,9 +989,10 @@ func (r *gcRun) collectRoots(ctx context.Context) error {
 		})
 	}
 
-	// a committed session's un-tombstone of its own commit is older than
-	// the tombstone that retires the commit, so only a revival, newer than
-	// it, takes a commit back; an object without a copy left is no root
+	// a committed session's un-tombstones are older than any tombstone a
+	// later collection or retirement writes, so only one newer than the
+	// tombstone it names takes an object back; an object without a copy
+	// left is no root
 	lost := make(map[refKey]bool)
 
 	for _, t := range r.tombstones {
@@ -1014,7 +1010,7 @@ func (r *gcRun) collectRoots(ctx context.Context) error {
 			continue
 		}
 
-		if commits[untombed] && !r.newestTomb[untombed].Before(r.newestTomb[t.target]) {
+		if !r.newestTomb[untombed].Before(r.newestTomb[t.target]) {
 			continue
 		}
 
