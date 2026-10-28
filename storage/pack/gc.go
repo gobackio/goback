@@ -236,9 +236,8 @@ type gcArchive struct {
 	prev      *gcFile
 	cur       *bitset.BitSet
 	next      *gcFile
-	// owners is whom the mark attributed each record to, death how soon
-	// it expects each to die, and classed what a sweep writes each with
-	owners  []Attribution
+	// death is how soon the mark expects each record to die, and classed
+	// what a sweep writes each with
 	death   deaths
 	classed *classed
 	// spent are the tombstones with nothing left to condemn, nil for none
@@ -1436,10 +1435,10 @@ func (r *gcRun) fits(objects uint64) error {
 	held := sample[0].Value.Uint64()
 
 	// what the mark adds: the bits of each walked object, the live set it
-	// buffers, the reads in flight decoded, and the owner, class and dead
-	// prefix of every record the merge and the sweep keep
+	// buffers, the reads in flight decoded, and the class and dead prefix
+	// of every record the merge and the sweep keep
 	need := uint64(r.located.count())*8 + liveRunLimit*uint64(unsafe.Sizeof(liveRef{})) + 3*uint64(r.readBudget) +
-		objects*(uint64(unsafe.Sizeof(Attribution{}))+4+8)
+		objects*(4+8)
 	if r.opts.TempInMemory {
 		need += objects * uint64(liveRefSize)
 	}

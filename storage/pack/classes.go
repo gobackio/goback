@@ -214,7 +214,7 @@ func (r *gcRun) classify(live *liveRuns) error {
 	var selected []*gcArchive
 	for _, ga := range r.order {
 		if r.selected(ga) {
-			ga.owners = make([]Attribution, ga.count)
+			ga.classed = &classed{Class: make([]int32, ga.count), Bytes: make(map[int32]uint64)}
 			selected = append(selected, ga)
 		}
 	}
@@ -223,8 +223,22 @@ func (r *gcRun) classify(live *liveRuns) error {
 		return nil
 	}
 
+	// until each record's class is known, its slot holds its owner's place
+	// in owners, the first being nobody
+	owners := []Attribution{{}}
+	ownerIDs := map[Attribution]int32{{}: 0}
+
 	err := r.scanOf(selected, live, func(ga *gcArchive, pos int, _ *IndexRecord, found reach) {
-		ga.owners[pos] = ownerOf(found.owners)
+		owner := ownerOf(found.owners)
+
+		id, ok := ownerIDs[owner]
+		if !ok {
+			id = int32(len(owners))
+			ownerIDs[owner] = id
+			owners = append(owners, owner)
+		}
+
+		ga.classed.Class[pos] = id
 	}, nil)
 	if err != nil {
 		return err
@@ -233,8 +247,6 @@ func (r *gcRun) classify(live *liveRuns) error {
 	r.classes = newClasses(nil)
 
 	for _, ga := range selected {
-		ga.classed = &classed{Class: make([]int32, ga.count), Bytes: make(map[int32]uint64)}
-
 		ga.each(func(pos int, rec *IndexRecord) {
 			// what the mark left unreachable goes once the next one does too
 			death := deathClass(len(DeathHorizons))
@@ -242,15 +254,13 @@ func (r *gcRun) classify(live *liveRuns) error {
 				death = ga.next.death(pos)
 			}
 
-			id := r.classes.id(outputClass{ga.owners[pos], isData(rec.Type), death})
+			id := r.classes.id(outputClass{owners[ga.classed.Class[pos]], isData(rec.Type), death})
 			ga.classed.Class[pos] = id
 
 			if !r.droppable(ga, ga.next, pos, rec) {
 				ga.classed.Bytes[id] += uint64(rec.Length)
 			}
 		})
-
-		ga.owners = nil
 	}
 
 	return nil
