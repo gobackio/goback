@@ -2382,7 +2382,7 @@ func (r *gcRun) condemn(ctx context.Context) error {
 			return err
 		}
 
-		stale, err := r.notNewer(pending)
+		stale, err := r.notNewer(ctx, pending)
 		if err != nil {
 			return err
 		}
@@ -2394,43 +2394,84 @@ func (r *gcRun) condemn(ctx context.Context) error {
 }
 
 // notNewer returns the targets whose newest tombstone is not newer than
-// their newest copy, asking the index after condemnBatch at a time.
-func (r *gcRun) notNewer(targets map[refKey]Version) (map[refKey]Version, error) {
+// their newest copy, asking the index after condemnBatch at a time, as
+// many batches at once as the run has readers.
+func (r *gcRun) notNewer(ctx context.Context, targets map[refKey]Version) (map[refKey]Version, error) {
 	keys := make([]refKey, 0, len(targets))
 	for target := range targets {
 		keys = append(keys, target)
 	}
 
+	phase := progress.Start(ctx, progress.OpCollect, progress.PhaseCondemn, int64(len(keys)), 0)
+	defer phase.Finish()
+
+	r.ps.logger.Info("gc checking tombstones", "generation", r.gen, "count", len(keys))
+	started := time.Now()
+
+	var checked atomic.Int64
+	var mtx sync.Mutex
 	stale := make(map[refKey]Version)
 
+	grp, gctx := errgroup.WithContext(ctx)
+	grp.SetLimit(max(r.opts.Readers, 1))
+
+	go func() {
+		tick := time.NewTicker(time.Minute)
+		defer tick.Stop()
+
+		for {
+			select {
+			case <-gctx.Done():
+				return
+			case <-tick.C:
+				r.ps.logger.Info("gc checking tombstones", "generation", r.gen, "checked", checked.Load(), "of", len(keys),
+					"elapsed", time.Since(started).Round(time.Second))
+			}
+		}
+	}()
+
 	for batch := range slices.Chunk(keys, condemnBatch) {
-		tombs := make([]*proto.Ref, len(batch))
-		for i, target := range batch {
-			tombs[i] = proto.TombstoneRef(&proto.Ref{Hash: append([]byte(nil), target[:]...)})
-		}
+		grp.Go(func() error {
+			tombs := make([]*proto.Ref, len(batch))
+			for i, target := range batch {
+				tombs[i] = proto.TombstoneRef(&proto.Ref{Hash: append([]byte(nil), target[:]...)})
+			}
 
-		found, err := r.ps.index.LocateTombstones(tombs, Scope{})
-		if err != nil {
-			return nil, err
-		}
-
-		for i, target := range batch {
-			newest, err := r.ps.newest(found[string(tombs[i].Hash)])
+			found, err := r.ps.index.LocateTombstones(tombs, Scope{})
 			if err != nil {
-				return nil, err
+				return err
 			}
 
-			if newest == nil || !targets[target].Before(*newest) {
-				stale[target] = targets[target]
+			for i, target := range batch {
+				newest, err := r.ps.newest(found[string(tombs[i].Hash)])
+				if err != nil {
+					return err
+				}
+
+				if newest == nil || !targets[target].Before(*newest) {
+					mtx.Lock()
+					stale[target] = targets[target]
+					mtx.Unlock()
+				}
 			}
-		}
+
+			checked.Add(int64(len(batch)))
+			phase.Add(int64(len(batch)), 0)
+
+			return gctx.Err()
+		})
+	}
+
+	if err := grp.Wait(); err != nil {
+		return nil, err
 	}
 
 	return stale, nil
 }
 
-// condemnBatch is how many tombstones notNewer asks the index after at once.
-const condemnBatch = 16384
+// condemnBatch is how many tombstones notNewer asks the index after in one
+// call.
+const condemnBatch = 4096
 
 // horizon lists, once the tombstones are stored, the versions of the
 // committed archives there are and of the snapshot's tombstones, and the

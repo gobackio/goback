@@ -363,11 +363,11 @@ func TestACollectionFindsTheTombstonesNoNewerThanTheCopiesTheyCondemn(t *testing
 	key := keyOf(obj.Ref().Hash)
 
 	older := Version{Time: tomb.Time.Add(-time.Second)}
-	stale, err := run.notNewer(map[refKey]Version{key: older})
+	stale, err := run.notNewer(ctx, map[refKey]Version{key: older})
 	require.NoError(t, err)
 	require.Empty(t, stale)
 
-	stale, err = run.notNewer(map[refKey]Version{key: *tomb})
+	stale, err = run.notNewer(ctx, map[refKey]Version{key: *tomb})
 	require.NoError(t, err)
 	require.Contains(t, stale, key)
 }

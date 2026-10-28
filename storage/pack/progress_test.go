@@ -71,7 +71,7 @@ func TestCollectReportsItsPhases(t *testing.T) {
 
 	_, err := store.Collect(ctx, gcOptions(t, 0))
 	require.NoError(t, err)
-	check(progress.PhaseSnapshot, progress.PhaseRoots, progress.PhaseMark, progress.PhaseMerge, progress.PhasePurge)
+	check(progress.PhaseSnapshot, progress.PhaseRoots, progress.PhaseMark, progress.PhaseMerge, progress.PhaseCondemn, progress.PhasePurge)
 
 	second, err := store.Collect(ctx, gcOptions(t, 48*time.Hour))
 	require.NoError(t, err)

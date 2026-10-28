@@ -30,12 +30,14 @@ const (
 // order listed for it and may skip some; RewritePlan enters its phase once
 // per plan.
 const (
-	// collect: snapshot, roots, mark, merge, confirm, then publish or
+	// collect: snapshot, roots, mark, merge, condemn, counting the
+	// tombstones checked against the index, confirm, then publish or
 	// sweep, then purge.
 	PhaseSnapshot = "snapshot"
 	PhaseRoots    = "roots"
 	PhaseMark     = "mark"
 	PhaseMerge    = "merge"
+	PhaseCondemn  = "condemn"
 	PhaseConfirm  = "confirm"
 	PhasePublish  = "publish"
 	PhaseSweep    = "sweep"
