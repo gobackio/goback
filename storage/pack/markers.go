@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
@@ -227,22 +230,31 @@ func (ps *PackStorage) pruneSessionMarkers(now time.Time, live map[string]bool, 
 		}
 	}
 
-	pruned := 0
+	var pruned atomic.Int64
+
+	grp := new(errgroup.Group)
+	grp.SetLimit(fileWorkers)
 
 	for id := range ended {
 		if held[id] {
 			continue
 		}
 
-		if err := ps.markers.DeleteMarkers(id); err != nil {
-			ps.logger.Warn("deleting the markers of an ended session failed", "session", id, "err", err)
-			continue
-		}
+		grp.Go(func() error {
+			if err := ps.markers.DeleteMarkers(id); err != nil {
+				ps.logger.Warn("deleting the markers of an ended session failed", "session", id, "err", err)
+				return nil
+			}
 
-		pruned++
+			pruned.Add(1)
+
+			return nil
+		})
 	}
 
-	return pruned, nil
+	_ = grp.Wait()
+
+	return int(pruned.Load()), nil
 }
 
 func (ps *PackStorage) markerIDs(ext string) (map[string]bool, error) {
