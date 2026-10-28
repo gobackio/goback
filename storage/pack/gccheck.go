@@ -40,9 +40,9 @@ func (ps *PackStorage) Resume() error {
 	return nil
 }
 
-// halted returns why the store's collections are halted, "" when they are
-// not.
-func (ps *PackStorage) halted() (string, error) {
+// Halted returns why the store's collections are halted, "" when they
+// are not. Resume ends a halt.
+func (ps *PackStorage) Halted() (string, error) {
 	file, err := ps.storage.Open(HaltName)
 	if notExist(err) {
 		return "", nil

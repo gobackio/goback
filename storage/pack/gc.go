@@ -2208,7 +2208,7 @@ func (r *gcRun) sweepBlocker() string {
 		return "first generation"
 	}
 
-	reason, err := r.ps.halted()
+	reason, err := r.ps.Halted()
 	if err != nil {
 		return fmt.Sprintf("reading whether collections are halted: %s", err)
 	}
