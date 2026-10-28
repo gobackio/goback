@@ -241,13 +241,17 @@ type gcArchive struct {
 	owners  []Attribution
 	death   deaths
 	classed *classed
+	// spent are the tombstones with nothing left to condemn, nil for none
+	spent *bitset.BitSet
 }
 
+// gcTombstone is a tombstone of the snapshot, naming its target by rank
+// among the run's targets.
 type gcTombstone struct {
 	ga      *gcArchive
-	pos     int
-	target  refKey
-	version Version
+	pos     uint32
+	target  uint32
+	version stamp
 }
 
 // each calls fn with every record of the archive's index in stored order.
@@ -261,12 +265,18 @@ func (ga *gcArchive) each(fn func(pos int, rec *IndexRecord)) {
 // so the check before a sweep reads only the archives that appeared since.
 type gcReads struct {
 	indexes map[string]IndexFile
-	// tombs is what each archive's tombstones name, by index position
-	tombs map[string]map[int]tombHeader
+	// tombs is what each archive's tombstones name, in index order
+	tombs map[string][]tombAt
 }
 
 func newGCReads() *gcReads {
-	return &gcReads{indexes: make(map[string]IndexFile), tombs: make(map[string]map[int]tombHeader)}
+	return &gcReads{indexes: make(map[string]IndexFile), tombs: make(map[string][]tombAt)}
+}
+
+// tombAt is what the tombstone at pos of an archive's index says.
+type tombAt struct {
+	pos uint32
+	tombHeader
 }
 
 // tombHeader is what one tombstone's header says; named is false for a
@@ -319,26 +329,18 @@ type gcRun struct {
 
 	roots      []gcRoot
 	tombstones []gcTombstone
-	// targets maps every tombstone target to whether the snapshot still holds it.
-	targets map[refKey]bool
-	// newestTomb is the version of the newest tombstone of each target in
-	// the snapshot, and condemning that of the newest one the previous
-	// generation's horizon covers.
-	newestTomb  map[refKey]Version
-	condemning  map[refKey]Version
+	// tombs are the targets of the tombstones
+	tombs       *tombTargets
 	condemnedAt map[int64]bool
 	// condemned maps what this generation condemns to its newest copy.
 	condemned map[refKey]Version
 	// tombTimes are the versions the snapshot's tombstones carry.
 	tombTimes map[int64]bool
 	// untombed are the objects an un-tombstone takes back, roots of the
-	// mark; oldestCopy is the version of the oldest copy of each tombstone
-	// target, and spent the tombstones with nothing left to condemn.
-	untombed   map[refKey]bool
-	oldestCopy map[refKey]Version
-	spent      map[recordAt]bool
-	// blobs are the tombstone targets and pending objects that are blobs,
-	// which the mark adds from a root without reading them
+	// mark
+	untombed map[refKey]bool
+	// blobs are the pending objects that are blobs, which, as the targets
+	// flagged targetBlob, the mark adds from a root without reading them
 	blobs map[refKey]bool
 	// horizonEnded is whether every session of the previous horizon has
 	// ended.
@@ -361,11 +363,9 @@ func newGCRun(ps *PackStorage, opts CollectOptions, prev *gcState, reads *gcRead
 	budget := readBudget(opts.Readers)
 	run := &gcRun{ps: ps, opts: opts, prev: prev, gen: 1, snapshot: opts.Now.UTC(), reads: reads,
 		reading: semaphore.NewWeighted(budget), readBudget: budget,
-		archives: make(map[string]*gcArchive), targets: make(map[refKey]bool),
-		newestTomb: make(map[refKey]Version), condemning: make(map[refKey]Version),
+		archives: make(map[string]*gcArchive), tombs: newTombTargets(nil),
 		condemned: make(map[refKey]Version), condemnedAt: make(map[int64]bool), tombTimes: make(map[int64]bool),
-		untombed: make(map[refKey]bool), oldestCopy: make(map[refKey]Version), spent: make(map[recordAt]bool),
-		blobs:    make(map[refKey]bool),
+		untombed: make(map[refKey]bool), blobs: make(map[refKey]bool),
 		setBytes: make(map[int64]uint64), setDeduplicated: make(map[int64]uint64),
 		setAlone: make(map[int64]uint64), setExclusive: make(map[int64]uint64),
 		setDeduplicatedAlone: make(map[int64]uint64)}
@@ -869,38 +869,38 @@ func (r *gcRun) collectRoots(ctx context.Context) error {
 		return err
 	}
 
-	tombstoned := make(map[refKey]bool)
-	// tombOf maps a tombstone's own ref to its target
-	tombOf := make(map[refKey]refKey)
+	var keys []refKey
+	for _, ga := range r.order {
+		for _, t := range r.reads.tombs[ga.a.name] {
+			if t.named {
+				keys = append(keys, t.target)
+			}
+		}
+	}
+
+	r.tombstones = make([]gcTombstone, 0, len(keys))
+	r.tombs = newTombTargets(keys)
 
 	for _, ga := range r.order {
-		tombs := r.reads.tombs[ga.a.name]
-
-		ga.each(func(pos int, rec *IndexRecord) {
-			hdr := tombs[pos]
-			if proto.ObjectType(rec.Type) != proto.ObjectType_TOMBSTONE || !hdr.named {
-				return
+		for _, t := range r.reads.tombs[ga.a.name] {
+			if !t.named {
+				continue
 			}
 
-			target := hdr.target
-			tombstoned[target] = true
-			tombOf[keyOf(rec.Sum[:])] = target
-			r.targets[target] = false
+			at, _ := r.tombs.rank(t.target)
+			v := stampOf(ga.a.version(ga.idx[t.pos]))
+			r.tombstones = append(r.tombstones, gcTombstone{ga: ga, pos: t.pos, target: uint32(at), version: v})
 
-			v := ga.a.version(*rec)
-			r.tombstones = append(r.tombstones, gcTombstone{ga: ga, pos: pos, target: target, version: v})
+			r.tombs.tombstoned(at, v, r.condemnedAt[v.ns])
+			r.tombTimes[v.ns] = true
 
-			newestAt(r.newestTomb, target, v)
-			r.tombTimes[v.Time.UnixNano()] = true
-			if r.condemnedAt[v.Time.UnixNano()] {
-				newestAt(r.condemning, target, v)
+			if t.erase {
+				r.erased = append(r.erased, t.target)
 			}
-
-			if hdr.erase {
-				r.erased = append(r.erased, target)
-			}
-		})
+		}
 	}
+
+	byOwn := newTombsByOwn(r.tombstones)
 
 	keep := func(untombed refKey) {
 		if !r.untombed[untombed] {
@@ -922,7 +922,7 @@ func (r *gcRun) collectRoots(ctx context.Context) error {
 				pendingTombs = append(pendingTombs, placed{a: a, rec: &held})
 			} else {
 				r.pendingAt[keyOf(rec.Sum[:])] = placed{key: keyOf(rec.Sum[:]), a: a, rec: &held}
-				r.noteBlob(rec)
+				r.notePendingBlob(rec)
 			}
 
 			return nil
@@ -955,8 +955,8 @@ func (r *gcRun) collectRoots(ctx context.Context) error {
 	}
 
 	for _, tomb := range pendingUntombs {
-		if untombed, ok := tombOf[tomb]; ok {
-			keep(untombed)
+		if untombed, ok := byOwn.target(tomb); ok {
+			keep(r.tombs.keys[untombed])
 		} else if untombed, ok := byTomb[tomb]; ok {
 			keep(untombed)
 		}
@@ -974,16 +974,20 @@ func (r *gcRun) collectRoots(ctx context.Context) error {
 	for _, ga := range r.order {
 		ga.each(func(_ int, rec *IndexRecord) {
 			t := proto.ObjectType(rec.Type)
-			if _, isTarget := r.targets[keyOf(rec.Sum[:])]; isTarget && t != proto.ObjectType_TOMBSTONE {
-				oldestAt(r.oldestCopy, keyOf(rec.Sum[:]), ga.a.version(*rec))
-				r.noteBlob(rec)
+			at, tombstoned := r.tombs.rank(keyOf(rec.Sum[:]))
+
+			if tombstoned && t != proto.ObjectType_TOMBSTONE {
+				r.tombs.copied(at, stampOf(ga.a.version(*rec)))
+				if t == proto.ObjectType_BLOB {
+					r.tombs.flags[at] |= targetBlob
+				}
 			}
 
 			if t != proto.ObjectType_COMMIT && t != proto.ObjectType_PIN && t != proto.ObjectType_POLICY {
 				return
 			}
 
-			if key := keyOf(rec.Sum[:]); !tombstoned[key] {
+			if !tombstoned {
 				r.roots = append(r.roots, r.root(rec.Sum[:]))
 			}
 		})
@@ -993,36 +997,37 @@ func (r *gcRun) collectRoots(ctx context.Context) error {
 	// later collection or retirement writes, so only one newer than the
 	// tombstone it names takes an object back; an object without a copy
 	// left is no root
-	lost := make(map[refKey]bool)
+	lost := make(map[uint32]bool)
+	newest := r.tombs.newest
 
 	for _, t := range r.tombstones {
-		untombed, ok := tombOf[t.target]
+		untombed, ok := byOwn.target(r.tombs.keys[t.target])
 		if !ok {
 			continue
 		}
 
-		if _, held := r.oldestCopy[untombed]; !held {
-			if !lost[untombed] && r.newestTomb[untombed].Before(r.newestTomb[t.target]) {
+		if r.tombs.flags[untombed]&targetCopied == 0 {
+			if !lost[untombed] && newest[untombed].before(newest[t.target]) {
 				lost[untombed] = true
-				r.ps.logger.Error("revived object has no copy left", "ref", fmt.Sprintf("%x", untombed))
+				r.ps.logger.Error("revived object has no copy left", "ref", fmt.Sprintf("%x", r.tombs.keys[untombed]))
 			}
 
 			continue
 		}
 
-		if !r.newestTomb[untombed].Before(r.newestTomb[t.target]) {
+		if !newest[untombed].before(newest[t.target]) {
 			continue
 		}
 
-		keep(untombed)
+		keep(r.tombs.keys[untombed])
 	}
 
-	r.spendTombstones(tombOf)
+	r.spendTombstones(byOwn)
 
 	return ctx.Err()
 }
 
-func (r *gcRun) noteBlob(rec *IndexRecord) {
+func (r *gcRun) notePendingBlob(rec *IndexRecord) {
 	if proto.ObjectType(rec.Type) == proto.ObjectType_BLOB {
 		r.blobs[keyOf(rec.Sum[:])] = true
 	}
@@ -1034,17 +1039,21 @@ func (r *gcRun) readTombstones(ctx context.Context) error {
 	var tombs []placed
 	var positions []int
 
+	read := make(map[string]int)
+
 	for _, ga := range r.order {
 		if _, ok := r.reads.tombs[ga.a.name]; ok {
 			continue
 		}
 
+		from := len(tombs)
 		ga.each(func(pos int, rec *IndexRecord) {
 			if proto.ObjectType(rec.Type) == proto.ObjectType_TOMBSTONE {
 				tombs = append(tombs, placed{a: ga.a, rec: rec})
 				positions = append(positions, pos)
 			}
 		})
+		read[ga.a.name] = len(tombs) - from
 	}
 
 	headers, err := r.readHeaders(ctx, tombs, false)
@@ -1052,14 +1061,13 @@ func (r *gcRun) readTombstones(ctx context.Context) error {
 		return err
 	}
 
-	for _, ga := range r.order {
-		if _, ok := r.reads.tombs[ga.a.name]; !ok {
-			r.reads.tombs[ga.a.name] = make(map[int]tombHeader)
-		}
+	for name, n := range read {
+		r.reads.tombs[name] = make([]tombAt, 0, n)
 	}
 
 	for i, tomb := range tombs {
-		r.reads.tombs[tomb.a.name][positions[i]] = tombHeaderOf(headers[i])
+		name := tomb.a.name
+		r.reads.tombs[name] = append(r.reads.tombs[name], tombAt{pos: uint32(positions[i]), tombHeader: tombHeaderOf(headers[i])})
 	}
 
 	return nil
@@ -1134,35 +1142,28 @@ func (r *gcRun) readHeaders(ctx context.Context, records []placed, missingOK boo
 	return headers, grp.Wait()
 }
 
-// recordAt names a record of the snapshot.
-type recordAt struct {
-	archive string
-	pos     int
-}
-
 // spendTombstones finds the tombstones the previous horizon covers that
 // condemn nothing any more: an un-tombstone took them back, or no copy
 // they hide is left. Un-tombstones are left to outlive their targets.
-func (r *gcRun) spendTombstones(tombOf map[refKey]refKey) {
+func (r *gcRun) spendTombstones(byOwn *tombsByOwn) {
 	for _, t := range r.tombstones {
-		if _, untomb := tombOf[t.target]; untomb {
+		target := r.tombs.keys[t.target]
+		if _, untomb := byOwn.target(target); untomb {
 			continue
 		}
 
-		if !r.condemnedAt[t.version.Time.UnixNano()] {
+		if !r.condemnedAt[t.version.ns] {
 			continue
 		}
 
-		oldest, hides := r.oldestCopy[t.target]
-		if r.untombed[t.target] || !hides || t.version.Before(oldest) {
-			r.spent[recordAt{t.ga.a.name, t.pos}] = true
-		}
-	}
-}
+		hides := r.tombs.flags[t.target]&targetCopied != 0
+		if r.untombed[target] || !hides || t.version.before(r.tombs.oldest[t.target]) {
+			if t.ga.spent == nil {
+				t.ga.spent = bitset.New(uint(len(t.ga.idx)))
+			}
 
-func oldestAt(versions map[refKey]Version, key refKey, v Version) {
-	if old, ok := versions[key]; !ok || v.Before(old) {
-		versions[key] = v
+			t.ga.spent.Set(uint(t.pos))
+		}
 	}
 }
 
@@ -1539,7 +1540,7 @@ func (r *gcRun) markRoots(ctx context.Context, roots []gcRoot, claim func([]refK
 	walked := frontier[:0]
 
 	for _, key := range frontier {
-		if r.blobs[key] {
+		if r.blobs[key] || r.tombs.is(key, targetBlob) {
 			blobs = append(blobs, liveRef{key: key, death: roots[0].death})
 		} else {
 			walked = append(walked, key)
@@ -1961,8 +1962,8 @@ func (r *gcRun) merge(live *liveRuns) (uint64, error) {
 
 		r.share(owners, uint64(rec.Length), content)
 	}, func(sum refKey) {
-		if _, isTarget := r.targets[sum]; isTarget {
-			r.targets[sum] = true
+		if at, isTarget := r.tombs.rank(sum); isTarget {
+			r.tombs.flags[at] |= targetHeld
 		}
 
 		if _, root := reached[sum]; root {
@@ -1985,7 +1986,7 @@ func (r *gcRun) merge(live *liveRuns) (uint64, error) {
 	}
 
 	for _, t := range r.tombstones {
-		if r.targets[t.target] {
+		if r.tombs.flags[t.target]&targetHeld != 0 {
 			t.ga.cur.Set(uint(t.pos))
 			marked++
 		}
@@ -2101,7 +2102,7 @@ func (r *gcRun) scanOf(archives []*gcArchive, runs *liveRuns, hit func(ga *gcArc
 func (r *gcRun) flagErased(ctx context.Context) error {
 	var roots []refKey
 	for _, target := range r.erased {
-		if r.targets[target] {
+		if r.tombs.is(target, targetHeld) {
 			roots = append(roots, target)
 		}
 	}
@@ -2188,8 +2189,9 @@ func (r *gcRun) writeResults() error {
 // sweep runs with what decides the drops alone.
 func (r *gcRun) releaseMark() {
 	r.reads, r.located, r.pending, r.pendingAt = nil, nil, nil, nil
-	r.roots, r.tombstones, r.targets, r.blobs = nil, nil, nil, nil
-	r.newestTomb, r.condemned, r.untombed, r.oldestCopy = nil, nil, nil, nil
+	r.roots, r.tombstones, r.blobs = nil, nil, nil
+	r.condemned, r.untombed = nil, nil
+	r.tombs = r.tombs.condemningOnly()
 }
 
 // sweepBlocker returns why this generation must not sweep, or "".
@@ -2316,7 +2318,7 @@ func (r *gcRun) marked(loc *IndexLocation) bool {
 // session of that horizon has ended.
 func (r *gcRun) droppable(ga *gcArchive, g *gcFile, pos int, rec *IndexRecord) bool {
 	if proto.ObjectType(rec.Type) == proto.ObjectType_TOMBSTONE {
-		if r.spent[recordAt{ga.a.name, pos}] {
+		if ga.spent != nil && ga.spent.Test(uint(pos)) {
 			return true
 		}
 
@@ -2327,11 +2329,9 @@ func (r *gcRun) droppable(ga *gcArchive, g *gcFile, pos int, rec *IndexRecord) b
 		return false
 	}
 
-	target := keyOf(rec.Sum[:])
+	at, ok := r.tombs.rank(keyOf(rec.Sum[:]))
 
-	tomb, ok := r.condemning[target]
-
-	return ok && ga.a.version(*rec).Before(tomb)
+	return ok && r.tombs.flags[at]&targetCondemning != 0 && stampOf(ga.a.version(*rec)).before(r.tombs.condemning[at])
 }
 
 // uncondemned reports whether an unreachable record still needs a
@@ -2341,9 +2341,9 @@ func (r *gcRun) uncondemned(ga *gcArchive, rec *IndexRecord) bool {
 		return false
 	}
 
-	tomb, ok := r.newestTomb[keyOf(rec.Sum[:])]
+	at, ok := r.tombs.rank(keyOf(rec.Sum[:]))
 
-	return !ok || !ga.a.version(*rec).Before(tomb)
+	return !ok || !stampOf(ga.a.version(*rec)).before(r.tombs.newest[at])
 }
 
 func newestAt(versions map[refKey]Version, key refKey, v Version) {

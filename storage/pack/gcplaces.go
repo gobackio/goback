@@ -52,18 +52,37 @@ func newPlaces(order []*gcArchive) *places {
 	})
 	p.slots = slices.CompactFunc(p.slots, func(a, b slot) bool { return bytes.Equal(p.sum(a), p.sum(b)) })
 
-	p.from = make([]uint32, 1<<16+1)
+	p.from = prefixIndex(len(p.slots), p.sumAt)
+
+	return p
+}
+
+// prefixIndex is where each first two bytes begin among n sorted refs,
+// the ith of which sum gives.
+func prefixIndex(n int, sum func(i int) []byte) []uint32 {
+	from := make([]uint32, 1<<16+1)
 	at := 0
 	for prefix := range 1 << 16 {
-		for at < len(p.slots) && prefixOf16(p.sum(p.slots[at])) < prefix {
+		for at < n && prefixOf16(sum(at)) < prefix {
 			at++
 		}
 
-		p.from[prefix] = uint32(at)
+		from[prefix] = uint32(at)
 	}
-	p.from[1<<16] = uint32(len(p.slots))
+	from[1<<16] = uint32(n)
 
-	return p
+	return from
+}
+
+// search is where key sits among the sorted refs from indexes, false
+// when it is none of them.
+func search(from []uint32, sum func(i int) []byte, key refKey) (int, bool) {
+	prefix := prefixOf16(key[:])
+	lo, hi := int(from[prefix]), int(from[prefix+1])
+
+	i := lo + sort.Search(hi-lo, func(i int) bool { return bytes.Compare(sum(lo+i), key[:]) >= 0 })
+
+	return i, i < hi && bytes.Equal(sum(i), key[:])
 }
 
 // readable is whether the mark reads a record of the type: a blob is
@@ -80,6 +99,10 @@ func (p *places) sum(s slot) []byte {
 	return p.order[s.archive].idx[s.pos].Sum[:]
 }
 
+func (p *places) sumAt(i int) []byte {
+	return p.sum(p.slots[i])
+}
+
 // count is how many refs the places hold.
 func (p *places) count() int {
 	return len(p.slots)
@@ -88,12 +111,7 @@ func (p *places) count() int {
 // rank is where the ref sits among the places, false when the snapshot
 // holds no record of it the mark may read.
 func (p *places) rank(key refKey) (int, bool) {
-	prefix := prefixOf16(key[:])
-	lo, hi := int(p.from[prefix]), int(p.from[prefix+1])
-
-	i := lo + sort.Search(hi-lo, func(i int) bool { return bytes.Compare(p.sum(p.slots[lo+i]), key[:]) >= 0 })
-
-	return i, i < hi && bytes.Equal(p.sum(p.slots[i]), key[:])
+	return search(p.from, p.sumAt, key)
 }
 
 // at places the ref in the snapshot.

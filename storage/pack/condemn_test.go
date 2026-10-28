@@ -105,7 +105,8 @@ func TestCollectDropsOnlyCopiesOlderThanTheTombstone(t *testing.T) {
 	tomb := Version{Time: created, Offset: 10}
 	sum := keyOf(makeRef().Hash)
 
-	run := &gcRun{condemning: map[refKey]Version{sum: tomb}, newestTomb: map[refKey]Version{}}
+	run := &gcRun{tombs: newTombTargets([]refKey{sum})}
+	run.tombs.tombstoned(0, stampOf(tomb), true)
 	ga := &gcArchive{a: &archive{created: created}}
 	unmarked := &gcFile{Previous: bitset.New(1), Current: bitset.New(1)}
 

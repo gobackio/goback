@@ -2,6 +2,7 @@ package pack
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func snapshotRun(t *testing.T, store *PackStorage, prepare func(r *gcRun)) *gcRu
 func readTombstonesOneByOne(t *testing.T) func(r *gcRun) {
 	return func(r *gcRun) {
 		for _, ga := range r.order {
-			tombs := make(map[int]tombHeader)
+			var tombs []tombAt
 			ga.each(func(pos int, rec *IndexRecord) {
 				if proto.ObjectType(rec.Type) != proto.ObjectType_TOMBSTONE {
 					return
@@ -81,12 +82,24 @@ func readTombstonesOneByOne(t *testing.T) func(r *gcRun) {
 				hdr, err := ga.a.readHeader(rec)
 				require.NoError(t, err)
 
-				tombs[pos] = tombHeaderOf(hdr)
+				tombs = append(tombs, tombAt{pos: uint32(pos), tombHeader: tombHeaderOf(hdr)})
 			})
 
 			r.reads.tombs[ga.a.name] = tombs
 		}
 	}
+}
+
+// spentOf is which tombstones of each archive the run found spent.
+func spentOf(r *gcRun) map[string]string {
+	spent := make(map[string]string)
+	for _, ga := range r.order {
+		if ga.spent != nil {
+			spent[ga.a.name] = ga.spent.String()
+		}
+	}
+
+	return spent
 }
 
 // markOf marks the run and returns what it found reachable in each
@@ -125,17 +138,14 @@ func TestBatchedTombstoneReadsRootWhatReadingEachDoes(t *testing.T) {
 
 	require.NotEmpty(t, batched.tombstones)
 	require.NotEmpty(t, batched.untombed, "the session's un-tombstones take objects back")
-	require.NotEmpty(t, batched.condemning)
+	require.True(t, slices.ContainsFunc(batched.tombs.flags, func(f uint8) bool { return f&targetCondemning != 0 }))
 
 	sortRoots(batched.roots)
 	sortRoots(single.roots)
 	require.Equal(t, single.roots, batched.roots)
-	require.Equal(t, single.targets, batched.targets)
-	require.Equal(t, single.newestTomb, batched.newestTomb)
-	require.Equal(t, single.condemning, batched.condemning)
+	require.Equal(t, single.tombs, batched.tombs)
 	require.Equal(t, single.untombed, batched.untombed)
-	require.Equal(t, single.oldestCopy, batched.oldestCopy)
-	require.Equal(t, single.spent, batched.spent)
+	require.Equal(t, spentOf(single), spentOf(batched))
 	require.Equal(t, single.erased, batched.erased)
 	require.Equal(t, single.tombTimes, batched.tombTimes)
 	require.Len(t, batched.tombstones, len(single.tombstones))
@@ -289,10 +299,13 @@ func markBlobRootsBothWays(t *testing.T, store *PackStorage) int {
 	unread := snapshotRun(t, store, owned)
 	read := snapshotRun(t, store, owned)
 	read.blobs = make(map[refKey]bool)
+	for i := range read.tombs.flags {
+		read.tombs.flags[i] &^= targetBlob
+	}
 
 	blobRoots := 0
 	for _, root := range unread.roots {
-		if unread.blobs[root.key] {
+		if unread.blobs[root.key] || unread.tombs.is(root.key, targetBlob) {
 			blobRoots++
 		}
 	}
