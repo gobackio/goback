@@ -48,6 +48,28 @@ func TestAnUnversionedIndexFileReadsWithEveryVersionUnset(t *testing.T) {
 	}
 }
 
+func TestAVersionedIndexFileLaysEachRecordOutInItsFieldOrder(t *testing.T) {
+	idx := makeIndex()[:2]
+	idx[1] = idx[1].Carry(Version{Time: time.Unix(1_790_000_000, 1000), Offset: 9})
+
+	want := new(bytes.Buffer)
+	want.Write(indexFileMagicBytes)
+	require.NoError(t, binary.Write(want, indexEndianness, uint32(len(idx))))
+	for _, r := range idx {
+		require.NoError(t, binary.Write(want, indexEndianness, struct {
+			Sum                  [proto.HashSize]byte
+			Offset, Length, Type uint32
+			CarriedTime          int64
+			CarriedOffset        uint32
+		}{r.Sum, r.Offset, r.Length, r.Type, r.CarriedTime, r.CarriedOffset}))
+	}
+
+	got := new(bytes.Buffer)
+	_, err := idx.WriteTo(got)
+	require.NoError(t, err)
+	require.Equal(t, want.Bytes(), got.Bytes())
+}
+
 func TestAVersionedIndexFileKeepsCarriedVersions(t *testing.T) {
 	idx := makeIndex()[:3]
 	idx[1] = idx[1].Carry(Version{Time: time.Unix(1_790_000_000, 1000), Offset: 9})

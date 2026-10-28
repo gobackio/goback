@@ -89,6 +89,16 @@ func readUnversionedRecord(r io.Reader, record *IndexRecord) error {
 	return nil
 }
 
+// encodeRecord lays the record out as readRecord reads it.
+func encodeRecord(buf *[recordSize]byte, record *IndexRecord) {
+	copy(buf[:proto.HashSize], record.Sum[:])
+	indexEndianness.PutUint32(buf[proto.HashSize:], record.Offset)
+	indexEndianness.PutUint32(buf[proto.HashSize+4:], record.Length)
+	indexEndianness.PutUint32(buf[proto.HashSize+8:], record.Type)
+	indexEndianness.PutUint64(buf[unversionedRecordSize:], uint64(record.CarriedTime))
+	indexEndianness.PutUint32(buf[unversionedRecordSize+8:], record.CarriedOffset)
+}
+
 func decodeUnversioned(buf []byte, record *IndexRecord) {
 	copy(record.Sum[:], buf[:proto.HashSize])
 	record.Offset = indexEndianness.Uint32(buf[proto.HashSize:])
@@ -232,9 +242,10 @@ func (idx IndexFile) WriteTo(writer io.Writer) (int64, error) {
 		return 0, err
 	}
 
-	for _, record := range idx {
-		err = binary.Write(target, indexEndianness, &record)
-		if err != nil {
+	var record [recordSize]byte
+	for i := range idx {
+		encodeRecord(&record, &idx[i])
+		if _, err := target.Write(record[:]); err != nil {
 			return 0, err
 		}
 	}
@@ -244,14 +255,14 @@ func (idx IndexFile) WriteTo(writer io.Writer) (int64, error) {
 
 // IndexRecord locates one object in its archive.
 type IndexRecord struct {
-	Sum    [proto.HashSize]byte
-	Offset uint32
-	Length uint32
-	Type   uint32
+	Sum [proto.HashSize]byte
 	// CarriedTime and CarriedOffset are the version a rewrite carried the
 	// record over with; a zero CarriedTime means the record has its
 	// archive's version.
 	CarriedTime   int64
+	Offset        uint32
+	Length        uint32
+	Type          uint32
 	CarriedOffset uint32
 }
 
