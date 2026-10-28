@@ -17,7 +17,7 @@ import (
 
 // HaltName is the file a collection leaves when its pre-delete check finds
 // a copy it was about to drop reachable. While it exists no collection
-// drops anything; an operator deletes it once the cause is understood.
+// drops anything; Resume deletes it once the cause is understood.
 const HaltName = "collection.halt"
 
 // ErrHalted is what a collection reports when its check halts the store's
@@ -28,6 +28,16 @@ type halt struct {
 	Generation uint64    `json:"generation"`
 	At         time.Time `json:"at"`
 	Reachable  []string  `json:"reachable"`
+}
+
+// Resume lets the store's collections drop again after a halt. It does
+// nothing when they are not halted.
+func (ps *PackStorage) Resume() error {
+	if err := ps.storage.Delete(HaltName); err != nil && !notExist(err) {
+		return errors.Wrap(err, "resuming collections")
+	}
+
+	return nil
 }
 
 // halted returns why the store's collections are halted, "" when they are

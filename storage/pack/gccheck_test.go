@@ -35,7 +35,8 @@ func TestTheCheckBeforeASweepHaltsCollectionsThatWouldDropWhatIsReachable(t *tes
 	require.NoError(t, err)
 	require.Contains(t, report.SweepSkipped, "halted")
 
-	require.NoError(t, store.storage.Delete(HaltName))
+	require.NoError(t, store.Resume())
+	require.NoError(t, store.Resume(), "resuming what runs is nothing")
 
 	for _, ahead := range []time.Duration{96 * time.Hour, 120 * time.Hour} {
 		report, err = store.Collect(ctx, gcOptions(t, ahead))
