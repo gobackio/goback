@@ -213,9 +213,9 @@ func TestMarkingFromTheSnapshotMarksWhatMarkingThroughTheIndexDoes(t *testing.T)
 	store, _ := newScenarioStore(t)
 
 	snapshot := snapshotRun(t, store, nil)
-	indexed := snapshotRun(t, store, func(r *gcRun) { r.located = make(map[refKey]placed) })
+	indexed := snapshotRun(t, store, func(r *gcRun) { r.located = newPlaces(nil) })
 
-	require.NotEmpty(t, snapshot.located)
+	require.NotZero(t, snapshot.located.count())
 
 	locating := &locatingIndex{ArchiveIndex: store.index}
 	store.index = locating

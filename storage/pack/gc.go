@@ -6,14 +6,20 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
+	"runtime/metrics"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/progress"
@@ -23,6 +29,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 // CollectOptions tunes one garbage collection run. Zero values take the
@@ -52,6 +59,9 @@ type CollectOptions struct {
 	// TempDir holds the live-set runs and the checkpoints a crashed run
 	// resumes from (os.TempDir()).
 	TempDir string
+	// TempInMemory says TempDir is memory, so what the mark writes there
+	// counts against the runtime's memory limit.
+	TempInMemory bool
 	// Now is the snapshot time (time.Now()).
 	Now time.Time
 	// Owner names what a root belongs to, so the mark can attribute the
@@ -282,12 +292,15 @@ type gcRun struct {
 	prev     *gcState
 	snapshot time.Time
 	reads    *gcReads
+	// reading bounds the bytes the run reads at once to readBudget
+	reading    *semaphore.Weighted
+	readBudget int64
 
 	archives map[string]*gcArchive
 	order    []*gcArchive
 	// located places every record of the snapshot the mark may read, one
 	// copy each
-	located map[refKey]placed
+	located *places
 	// pending are the finalized archives of live sessions that have not
 	// committed, read for the un-tombstones a committing session wrote;
 	// pendingAt places their objects, so the mark walks from a commit a
@@ -345,7 +358,9 @@ type gcRun struct {
 // newGCRun prepares the run of the generation after prev, keeping what it
 // reads of committed archives in reads.
 func newGCRun(ps *PackStorage, opts CollectOptions, prev *gcState, reads *gcReads) *gcRun {
+	budget := readBudget(opts.Readers)
 	run := &gcRun{ps: ps, opts: opts, prev: prev, gen: 1, snapshot: opts.Now.UTC(), reads: reads,
+		reading: semaphore.NewWeighted(budget), readBudget: budget,
 		archives: make(map[string]*gcArchive), targets: make(map[refKey]bool),
 		newestTomb: make(map[refKey]Version), condemning: make(map[refKey]Version),
 		condemned: make(map[refKey]Version), condemnedAt: make(map[int64]bool), tombTimes: make(map[int64]bool),
@@ -465,6 +480,10 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 
 	ps.logger.Info("gc took a snapshot", "generation", run.gen, "archives", report.Archives, "objects", report.Objects,
 		"roots", report.Roots, "untombed", len(run.untombed), "took", time.Since(started).Round(time.Millisecond))
+
+	if err := run.fits(report.Objects); err != nil {
+		return nil, err
+	}
 
 	markStart := time.Now()
 	live, err := run.mark(ctx)
@@ -787,23 +806,12 @@ func (r *gcRun) takeSnapshot(ctx context.Context) error {
 	}
 	phase.Finish()
 
-	r.located = make(map[refKey]placed)
-
 	for i, a := range archives {
 		ga := &gcArchive{a: a, prev: a.gcResult(), idx: indexes[i], count: len(indexes[i])}
 		r.reads.indexes[a.name] = ga.idx
 
 		for pos := range ga.idx {
-			rec := &ga.idx[pos]
-			ga.bytes += uint64(rec.Length)
-
-			if t := proto.ObjectType(rec.Type); t == proto.ObjectType_BLOB || t == proto.ObjectType_TOMBSTONE {
-				continue
-			}
-
-			if key := keyOf(rec.Sum[:]); r.located[key].rec == nil {
-				r.located[key] = placed{key: key, a: a, rec: rec}
-			}
+			ga.bytes += uint64(ga.idx[pos].Length)
 		}
 
 		ga.cur = bitset.New(uint(ga.count))
@@ -811,6 +819,8 @@ func (r *gcRun) takeSnapshot(ctx context.Context) error {
 		r.archives[a.name] = ga
 		r.order = append(r.order, ga)
 	}
+
+	r.located = newPlaces(r.order)
 
 	return nil
 }
@@ -1091,6 +1101,12 @@ func (r *gcRun) readHeaders(ctx context.Context, records []placed, missingOK boo
 
 			a, from := run[0].a, int64(run[0].rec.Offset)
 
+			release, err := r.read(gctx, span)
+			if err != nil {
+				return err
+			}
+			defer release()
+
 			buf, _, err := a.readSpan(from, span)
 			if missingOK && notExist(err) {
 				return nil
@@ -1158,8 +1174,11 @@ func oldestAt(versions map[refKey]Version, key refKey, v Version) {
 // that reached it, so a set walks into what another set already walked
 // and its run holds everything it reaches. A group of more than 64 sets
 // shares the last bit among the rest, which then do not walk into what
-// one of them reached.
+// one of them reached. An object the places hold has its bits by its
+// rank among them; any other, written since the snapshot, by its ref.
 type visitedSet struct {
+	places *places
+	ranked []uint64
 	shards [256]struct {
 		mtx  sync.Mutex
 		seen map[refKey]uint64
@@ -1167,13 +1186,20 @@ type visitedSet struct {
 	bits map[int64]uint64
 }
 
-func newVisitedSet() *visitedSet {
-	v := &visitedSet{bits: make(map[int64]uint64)}
+func newVisitedSet(p *places) *visitedSet {
+	v := &visitedSet{places: p, ranked: make([]uint64, p.count())}
+	v.reset()
+
+	return v
+}
+
+// reset forgets every object, for the next group.
+func (v *visitedSet) reset() {
+	clear(v.ranked)
+	v.bits = make(map[int64]uint64)
 	for i := range v.shards {
 		v.shards[i].seen = make(map[refKey]uint64)
 	}
-
-	return v
 }
 
 // bit is the set's bit in the group, given out in the order sets come.
@@ -1193,6 +1219,14 @@ func (v *visitedSet) bit(set int64) uint64 {
 func (v *visitedSet) claim(keys []refKey, bit uint64) []refKey {
 	fresh := keys[:0]
 	for _, key := range keys {
+		if i, ok := v.places.rank(key); ok {
+			if atomic.OrUint64(&v.ranked[i], bit)&bit == 0 {
+				fresh = append(fresh, key)
+			}
+
+			continue
+		}
+
 		shard := &v.shards[key[0]]
 		shard.mtx.Lock()
 		if seen := shard.seen[key]; seen&bit == 0 {
@@ -1210,6 +1244,14 @@ func (v *visitedSet) claim(keys []refKey, bit uint64) []refKey {
 func (v *visitedSet) claimUnreached(keys []refKey) []refKey {
 	fresh := keys[:0]
 	for _, key := range keys {
+		if i, ok := v.places.rank(key); ok {
+			if atomic.CompareAndSwapUint64(&v.ranked[i], 0, ^uint64(0)) {
+				fresh = append(fresh, key)
+			}
+
+			continue
+		}
+
 		shard := &v.shards[key[0]]
 		shard.mtx.Lock()
 		if shard.seen[key] == 0 {
@@ -1363,6 +1405,56 @@ func (r *gcRun) openRunDir(batches [][]gcRoot) (*liveRuns, map[int]bool, error) 
 	return live, done, nil
 }
 
+// readBudget is how many bytes a run reads at once: a thirty-second of the
+// runtime's memory limit, at least two spans and at most a span a reader.
+func readBudget(readers int) int64 {
+	return min(max(debug.SetMemoryLimit(-1)/32, 2*markSpan), int64(max(readers, 1))*markSpan)
+}
+
+// read waits until the run may read size bytes more at once.
+func (r *gcRun) read(ctx context.Context, size int64) (release func(), err error) {
+	size = min(size, r.readBudget)
+	if err := r.reading.Acquire(ctx, size); err != nil {
+		return nil, err
+	}
+
+	return func() { r.reading.Release(size) }, nil
+}
+
+// ErrMemoryLimit is returned by a collection the runtime's memory limit
+// leaves too little room to mark the store in.
+var ErrMemoryLimit = errors.New("the memory limit leaves too little room to collect")
+
+// fits refuses a mark of objects the runtime's memory limit leaves too
+// little room for beside what the heap holds once the snapshot is taken.
+func (r *gcRun) fits(objects uint64) error {
+	limit := debug.SetMemoryLimit(-1)
+	if limit == math.MaxInt64 {
+		return nil
+	}
+
+	runtime.GC()
+	sample := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
+	metrics.Read(sample)
+	held := sample[0].Value.Uint64()
+
+	// what the mark adds: the bits of each walked object, the live set it
+	// buffers, the reads in flight decoded, and the owner, class and dead
+	// prefix of every record the merge and the sweep keep
+	need := uint64(r.located.count())*8 + liveRunLimit*uint64(unsafe.Sizeof(liveRef{})) + 3*uint64(r.readBudget) +
+		objects*(uint64(unsafe.Sizeof(Attribution{}))+4+8)
+	if r.opts.TempInMemory {
+		need += objects * uint64(liveRefSize)
+	}
+
+	if held+need > uint64(limit) {
+		return errors.Wrapf(ErrMemoryLimit, "marking %d objects needs %s beside the %s held, over the limit of %s",
+			objects, humanize.IBytes(need), humanize.IBytes(held), humanize.IBytes(uint64(limit)))
+	}
+
+	return nil
+}
+
 // mark walks breadth-first from the roots, in checkpointed batches, and
 // returns the live refs. Blobs are never read: the File that names one,
 // or a root that is one, marks it.
@@ -1379,7 +1471,7 @@ func (r *gcRun) mark(ctx context.Context) (*liveRuns, error) {
 	// visited set of its own; the roots are sorted by group, so only the
 	// one being walked is ever held
 	var group int64
-	visited := newVisitedSet()
+	visited := newVisitedSet(r.located)
 
 	name := progress.PhaseMark
 	if r.check {
@@ -1397,7 +1489,8 @@ func (r *gcRun) mark(ctx context.Context) (*liveRuns, error) {
 		}
 
 		if owner := roots[0].owner; owner.Group != group {
-			group, visited = owner.Group, newVisitedSet()
+			group = owner.Group
+			visited.reset()
 		}
 
 		if done[batch] {
@@ -1488,6 +1581,12 @@ func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]r
 				var children []refKey
 				var found []liveRef
 
+				release, err := r.read(gctx, span)
+				if err != nil {
+					return err
+				}
+				defer release()
+
 				reads, err := r.readSpan(gctx, run, span)
 				if err != nil {
 					return err
@@ -1543,7 +1642,7 @@ func (r *gcRun) placeAll(ctx context.Context, keys []refKey) ([]placed, error) {
 	grp.SetLimit(r.opts.Readers)
 
 	for i, key := range keys {
-		if p, ok := r.located[key]; ok {
+		if p, ok := r.located.at(key); ok {
 			records[i] = p
 			continue
 		}
@@ -1636,7 +1735,7 @@ func (r *gcRun) missing(key refKey) {
 // written since, through the index, or in a live session's archive. It
 // returns a zero placed when there is none.
 func (r *gcRun) place(ctx context.Context, key refKey) (placed, error) {
-	if p, ok := r.located[key]; ok {
+	if p, ok := r.located.at(key); ok {
 		return p, nil
 	}
 
@@ -1692,7 +1791,7 @@ func (r *gcRun) readSpan(ctx context.Context, records []placed, span int64) ([]m
 
 			// a session's own object is in no index until it commits; one
 			// that ended without committing took the archive with it
-			if p, ok := r.located[record.key]; ok && p.a == a {
+			if p, ok := r.located.at(record.key); ok && p.a == a {
 				obj, err = a.getRaw(ctx, ref, record.rec)
 				if err != nil {
 					obj, err = r.ps.Get(ctx, ref)
@@ -2019,7 +2118,7 @@ func (r *gcRun) flagErased(ctx context.Context) error {
 	runs.begin("erased-", Attribution{})
 	defer runs.close()
 
-	visited := newVisitedSet()
+	visited := newVisitedSet(r.located)
 	if err := r.markBatch(ctx, visited.claimUnreached(roots), visited.claimUnreached, runs, false, never); err != nil {
 		return err
 	}
@@ -2295,36 +2394,43 @@ func (r *gcRun) condemn(ctx context.Context) error {
 }
 
 // notNewer returns the targets whose newest tombstone is not newer than
-// their newest copy.
+// their newest copy, asking the index after condemnBatch at a time.
 func (r *gcRun) notNewer(targets map[refKey]Version) (map[refKey]Version, error) {
 	keys := make([]refKey, 0, len(targets))
-	tombs := make([]*proto.Ref, 0, len(targets))
-
 	for target := range targets {
 		keys = append(keys, target)
-		tombs = append(tombs, proto.TombstoneRef(&proto.Ref{Hash: append([]byte(nil), target[:]...)}))
-	}
-
-	found, err := r.ps.index.LocateTombstones(tombs, Scope{})
-	if err != nil {
-		return nil, err
 	}
 
 	stale := make(map[refKey]Version)
 
-	for i, target := range keys {
-		newest, err := r.ps.newest(found[string(tombs[i].Hash)])
+	for batch := range slices.Chunk(keys, condemnBatch) {
+		tombs := make([]*proto.Ref, len(batch))
+		for i, target := range batch {
+			tombs[i] = proto.TombstoneRef(&proto.Ref{Hash: append([]byte(nil), target[:]...)})
+		}
+
+		found, err := r.ps.index.LocateTombstones(tombs, Scope{})
 		if err != nil {
 			return nil, err
 		}
 
-		if newest == nil || !targets[target].Before(*newest) {
-			stale[target] = targets[target]
+		for i, target := range batch {
+			newest, err := r.ps.newest(found[string(tombs[i].Hash)])
+			if err != nil {
+				return nil, err
+			}
+
+			if newest == nil || !targets[target].Before(*newest) {
+				stale[target] = targets[target]
+			}
 		}
 	}
 
 	return stale, nil
 }
+
+// condemnBatch is how many tombstones notNewer asks the index after at once.
+const condemnBatch = 16384
 
 // horizon lists, once the tombstones are stored, the versions of the
 // committed archives there are and of the snapshot's tombstones, and the
