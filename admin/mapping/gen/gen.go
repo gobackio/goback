@@ -12,7 +12,6 @@ import (
 )
 
 func (m MapperImpl) Bracket(in retention.Bracket) *admin.RetentionBracket {
-
 	return &admin.RetentionBracket{
 		Period: string(in.Period),
 		Count:  int32(in.Count),
@@ -75,7 +74,6 @@ func (m MapperImpl) Retention(in retention.Policy) *admin.RetentionPolicy {
 }
 
 func (m MapperImpl) Set(in index.SetInfo) *admin.BackupSet {
-
 	return &admin.BackupSet{
 		Name:                  in.Name,
 		State:                 in.State,

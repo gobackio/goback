@@ -11,7 +11,7 @@ import (
 	pb "github.com/gobackio/goback/proto/admin"
 )
 
-//go:generate mapper .
+//go:generate go tool mapper .
 
 // mapper:generate
 type Mapper interface {

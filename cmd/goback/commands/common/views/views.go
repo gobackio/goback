@@ -14,7 +14,7 @@ import (
 	"github.com/gobackio/goback/storage/pack"
 )
 
-//go:generate mapper .
+//go:generate go tool mapper .
 
 // mapper:generate
 type Mapper interface {

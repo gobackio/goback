@@ -14,7 +14,6 @@ import (
 )
 
 func (m MapperImpl) Bracket(in retention.Bracket) views.BracketView {
-
 	return views.BracketView{
 		Period: string(in.Period),
 		Count:  in.Count,
@@ -79,7 +78,6 @@ func (m MapperImpl) Expected(in *schedule.Reported) *views.ExpectedView {
 }
 
 func (m MapperImpl) IndexedSet(in index.IndexedSet) views.IndexedSetView {
-
 	return views.IndexedSetView{
 		SetID:       in.SetID,
 		Set:         in.Set,
@@ -156,7 +154,6 @@ func (m MapperImpl) Node(in *proto.TreeNode) views.NodeView {
 }
 
 func (m MapperImpl) OrphanCommit(in index.OrphanCommit) views.OrphanCommitView {
-
 	return views.OrphanCommitView{
 		Ref:    views.Hex(in.Ref),
 		Copies: in.Copies,
@@ -191,7 +188,6 @@ func (m MapperImpl) Policy(in retention.Policy) views.PolicyView {
 }
 
 func (m MapperImpl) ReIndex(in backup.ReIndexReport) views.ReIndexView {
-
 	return views.ReIndexView{
 		Tied:    in.Tied,
 		Behind:  in.Behind,
@@ -200,7 +196,6 @@ func (m MapperImpl) ReIndex(in backup.ReIndexReport) views.ReIndexView {
 }
 
 func (m MapperImpl) RebuiltIndex(in index.RebuiltIndex) views.RebuiltIndexView {
-
 	return views.RebuiltIndexView{
 		Name:   in.Name,
 		Before: in.Before,
@@ -259,7 +254,6 @@ func (m MapperImpl) Report(in *pack.CollectReport) views.ReportView {
 }
 
 func (m MapperImpl) Set(in index.SetInfo) views.SetView {
-
 	return views.SetView{
 		Name:        in.Name,
 		State:       in.State,
@@ -282,7 +276,6 @@ func (m MapperImpl) TrashedCommit(in *proto.TrashedCommit) views.TrashedCommitVi
 }
 
 func (m MapperImpl) Unretired(in index.Unretired) views.UnretiredView {
-
 	return views.UnretiredView{
 		Commit:       views.Hex(in.Revival.Commit),
 		Set:          in.Set,

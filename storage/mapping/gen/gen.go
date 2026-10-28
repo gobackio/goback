@@ -165,7 +165,6 @@ func (m MapperImpl) ReportSchedule(in schedule.Report) *proto.ReportScheduleRequ
 }
 
 func (m MapperImpl) RetentionBracket(in retention.Bracket) *proto.RetentionBracket {
-
 	return &proto.RetentionBracket{
 		Period: string(in.Period),
 		Count:  int32(in.Count),
@@ -189,7 +188,6 @@ func (m MapperImpl) RetentionPolicy(in *retention.Policy) *proto.RetentionPolicy
 }
 
 func (m MapperImpl) SetRetention(in index.SetRetention) *proto.GetRetentionResponse {
-
 	return &proto.GetRetentionResponse{
 		Policy:    m.RetentionPolicy(in.Policy),
 		Effective: m.Effective(in.Effective),
@@ -198,7 +196,6 @@ func (m MapperImpl) SetRetention(in index.SetRetention) *proto.GetRetentionRespo
 }
 
 func (m MapperImpl) SetSchedule(in schedule.Expectation) *proto.SetSchedule {
-
 	return &proto.SetSchedule{
 		BackupSet:          in.Set,
 		Kind:               in.Kind,
