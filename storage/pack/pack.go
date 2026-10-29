@@ -1160,7 +1160,7 @@ func (ps *PackStorage) WalkHeaders(ctx context.Context, t proto.ObjectType, fn f
 
 	return ps.walkLoaded(func(archive *archive) error {
 		if t != proto.ObjectType_INVALID {
-			typed, err := archive.foreachOfType(t, false, visit)
+			typed, err := archive.foreachOfType(ctx, t, false, visit)
 			if err != nil || typed {
 				return err
 			}
@@ -1173,7 +1173,7 @@ func (ps *PackStorage) WalkHeaders(ctx context.Context, t proto.ObjectType, fn f
 // Walk implements backup.ObjectStore.
 func (ps *PackStorage) Walk(ctx context.Context, load bool, t proto.ObjectType, fn backup.ObjectReceiver) error {
 	return ps.walkLoaded(func(archive *archive) error {
-		return ps.walkArchive(archive, load, t, fn)
+		return ps.walkArchive(ctx, archive, load, t, fn)
 	})
 }
 
@@ -1198,7 +1198,7 @@ func (ps *PackStorage) WalkArchives(ctx context.Context, t proto.ObjectType, ski
 			return stoppedWalk{err}
 		}
 
-		if err := ps.walkArchive(archive, true, t, fn); err != nil {
+		if err := ps.walkArchive(ctx, archive, true, t, fn); err != nil {
 			return err
 		}
 
@@ -1217,7 +1217,7 @@ func (ps *PackStorage) WalkArchives(ctx context.Context, t proto.ObjectType, ski
 
 // walkArchive is Walk over one archive; an error fn returns comes back as
 // a stoppedWalk.
-func (ps *PackStorage) walkArchive(archive *archive, load bool, t proto.ObjectType, fn backup.ObjectReceiver) error {
+func (ps *PackStorage) walkArchive(ctx context.Context, archive *archive, load bool, t proto.ObjectType, fn backup.ObjectReceiver) error {
 	var pred loadPredicate
 
 	switch {
@@ -1253,7 +1253,7 @@ func (ps *PackStorage) walkArchive(archive *archive, load bool, t proto.ObjectTy
 	}
 
 	if t != proto.ObjectType_INVALID {
-		typed, err := archive.foreachOfType(t, load, visit)
+		typed, err := archive.foreachOfType(ctx, t, load, visit)
 		if err != nil || typed {
 			return err
 		}
@@ -1598,7 +1598,7 @@ func (ps *PackStorage) openArchive(name string, listed *ListedFile, marks markLi
 // its index file was created, which it returns. An archive whose header is
 // not goback's is refused before any of its records is indexed.
 func (ps *PackStorage) indexArchive(a *archive, info ArchiveInfo, known bool) (time.Time, error) {
-	if err := a.checkHeader(); err != nil {
+	if err := a.checkHeader(context.Background()); err != nil {
 		return time.Time{}, err
 	}
 
@@ -1888,6 +1888,13 @@ type File interface {
 	io.Closer
 
 	Stat() (fs.FileInfo, error)
+}
+
+// ReaderAtContext is a File that reads at an offset on behalf of ctx; the
+// store reads archives through it in place of io.ReaderAt where a File
+// has it.
+type ReaderAtContext interface {
+	ReadAtContext(ctx context.Context, buf []byte, offset int64) (int, error)
 }
 
 // ArchiveStorage holds a store's files under slash-separated names; Open of

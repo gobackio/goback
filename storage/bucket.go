@@ -58,7 +58,7 @@ func (s *bucketFile) Read(buf []byte) (int, error) {
 		stalls := s.store.stalls()
 
 		stream, err := s.store.bucket.NewRangeReader(stalls.ctx, s.key, s.offset, s.attrs.Size-s.offset, nil)
-		s.store.count(OpGet, 0)
+		s.store.count(context.Background(), OpGet, 0)
 
 		if err != nil {
 			stalls.end()
@@ -97,6 +97,12 @@ func (s *bucketFile) closeStream() {
 }
 
 func (s *bucketFile) ReadAt(buf []byte, offset int64) (int, error) {
+	return s.ReadAtContext(context.Background(), buf, offset)
+}
+
+// ReadAtContext implements pack.ReaderAtContext: the range read is
+// cancelled with ctx and counted toward the tallies ctx carries.
+func (s *bucketFile) ReadAtContext(ctx context.Context, buf []byte, offset int64) (int, error) {
 	if !s.readOnly {
 		return 0, errors.New("Read only supported for readonly files")
 	}
@@ -111,12 +117,12 @@ func (s *bucketFile) ReadAt(buf []byte, offset int64) (int, error) {
 
 	length := min(int64(len(buf)), s.attrs.Size-offset)
 
-	stalls := s.store.stalls()
+	stalls := s.store.stallsUnder(ctx)
 	defer stalls.end()
 
 	reader, err := s.store.bucket.NewRangeReader(stalls.ctx, s.key, offset, length, nil)
 	if err != nil {
-		s.store.count(OpGet, 0)
+		s.store.count(ctx, OpGet, 0)
 
 		return 0, stalls.explain(err)
 	}
@@ -126,7 +132,7 @@ func (s *bucketFile) ReadAt(buf []byte, offset int64) (int, error) {
 	stalls.disarm()
 	n, err := io.ReadFull(stalls.reader(reader), buf[:length])
 	err = stalls.explain(err)
-	s.store.count(OpGet, int64(n))
+	s.store.count(ctx, OpGet, int64(n))
 
 	if err == nil && n < len(buf) {
 		err = io.EOF
@@ -156,7 +162,7 @@ func (s *bucketFile) WriteTo(w io.Writer) (int64, error) {
 
 	reader, err := s.store.bucket.NewRangeReader(stalls.ctx, s.key, s.offset, s.attrs.Size-s.offset, nil)
 	if err != nil {
-		s.store.count(OpGet, 0)
+		s.store.count(context.Background(), OpGet, 0)
 
 		return 0, stalls.explain(err)
 	}
@@ -167,7 +173,7 @@ func (s *bucketFile) WriteTo(w io.Writer) (int64, error) {
 	n, err := io.Copy(w, stalls.reader(reader))
 	err = stalls.explain(err)
 	s.offset += n
-	s.store.count(OpGet, n)
+	s.store.count(context.Background(), OpGet, n)
 
 	return n, err
 }
@@ -241,7 +247,7 @@ func (s *bucketFile) Close() error {
 	s.writeStalls.arm()
 	err := s.writeStalls.explain(s.writer.Close())
 	s.writeStalls.end()
-	s.store.count(OpPut, s.written)
+	s.store.count(context.Background(), OpPut, s.written)
 	s.writer = nil
 
 	if err != nil {
@@ -404,7 +410,12 @@ type stalls struct {
 }
 
 func (c *BucketStore) stalls() *stalls {
-	ctx, cancel := context.WithCancel(context.Background())
+	return c.stallsUnder(context.Background())
+}
+
+// stallsUnder is stalls for a request cancelled with ctx as well.
+func (c *BucketStore) stallsUnder(parent context.Context) *stalls {
+	ctx, cancel := context.WithCancel(parent)
 	s := &stalls{ctx: ctx, cancel: cancel, timeout: c.timeout}
 
 	if c.timeout > 0 {
@@ -486,7 +497,7 @@ func (c *BucketStore) openFile(key string) (pack.File, error) {
 	defer cancel()
 
 	attrs, err := c.bucket.Attributes(ctx, key)
-	c.count(OpHead, 0)
+	c.count(context.Background(), OpHead, 0)
 
 	if err != nil {
 		if gcerrors.Code(err) == gcerrors.NotFound {
@@ -529,7 +540,7 @@ func (c *BucketStore) newWriteFile(key string) (pack.File, error) {
 		},
 	})
 	if err != nil {
-		c.count(OpPut, 0)
+		c.count(context.Background(), OpPut, 0)
 		file.writeStalls.end()
 
 		return nil, file.writeStalls.explain(err)
@@ -586,7 +597,7 @@ func (c *BucketStore) Create(name string) (pack.File, error) {
 // WithCreateNew function.
 func (c *BucketStore) CreateNew(name string, data []byte) error {
 	if c.createNew != nil {
-		c.count(OpPut, int64(len(data)))
+		c.count(context.Background(), OpPut, int64(len(data)))
 
 		return c.createNew(c.key(name), data)
 	}
@@ -595,7 +606,7 @@ func (c *BucketStore) CreateNew(name string, data []byte) error {
 	defer cancel()
 
 	err := c.bucket.WriteAll(ctx, c.key(name), data, &blob.WriterOptions{IfNotExist: true, BufferSize: c.bufferSize(len(data))})
-	c.count(OpPut, int64(len(data)))
+	c.count(context.Background(), OpPut, int64(len(data)))
 
 	if gcerrors.Code(err) == gcerrors.FailedPrecondition {
 		return pack.ErrFileExists
@@ -611,7 +622,7 @@ func (c *BucketStore) Checksum(name string) ([]byte, error) {
 	defer cancel()
 
 	attrs, err := c.bucket.Attributes(ctx, c.key(name))
-	c.count(OpHead, 0)
+	c.count(context.Background(), OpHead, 0)
 
 	if err != nil {
 		if gcerrors.Code(err) == gcerrors.NotFound {
@@ -626,7 +637,7 @@ func (c *BucketStore) Checksum(name string) ([]byte, error) {
 
 // Delete implements pack.ArchiveStorage.
 func (c *BucketStore) Delete(name string) error {
-	c.count(OpDelete, 0)
+	c.count(context.Background(), OpDelete, 0)
 
 	ctx, cancel := c.request()
 	defer cancel()
@@ -642,7 +653,7 @@ func (c *BucketStore) Delete(name string) error {
 // Move implements pack.ArchiveStorage by copying within the bucket and
 // deleting the original.
 func (c *BucketStore) Move(from, to string) error {
-	c.count(OpCopy, 0)
+	c.count(context.Background(), OpCopy, 0)
 
 	ctx, cancel := c.request()
 	defer cancel()
@@ -674,7 +685,7 @@ func (c *BucketStore) pages(prefix string, each func(*blob.ListObject) error) er
 
 	for token := blob.FirstPageToken; ; {
 		page, next, err := c.listPage(token, options)
-		c.count(OpList, 0)
+		c.count(context.Background(), OpList, 0)
 
 		if err != nil {
 			return err
@@ -711,7 +722,7 @@ func (c *BucketStore) listPage(token []byte, options *blob.ListOptions) ([]*blob
 // DeleteAll implements pack.ArchiveStorage.
 func (c *BucketStore) DeleteAll() error {
 	return c.pages(blobObjectPrefix, func(object *blob.ListObject) error {
-		c.count(OpDelete, 0)
+		c.count(context.Background(), OpDelete, 0)
 
 		ctx, cancel := c.request()
 		defer cancel()

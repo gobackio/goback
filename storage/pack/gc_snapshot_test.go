@@ -79,7 +79,7 @@ func readTombstonesOneByOne(t *testing.T) func(r *gcRun) {
 					return
 				}
 
-				hdr, err := ga.a.readHeader(rec)
+				hdr, err := ga.a.readHeader(t.Context(), rec)
 				require.NoError(t, err)
 
 				tombs = append(tombs, tombAt{pos: uint32(pos), tombHeader: tombHeaderOf(hdr)})
@@ -193,7 +193,7 @@ func TestBatchedHeaderReadsOfAPendingSessionMatchReadingEach(t *testing.T) {
 		require.NoError(t, err)
 
 		for i, tomb := range tombs {
-			hdr, err := tomb.a.readHeader(tomb.rec)
+			hdr, err := tomb.a.readHeader(t.Context(), tomb.rec)
 			require.NoError(t, err)
 			require.Equal(t, hdr.TombstoneFor.Hash, headers[i].TombstoneFor.Hash)
 			checked++

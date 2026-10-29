@@ -205,7 +205,7 @@ func (ps *PackStorage) readRun(ctx context.Context, a *archive, refs []*proto.Re
 	from := int64(run[0].rec.Offset)
 	start := time.Now()
 
-	buf, _, err := a.readSpan(from, span)
+	buf, _, err := a.readSpan(ctx, from, span)
 	if err != nil {
 		ps.logger.Warn("reading a run of records failed, reading them one at a time", "archive", a.name, "offset", from, "length", span, "err", err)
 		return

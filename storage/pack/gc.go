@@ -1110,7 +1110,7 @@ func (r *gcRun) readHeaders(ctx context.Context, records []placed, missingOK boo
 			}
 			defer release()
 
-			buf, _, err := a.readSpan(from, span)
+			buf, _, err := a.readSpan(ctx, from, span)
 			if missingOK && notExist(err) {
 				return nil
 			}
@@ -1816,7 +1816,7 @@ func (r *gcRun) readSpan(ctx context.Context, records []placed, span int64) ([]m
 		return reads, nil
 	}
 
-	buf, _, err := a.readSpan(from, span)
+	buf, _, err := a.readSpan(ctx, from, span)
 	if err != nil {
 		return nil, errors.Wrapf(err, "reading %d bytes at %d of %s", span, from, a.name)
 	}

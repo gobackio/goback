@@ -269,7 +269,7 @@ func (a *archive) open() (err error) {
 
 // checkHeader rejects an archive whose header is not goback's, reading the
 // header until it has passed once.
-func (a *archive) checkHeader() error {
+func (a *archive) checkHeader(ctx context.Context) error {
 	if a.headerChecked.Load() {
 		return nil
 	}
@@ -281,7 +281,7 @@ func (a *archive) checkHeader() error {
 		return nil
 	}
 
-	hdr, _, err := a.readAt(0, archiveHeaderSize)
+	hdr, _, err := a.readAt(ctx, 0, archiveHeaderSize)
 	if err == nil {
 		err = checkArchiveHeader(hdr)
 	}
@@ -391,8 +391,8 @@ func (a *archive) indexCreated() (time.Time, error) {
 }
 
 // readRecord returns the raw bytes of one index record.
-func (a *archive) readRecord(loc *IndexRecord) ([]byte, bool, error) {
-	return a.readSpan(int64(loc.Offset), int64(loc.Length))
+func (a *archive) readRecord(ctx context.Context, loc *IndexRecord) ([]byte, bool, error) {
+	return a.readSpan(ctx, int64(loc.Offset), int64(loc.Length))
 }
 
 // scanIndex streams the archive's index. An index file that cannot be
@@ -428,16 +428,25 @@ func (a *archive) readOnlyNow() bool {
 // readSpan reads length bytes at offset, which may cover several records,
 // once the archive's header is checked. The bool reports whether the read
 // was lock-free.
-func (a *archive) readSpan(offset, length int64) ([]byte, bool, error) {
-	if err := a.checkHeader(); err != nil {
+func (a *archive) readSpan(ctx context.Context, offset, length int64) ([]byte, bool, error) {
+	if err := a.checkHeader(ctx); err != nil {
 		return nil, false, err
 	}
 
-	return a.readAt(offset, length)
+	return a.readAt(ctx, offset, length)
 }
 
-func (a *archive) readAt(offset, length int64) ([]byte, bool, error) {
+func (a *archive) readAt(ctx context.Context, offset, length int64) ([]byte, bool, error) {
 	buf := make([]byte, length)
+
+	if readerAt, ok := a.readFile.(ReaderAtContext); ok {
+		_, err := readerAt.ReadAtContext(ctx, buf, offset)
+		if err != nil {
+			return nil, true, errors.Wrap(err, "Failed filling buffer")
+		}
+
+		return buf, true, nil
+	}
 
 	if readerAt, ok := a.readFile.(io.ReaderAt); ok {
 		_, err := readerAt.ReadAt(buf, offset)
@@ -511,8 +520,8 @@ func readPayload(r io.Reader, size uint64) ([]byte, error) {
 }
 
 // readHeader decodes the object header of one index record.
-func (a *archive) readHeader(loc *IndexRecord) (*proto.ObjectHeader, error) {
-	buf, _, err := a.readRecord(loc)
+func (a *archive) readHeader(ctx context.Context, loc *IndexRecord) (*proto.ObjectHeader, error) {
+	buf, _, err := a.readRecord(ctx, loc)
 	if err != nil {
 		return nil, err
 	}
@@ -530,7 +539,7 @@ func (a *archive) getRaw(ctx context.Context, ref *proto.Ref, loc *IndexRecord) 
 	defer span.End()
 
 	start := time.Now()
-	buf, lockFree, err := a.readRecord(loc)
+	buf, lockFree, err := a.readRecord(ctx, loc)
 	if err != nil {
 		return nil, err
 	}
@@ -817,7 +826,7 @@ func (a *archive) walkReader(reader io.Reader, load loadPredicate, open bool, ca
 // set. It reports false, having called nothing, when the archive cannot be
 // read that way: it is still being written, or its index does not record
 // types.
-func (a *archive) foreachOfType(t proto.ObjectType, load bool, callback func(hdr *proto.ObjectHeader, bytes []byte, offset uint32, length uint32) error) (bool, error) {
+func (a *archive) foreachOfType(ctx context.Context, t proto.ObjectType, load bool, callback func(hdr *proto.ObjectHeader, bytes []byte, offset uint32, length uint32) error) (bool, error) {
 	if !a.readOnlyNow() {
 		return false, nil
 	}
@@ -856,7 +865,7 @@ func (a *archive) foreachOfType(t proto.ObjectType, load bool, callback func(hdr
 			end++
 		}
 
-		buf, _, err := a.readSpan(from, span)
+		buf, _, err := a.readSpan(ctx, from, span)
 		if err != nil {
 			return true, errors.Wrapf(err, "reading %d bytes at %d of %s", span, from, a.name)
 		}
