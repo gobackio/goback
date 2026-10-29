@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/lockfile"
 	"github.com/gobackio/goback/proto"
@@ -1003,7 +1004,7 @@ func (run *receiveRun) done(d commitDone) error {
 		run.failures++
 		run.retry = true
 
-		if errors.Is(d.err, ErrGap) || errors.Is(d.err, ErrForeignBinlog) || errors.Is(d.err, context.Canceled) {
+		if errors.Is(d.err, ErrGap) || errors.Is(d.err, ErrForeignBinlog) || errors.Is(d.err, context.Canceled) || auth.Refused(d.err) {
 			return d.err
 		}
 

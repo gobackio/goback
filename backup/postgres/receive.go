@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/lockfile"
 	"github.com/gobackio/goback/storage/cache"
@@ -887,7 +888,7 @@ func (s *session) done(ctx context.Context, d commitDone, failures *int) error {
 		*failures++
 		s.retry = true
 
-		if ctx.Err() != nil || errors.Is(d.err, ErrGap) || errors.Is(d.err, ErrForeignSegment) {
+		if ctx.Err() != nil || errors.Is(d.err, ErrGap) || errors.Is(d.err, ErrForeignSegment) || auth.Refused(d.err) {
 			return d.err
 		}
 

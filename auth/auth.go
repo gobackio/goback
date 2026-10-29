@@ -37,6 +37,19 @@ var ErrUnauthenticated = errors.New("no caller identity")
 // ErrForbidden is returned when the principal may not do what it asked.
 var ErrForbidden = errors.New("not allowed for this caller")
 
+// Refused reports whether err is a store refusing the caller's credentials
+// or what they allow, locally or over gRPC: asking again with the same
+// ones cannot succeed.
+func Refused(err error) bool {
+	if errors.Is(err, ErrUnauthenticated) || errors.Is(err, ErrForbidden) {
+		return true
+	}
+
+	code := status.Code(err)
+
+	return code == codes.Unauthenticated || code == codes.PermissionDenied
+}
+
 type principalKey struct{}
 
 // WithPrincipal attaches the principal to the context.
