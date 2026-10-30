@@ -86,7 +86,7 @@ func (x *Index) DropOrphans(ctx context.Context, before time.Time, dryRun bool) 
 		}
 
 		if !dryRun {
-			tombstoned, err := x.tombstoneUnindexed(ctx, orphan.Ref)
+			tombstoned, err := x.tombstoneUnindexed(ctx, proto.ObjectType_COMMIT, orphan.Ref)
 			if err != nil {
 				return dropped, err
 			}

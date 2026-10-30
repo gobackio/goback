@@ -59,6 +59,27 @@ func TestACommitTheStoreTookButTheIndexCouldNotRecordIsNoOrphan(t *testing.T) {
 	require.Empty(t, orphans, "a commit the index failed to record stays a commit no row names")
 }
 
+func TestAPinTheStoreTookButTheIndexRefusedIsTombstoned(t *testing.T) {
+	ctx := context.Background()
+	bucket, err := fileblob.OpenBucket(t.TempDir(), nil)
+	require.NoError(t, err)
+	packs, index := openPacks(t, bucket)
+
+	tree := proto.NewObject(&proto.Tree{})
+	require.NoError(t, packs.Put(ctx, tree))
+
+	commit := proto.NewObject(&proto.Commit{Tree: tree.Ref(), BackupSet: "world", Timestamp: 1})
+	require.NoError(t, index.Put(ctx, commit))
+	require.NoError(t, index.DeleteSet(ctx, "world", false))
+
+	pin := proto.NewObject(&proto.Pin{Target: commit.Ref()})
+	require.ErrorIs(t, index.Put(ctx, pin), backup.ErrSetClosed)
+
+	has, err := packs.Has(ctx, pin.Ref())
+	require.NoError(t, err)
+	require.False(t, has, "a pin the index refused stays in the store")
+}
+
 func TestACommitTheIndexFailedToRecordCanBeStoredAgain(t *testing.T) {
 	ctx := context.Background()
 	bucket, err := fileblob.OpenBucket(t.TempDir(), nil)
