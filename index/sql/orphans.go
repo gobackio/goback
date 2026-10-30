@@ -3,7 +3,9 @@ package sql
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sort"
+	"time"
 
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/index/sql/ent/archive"
@@ -59,6 +61,49 @@ func (x *Index) OrphanCommits(ctx context.Context) ([]index.OrphanCommit, error)
 	sort.Slice(orphans, func(i, j int) bool { return bytes.Compare(orphans[i].Ref.Hash, orphans[j].Ref.Hash) < 0 })
 
 	return orphans, nil
+}
+
+// DropOrphans tombstones the commits OrphanCommits lists that were
+// received before before, unless a row names one by then, and returns
+// them; with dryRun it only returns them. A commit the store took that is
+// not indexed yet is an orphan too, which before must leave out.
+func (x *Index) DropOrphans(ctx context.Context, before time.Time, dryRun bool) ([]index.OrphanCommit, error) {
+	orphans, err := x.OrphanCommits(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var dropped []index.OrphanCommit
+
+	for _, orphan := range orphans {
+		obj, err := x.ObjectStore.Get(ctx, orphan.Ref)
+		if err != nil {
+			return dropped, fmt.Errorf("reading orphan commit %x: %w", orphan.Ref.Hash, err)
+		}
+
+		if !time.Unix(0, obj.GetCommit().GetReceivedAtNs()).Before(before) {
+			continue
+		}
+
+		if !dryRun {
+			tombstoned, err := x.tombstoneUnindexed(ctx, orphan.Ref)
+			if err != nil {
+				return dropped, err
+			}
+
+			if !tombstoned {
+				continue
+			}
+		}
+
+		dropped = append(dropped, orphan)
+	}
+
+	if dryRun || len(dropped) == 0 {
+		return dropped, nil
+	}
+
+	return dropped, x.flush()
 }
 
 // refAbsentFrom keeps the objects whose ref no row of table holds in column.

@@ -40,6 +40,12 @@ type OrphanFinder interface {
 	OrphanCommits(ctx context.Context) ([]OrphanCommit, error)
 }
 
+// OrphanDropper is an index that tombstones the commits the store holds
+// and it has no row for, received before a time; dryRun only lists them.
+type OrphanDropper interface {
+	DropOrphans(ctx context.Context, before time.Time, dryRun bool) ([]OrphanCommit, error)
+}
+
 // SizeFiller is an index that works out the size of each commit it
 // recorded without one.
 type SizeFiller interface {

@@ -121,6 +121,44 @@ var Command = cli.Command{
 			}),
 		},
 		{
+			Name:  "drop-orphans",
+			Usage: "Tombstone the commits in the store that are missing from the index, as check lists them; without --apply, only list them",
+			Flags: []cli.Flag{
+				cli.BoolFlag{Name: "apply", Usage: "write the tombstones"},
+				cli.DurationFlag{Name: "age", Usage: "leave out commits received less than this long ago, which may still be on their way into the index", Value: 24 * time.Hour},
+			},
+			Action: action(func(m *members) {
+				dropper, ok := m.index.(index.OrphanDropper)
+				if !ok {
+					common.Fatalf("Index %T keeps no commit rows", m.index)
+				}
+
+				apply := m.c.Bool("apply")
+
+				orphans, err := dropper.DropOrphans(common.Context(m.c), time.Now().Add(-m.c.Duration("age")), !apply)
+				if err != nil {
+					common.Fatalf("Dropping orphans failed after %d commits: %v", len(orphans), err)
+				}
+
+				found := make([]views.OrphanCommitView, len(orphans))
+				for i, orphan := range orphans {
+					found[i] = common.View.OrphanCommit(orphan)
+				}
+
+				common.Result(found, func() {
+					for _, orphan := range found {
+						log.Printf("Commit %s has no row: %d copies, %s", orphan.Ref, orphan.Copies, humanize.Bytes(uint64(orphan.Bytes)))
+					}
+
+					if apply {
+						log.Printf("Tombstoned %d commits", len(orphans))
+					} else {
+						log.Printf("Would tombstone %d commits; --apply writes the tombstones", len(orphans))
+					}
+				})
+			}),
+		},
+		{
 			Name:  "sizes",
 			Usage: "Record the logical size of commits that lack one; measure the sets whose commits changed",
 			Action: action(func(m *members) {

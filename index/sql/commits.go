@@ -215,26 +215,26 @@ func (x *Index) refuse(ctx context.Context, commits []*proto.Object, cause error
 	ctx = backup.WithSession(context.WithoutCancel(ctx), nil)
 
 	for _, object := range commits {
-		ref := object.Ref()
-
-		indexed, err := x.client.CommitRow.Query().Where(commitrow.Ref(ref.Hash)).Exist(ctx)
-		if err == nil && indexed {
-			continue
-		}
-
-		if err == nil {
-			err = x.ObjectStore.Delete(ctx, ref)
-		}
-
-		if err != nil {
+		if _, err := x.tombstoneUnindexed(ctx, object.Ref()); err != nil {
 			x.logger().Error("tombstoning a commit the index failed to record failed; the store keeps it as a commit",
-				"commit", fmt.Sprintf("%x", ref.Hash), "cause", cause, "err", err)
+				"commit", fmt.Sprintf("%x", object.Ref().Hash), "cause", cause, "err", err)
 		}
 	}
 
 	if err := x.flush(); err != nil {
 		x.logger().Error("storing the tombstones of commits the index failed to record failed", "cause", cause, "err", err)
 	}
+}
+
+// tombstoneUnindexed tombstones the commit unless a row names it, and
+// reports whether it did.
+func (x *Index) tombstoneUnindexed(ctx context.Context, ref *proto.Ref) (bool, error) {
+	indexed, err := x.client.CommitRow.Query().Where(commitrow.Ref(ref.Hash)).Exist(ctx)
+	if err != nil || indexed {
+		return false, err
+	}
+
+	return true, x.ObjectStore.Delete(ctx, ref)
 }
 
 func (x *Index) checkPinTarget(ctx context.Context, c *ent.Client, target *proto.Ref) error {
