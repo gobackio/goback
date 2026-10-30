@@ -152,6 +152,10 @@ func (x *Index) Put(ctx context.Context, object *proto.Object) error {
 	switch object.Type() {
 	case proto.ObjectType_COMMIT:
 		_, err := x.indexCommit(ctx, object.GetCommit(), object.Ref(), true, true, steps)
+		if err != nil {
+			x.refuse(ctx, []*proto.Object{object}, err)
+		}
+
 		return err
 	case proto.ObjectType_PIN:
 		// the pin is durable before its row says so, so that an index
@@ -192,13 +196,45 @@ func (x *Index) PutCommits(ctx context.Context, commits []*proto.Object) error {
 		return err
 	}
 
-	for _, object := range commits {
+	for i, object := range commits {
 		if _, err := x.indexCommit(ctx, object.GetCommit(), object.Ref(), true, true, nil); err != nil {
+			x.refuse(ctx, commits[i:], err)
 			return err
 		}
 	}
 
 	return nil
+}
+
+// refuse tombstones the commits the store took that the index failed to
+// record, so none stays a commit no row names, which every collection
+// keeps. A later commit of the same ref takes the tombstone back.
+func (x *Index) refuse(ctx context.Context, commits []*proto.Object, cause error) {
+	// the request ending may be what failed the commit, and its session
+	// has committed
+	ctx = backup.WithSession(context.WithoutCancel(ctx), nil)
+
+	for _, object := range commits {
+		ref := object.Ref()
+
+		indexed, err := x.client.CommitRow.Query().Where(commitrow.Ref(ref.Hash)).Exist(ctx)
+		if err == nil && indexed {
+			continue
+		}
+
+		if err == nil {
+			err = x.ObjectStore.Delete(ctx, ref)
+		}
+
+		if err != nil {
+			x.logger().Error("tombstoning a commit the index failed to record failed; the store keeps it as a commit",
+				"commit", fmt.Sprintf("%x", ref.Hash), "cause", cause, "err", err)
+		}
+	}
+
+	if err := x.flush(); err != nil {
+		x.logger().Error("storing the tombstones of commits the index failed to record failed", "cause", cause, "err", err)
+	}
 }
 
 func (x *Index) checkPinTarget(ctx context.Context, c *ent.Client, target *proto.Ref) error {
