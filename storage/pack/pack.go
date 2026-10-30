@@ -754,20 +754,67 @@ func (ps *PackStorage) ChecksAtCommit() bool { return !ps.foreignRefs }
 
 // refuse tombstones a commit that failed after its record was written, so
 // the record stays dead even where a rebuild without the index would find
-// it in an archive. The tombstone goes beside the record, in the session's
-// own archive, so the two are kept or dropped together.
+// it in an archive. While the session may still commit, the tombstone goes
+// into the session, so the two are kept or dropped together, and a session
+// it cannot be stored in is ended. Once the session committed, the record
+// is kept, and the tombstone goes into a root archive.
 func (ps *PackStorage) refuse(ctx context.Context, ws *writeSession, ref *proto.Ref, cause error) {
-	// a session that ended took the record with its archives
-	ps.sessionsMtx.Lock()
-	_, live := ps.sessions[ws.id]
-	ps.sessionsMtx.Unlock()
+	// the request ending may be what refused the commit
+	ctx = context.WithoutCancel(ctx)
+	commit := fmt.Sprintf("%x", ref.GetHash())
 
-	if ws.session != nil && !live {
+	if ws.session != nil {
+		outcome, ended, err := ps.sessionEnd(ws.id)
+		if err != nil {
+			ps.logger.Warn("reading how a refused commit's session ended failed", "commit", commit, "session", ws.id, "err", err)
+		}
+
+		ps.sessionsMtx.Lock()
+		_, live := ps.sessions[ws.id]
+		ps.sessionsMtx.Unlock()
+
+		switch {
+		case ended && outcome == SessionCommitted:
+			ps.refuseCommitted(ctx, ref, cause)
+			return
+		case ended || !live:
+			// the session took the record with its archives
+			return
+		}
+	}
+
+	err := ps.putTombstone(ctx, ws, ref, false)
+	if err == nil {
 		return
 	}
 
-	if err := ps.putTombstone(ctx, ws, ref, false); err != nil {
-		ps.logger.Warn("tombstoning a refused commit failed", "commit", fmt.Sprintf("%x", ref.GetHash()), "cause", cause, "err", err)
+	ps.logger.Warn("tombstoning a refused commit failed", "commit", commit, "cause", cause, "err", err)
+
+	if ws.session == nil {
+		return
+	}
+
+	if err := ps.endSession(ws.id); err != nil {
+		ps.logger.Error("ending a session that holds a refused commit without its tombstone failed; a commit of the session keeps the record",
+			"commit", commit, "session", ws.id, "err", err)
+	}
+}
+
+// refuseCommitted tombstones a refused commit whose session committed in a
+// root archive, finalized before it returns.
+func (ps *PackStorage) refuseCommitted(ctx context.Context, ref *proto.Ref, cause error) {
+	root, err := ps.writeSessionFor(context.Background())
+	if err == nil {
+		err = ps.putTombstone(ctx, root, ref, false)
+	}
+
+	if err == nil {
+		err = ps.flushSession(root)
+	}
+
+	if err != nil {
+		ps.logger.Error("tombstoning a refused commit its session committed failed; the record stays a commit",
+			"commit", fmt.Sprintf("%x", ref.GetHash()), "cause", cause, "err", err)
 	}
 }
 
