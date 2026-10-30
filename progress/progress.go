@@ -17,6 +17,7 @@ import (
 const (
 	OpCollect = "collect"
 	OpCompact = "compact"
+	OpSplit   = "split"
 	OpRewrite = "rewrite"
 	OpScrub   = "scrub"
 	OpRetire  = "retire"
@@ -42,7 +43,7 @@ const (
 	PhasePublish  = "publish"
 	PhaseSweep    = "sweep"
 	PhasePurge    = "purge"
-	// compact and rewrite.
+	// compact, split and rewrite.
 	PhaseRewrite = "rewrite"
 	// scrub.
 	PhaseScrub = "scrub"

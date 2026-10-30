@@ -22,6 +22,12 @@ type Store interface {
 	Compact(ctx context.Context) (*pack.CompactReport, error)
 }
 
+// Splitter is a store that rewrites its old archives holding blobs beside
+// other objects into archives holding one kind or the other.
+type Splitter interface {
+	Split(ctx context.Context, opts pack.SplitOptions) (*pack.SplitReport, error)
+}
+
 // Presence is an index that builds presence filters on demand.
 type Presence interface {
 	BuildPendingPresence(ctx context.Context) (int, error)
@@ -61,6 +67,7 @@ type Collected interface {
 type Schedule struct {
 	Sweep   time.Duration
 	Compact time.Duration
+	Split   time.Duration
 	Collect time.Duration
 	Retire  time.Duration
 	// Presence also measures the sets whose commits changed.
@@ -72,6 +79,7 @@ type Schedule struct {
 var DefaultSchedule = Schedule{
 	Sweep:    30 * time.Second,
 	Compact:  time.Hour,
+	Split:    24 * time.Hour,
 	Collect:  7 * 24 * time.Hour,
 	Retire:   time.Hour,
 	Presence: 30 * time.Second,
@@ -151,6 +159,7 @@ func NewRunner(store backup.ObjectStore, idx backup.Index, schedule Schedule) *R
 
 	base := wrapped.Innermost(store)
 	r.Store, _ = base.(Store)
+	r.Splitter, _ = base.(Splitter)
 	r.Collector, _ = base.(pack.Collector)
 	r.Retirer, _ = idx.(backup.Retirer)
 	r.Presence, _ = idx.(Presence)
@@ -165,6 +174,7 @@ func NewRunner(store backup.ObjectStore, idx backup.Index, schedule Schedule) *R
 // Runner ticks the jobs of one store. A nil member skips its jobs.
 type Runner struct {
 	Store      Store
+	Splitter   Splitter
 	Collector  pack.Collector
 	Attributor Attributor
 	Forecaster Forecaster
@@ -203,8 +213,8 @@ func (r *Runner) now() time.Time {
 
 // Run sweeps once, then runs every scheduled job at its interval until ctx
 // ends, and returns once the job under way has stopped. Compactions,
-// collections and retirements never overlap one another, nor do sweeps
-// and presence builds, which go on while one of the others runs.
+// splits, collections and retirements never overlap one another, nor do
+// sweeps and presence builds, which go on while one of the others runs.
 func (r *Runner) Run(ctx context.Context) {
 	r.Sweep()
 
@@ -218,6 +228,7 @@ func (r *Runner) Run(ctx context.Context) {
 
 	tick(ctx,
 		job{r.Schedule.Compact, r.logCompact},
+		job{r.Schedule.Split, r.logSplit},
 		job{r.Schedule.Collect, r.logCollect},
 		job{r.Schedule.Retire, r.logRetire},
 	)
@@ -230,10 +241,10 @@ type job struct {
 	run   func(context.Context)
 }
 
-// tick runs each of up to three jobs at its interval, one at a time, until
+// tick runs each of up to four jobs at its interval, one at a time, until
 // ctx ends.
 func tick(ctx context.Context, jobs ...job) {
-	var cases [3]<-chan time.Time
+	var cases [4]<-chan time.Time
 
 	for i, job := range jobs {
 		if job.every <= 0 {
@@ -256,6 +267,8 @@ func tick(ctx context.Context, jobs ...job) {
 			jobs[1].run(ctx)
 		case <-cases[2]:
 			jobs[2].run(ctx)
+		case <-cases[3]:
+			jobs[3].run(ctx)
 		}
 	}
 }
@@ -264,9 +277,10 @@ func tick(ctx context.Context, jobs ...job) {
 type Ran struct {
 	Swept             bool
 	Retired, Presence int
-	// Compacted is nil when no compaction ran; alongside a failed one it
-	// counts what that finished.
+	// Compacted is nil when no compaction ran, and Split when no split
+	// ran; alongside a failed one each counts what that finished.
 	Compacted *pack.CompactReport
+	Split     *pack.SplitReport
 	// Measured is how many sets had their sizes measured.
 	Measured int
 	// Collected is nil when no collection was due.
@@ -297,6 +311,12 @@ func (r *Runner) Due(ctx context.Context) (Ran, error) {
 	if r.Store != nil && r.Schedule.Compact > 0 {
 		report, err := r.Store.Compact(ctx)
 		ran.Compacted = report
+		errs = append(errs, err)
+	}
+
+	if r.Splitter != nil && r.Schedule.Split > 0 {
+		report, err := r.Splitter.Split(ctx, pack.SplitOptions{Now: r.now()})
+		ran.Split = report
 		errs = append(errs, err)
 	}
 
@@ -368,6 +388,24 @@ func (r *Runner) Compact(ctx context.Context) (*pack.CompactReport, error) {
 func (r *Runner) logCompact(ctx context.Context) {
 	if _, err := r.Compact(ctx); err != nil {
 		r.logger().Error("compaction failed", "err", err)
+	}
+}
+
+// Split rewrites the old archives holding blobs beside other objects and
+// rebuilds the indexes that churned. Without a Splitter it does nothing.
+func (r *Runner) Split(ctx context.Context) (*pack.SplitReport, error) {
+	if r.Splitter == nil {
+		return &pack.SplitReport{}, nil
+	}
+
+	report, err := r.Splitter.Split(ctx, pack.SplitOptions{Now: r.now()})
+
+	return report, errors.Join(err, reindex(ctx, r.Reindexer))
+}
+
+func (r *Runner) logSplit(ctx context.Context) {
+	if _, err := r.Split(ctx); err != nil {
+		r.logger().Error("splitting failed", "err", err)
 	}
 }
 

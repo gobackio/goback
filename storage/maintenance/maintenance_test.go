@@ -17,14 +17,18 @@ import (
 )
 
 type fakeStore struct {
-	sweeps, compactions atomic.Int32
-	lastSweep           atomic.Value
+	sweeps, compactions, splits atomic.Int32
+	lastSweep                   atomic.Value
 }
 
 func (f *fakeStore) Sweep(now time.Time) { f.sweeps.Add(1); f.lastSweep.Store(now) }
 func (f *fakeStore) Compact(context.Context) (*pack.CompactReport, error) {
 	f.compactions.Add(1)
 	return &pack.CompactReport{Candidates: 3}, errors.New("disk full")
+}
+func (f *fakeStore) Split(context.Context, pack.SplitOptions) (*pack.SplitReport, error) {
+	f.splits.Add(1)
+	return &pack.SplitReport{}, nil
 }
 
 type fakeCollector struct{ runs atomic.Int32 }
@@ -62,11 +66,12 @@ func TestRunnerTicksEveryScheduledJob(t *testing.T) {
 
 	r := &Runner{
 		Store:     store,
+		Splitter:  store,
 		Collector: collector,
 		Retirer:   retirer,
 		Presence:  presence,
 		Reindexer: reindexer,
-		Schedule:  Schedule{Sweep: 10 * time.Millisecond, Compact: 10 * time.Millisecond, Collect: 10 * time.Millisecond, Presence: 10 * time.Millisecond},
+		Schedule:  Schedule{Sweep: 10 * time.Millisecond, Compact: 10 * time.Millisecond, Split: 10 * time.Millisecond, Collect: 10 * time.Millisecond, Presence: 10 * time.Millisecond},
 		OnCollect: func(report *pack.CollectReport) { reports.Add(int32(report.Objects)) },
 		Now:       func() time.Time { return now },
 	}
@@ -82,7 +87,8 @@ func TestRunnerTicksEveryScheduledJob(t *testing.T) {
 	require.Equal(t, reports.Load(), 7*collector.runs.Load())
 	require.GreaterOrEqual(t, presence.runs.Load(), int32(1))
 	require.Zero(t, retirer.runs.Load(), "retirement was not scheduled")
-	require.Equal(t, collector.runs.Load()+store.compactions.Load(), reindexer.runs.Load(), "every compaction and collection is followed by a reindex")
+	require.GreaterOrEqual(t, store.splits.Load(), int32(1))
+	require.Equal(t, collector.runs.Load()+store.compactions.Load()+store.splits.Load(), reindexer.runs.Load(), "every compaction, split and collection is followed by a reindex")
 }
 
 type stuckCollector struct{ release chan struct{} }
@@ -171,12 +177,13 @@ func TestDueCollectsOnlyOnceTheLastCollectionIsOldEnough(t *testing.T) {
 
 func TestDueRunsEveryJobPastAFailingOne(t *testing.T) {
 	store, retirer, reindexer := &fakeStore{}, &fakeRetirer{}, &fakeReindexer{}
-	r := &Runner{Store: store, Retirer: retirer, Reindexer: reindexer, Schedule: DefaultSchedule}
+	r := &Runner{Store: store, Splitter: store, Retirer: retirer, Reindexer: reindexer, Schedule: DefaultSchedule}
 
 	ran, err := r.Due(context.Background())
 	require.ErrorContains(t, err, "disk full")
 	require.True(t, ran.Swept)
 	require.Equal(t, 3, ran.Compacted.Candidates, "a failed compaction still reports what it found")
+	require.NotNil(t, ran.Split, "a split runs past a failed compaction")
 	require.Equal(t, 2, ran.Retired)
 	require.Len(t, ran.Reindexed, 1, "what the jobs churned is reindexed after them")
 }
@@ -204,6 +211,7 @@ func TestNewRunnerFindsTheJobsAndEachReindexesAfter(t *testing.T) {
 
 	r := NewRunner(wrapping{archives}, x, DefaultSchedule)
 	require.NotNil(t, r.Store, "found beneath the wrapping store")
+	require.NotNil(t, r.Splitter)
 	require.NotNil(t, r.Collector)
 	require.Nil(t, r.Presence)
 
