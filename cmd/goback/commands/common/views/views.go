@@ -47,6 +47,7 @@ type Mapper interface {
 
 	// field:Collected from:"-"
 	// field:Compacted from:"-"
+	// field:Split from:"-"
 	Maintenance(in maintenance.Ran) MaintenanceView
 
 	// field:Seconds from:"Took" using:"Seconds"
@@ -343,11 +344,12 @@ type IndexedSetView struct {
 	Behind      int       `json:"behind"`
 }
 
-// MaintenanceView is what goback maintain did; compacted and collected
-// are absent when that job did not run.
+// MaintenanceView is what goback maintain did; compacted, split and
+// collected are absent when that job did not run.
 type MaintenanceView struct {
 	Swept     bool            `json:"swept"`
 	Compacted *CompactView    `json:"compacted,omitempty"`
+	Split     *CompactView    `json:"split,omitempty"`
 	Retired   int             `json:"retired"`
 	Presence  int             `json:"presence"`
 	Measured  int             `json:"measured"`

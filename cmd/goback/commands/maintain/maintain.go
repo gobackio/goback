@@ -223,6 +223,11 @@ func due(m *members) {
 		view.Compacted = &report
 	}
 
+	if ran.Split != nil {
+		report := common.View.Compact(&ran.Split.CompactReport)
+		view.Split = &report
+	}
+
 	if ran.Collected != nil {
 		report := common.View.Report(ran.Collected)
 		view.Collected = &report
@@ -233,6 +238,10 @@ func due(m *members) {
 
 		if ran.Compacted != nil {
 			log.Print(ran.Compacted.Summary())
+		}
+
+		if ran.Split != nil {
+			log.Print(ran.Split.Summary())
 		}
 
 		if ran.Collected != nil {
