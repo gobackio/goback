@@ -439,30 +439,32 @@ func checkRemoteParams(u *url.URL) error {
 	return nil
 }
 
-// remoteKey is the api key the URL carries in front of the host, else the
-// contents of the file its key-file parameter names.
-func remoteKey(u *url.URL) (string, error) {
+// remoteCredentials sends the api key the URL carries in front of the
+// host, else what the file its key-file parameter names holds at each call.
+func remoteCredentials(u *url.URL, agentID string) (auth.Credentials, error) {
+	creds := auth.Credentials{AgentID: agentID}
+
 	if u.User != nil {
 		if _, hasPassword := u.User.Password(); hasPassword {
-			return "", errors.New("a goback:// url carries the api key alone, with no password after it")
+			return creds, errors.New("a goback:// url carries the api key alone, with no password after it")
 		}
 
 		if key := u.User.Username(); key != "" {
-			return key, nil
+			creds.Secret = key
+
+			return creds, nil
 		}
 	}
 
 	path := u.Query().Get("key-file")
 	if path == "" {
-		return "", fmt.Errorf("a %s:// store needs an api key, in front of the host or in the file its key-file parameter names", u.Scheme)
+		return creds, fmt.Errorf("a %s:// store needs an api key, in front of the host or in the file its key-file parameter names", u.Scheme)
 	}
 
-	key, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("reading the api key: %w", err)
-	}
+	var err error
+	creds.KeyFile, err = auth.OpenKeyFile(path)
 
-	return strings.TrimSpace(string(key)), nil
+	return creds, err
 }
 
 // openRemote dials a store server, which is its own index.
@@ -473,13 +475,12 @@ func openRemote(_ context.Context, u *url.URL, s Settings) (backup.ObjectStore, 
 
 	addr := remoteAddress(u)
 
-	key, err := remoteKey(u)
+	creds, err := remoteCredentials(u, s.AgentID)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	ca := u.Query().Get("ca")
-	creds := auth.Credentials{Secret: key, AgentID: s.AgentID}
 
 	var (
 		client *storage.Client

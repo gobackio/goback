@@ -9,7 +9,10 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gobackio/goback/proto"
 
@@ -148,7 +151,11 @@ func Keys(backup, admin string) Authenticator {
 // refuses to do so over a plaintext connection unless Plaintext says
 // otherwise.
 type Credentials struct {
-	Secret  string
+	Secret string
+	// KeyFile, when set, holds the secret instead: a call after the file
+	// changed sends what it holds then, so a key replaced in place is used
+	// without reconnecting.
+	KeyFile *KeyFile
 	AgentID string
 	// Plaintext allows the secret onto a connection nothing encrypts,
 	// where anyone on the path can read it and everything it uploads.
@@ -158,7 +165,73 @@ type Credentials struct {
 
 // GetRequestMetadata implements credentials.PerRPCCredentials.
 func (c Credentials) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
-	return map[string]string{secretHeader: "Bearer " + c.Secret, AgentHeader: c.AgentID}, nil
+	secret := c.Secret
+	if c.KeyFile != nil {
+		var err error
+		if secret, err = c.KeyFile.Read(); err != nil {
+			return nil, err
+		}
+	}
+
+	return map[string]string{secretHeader: "Bearer " + secret, AgentHeader: c.AgentID}, nil
+}
+
+// KeyFile is a file holding an api key, read again whenever it changed.
+type KeyFile struct {
+	path string
+
+	mu       sync.Mutex
+	key      string
+	modified time.Time
+	size     int64
+}
+
+// OpenKeyFile reads the key the file at path holds.
+func OpenKeyFile(path string) (*KeyFile, error) {
+	f := &KeyFile{path: path}
+	if _, err := f.Read(); err != nil {
+		return nil, err
+	}
+
+	return f, nil
+}
+
+// Read is the key the file holds now, trimmed of surrounding space. A
+// file gone or unreadable after it was read once leaves the last key.
+func (f *KeyFile) Read() (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	info, err := os.Stat(f.path)
+	if err != nil {
+		return f.last(err)
+	}
+
+	if f.key != "" && info.ModTime().Equal(f.modified) && info.Size() == f.size {
+		return f.key, nil
+	}
+
+	key, err := os.ReadFile(f.path)
+	if err != nil {
+		return f.last(err)
+	}
+
+	trimmed := strings.TrimSpace(string(key))
+	if trimmed == "" {
+		return f.last(errors.New("the api key file is empty"))
+	}
+
+	f.key, f.modified, f.size = trimmed, info.ModTime(), info.Size()
+
+	return f.key, nil
+}
+
+func (f *KeyFile) last(err error) (string, error) {
+	if f.key != "" {
+		return f.key, nil
+	}
+
+	return "", fmt.Errorf("reading the api key: %w", err)
 }
 
 // RequireTransportSecurity implements credentials.PerRPCCredentials.

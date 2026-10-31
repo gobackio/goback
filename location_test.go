@@ -8,10 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/storage"
@@ -111,27 +114,60 @@ func TestOnlyThePlaintextSchemeSkipsTLS(t *testing.T) {
 }
 
 func TestTheUrlCarriesTheApiKey(t *testing.T) {
-	key, err := remoteKey(parse(t, "goback://gbk_abc-123_x@store.example:8443"))
+	creds, err := remoteCredentials(parse(t, "goback://gbk_abc-123_x@store.example:8443"), "a")
 	require.NoError(t, err)
-	require.Equal(t, "gbk_abc-123_x", key)
+	require.Equal(t, "Bearer gbk_abc-123_x", sent(t, creds))
 }
 
 func TestAKeyFileKeepsTheSecretOutOfTheUrl(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "key")
 	require.NoError(t, os.WriteFile(path, []byte("gbk_from_the_file\n"), 0o600))
 
-	key, err := remoteKey(parse(t, "goback://store.example?key-file="+url.QueryEscape(path)))
+	creds, err := remoteCredentials(parse(t, "goback://store.example?key-file="+url.QueryEscape(path)), "a")
 	require.NoError(t, err)
-	require.Equal(t, "gbk_from_the_file", key, "trimmed of the trailing newline an editor leaves")
+	require.Equal(t, "Bearer gbk_from_the_file", sent(t, creds), "trimmed of the trailing newline an editor leaves")
+}
+
+func TestAKeyReplacedInItsFileIsSentFromTheNextCall(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "key")
+	require.NoError(t, os.WriteFile(path, []byte("gbk_old"), 0o600))
+
+	creds, err := remoteCredentials(parse(t, "goback://store.example?key-file="+url.QueryEscape(path)), "a")
+	require.NoError(t, err)
+	require.Equal(t, "Bearer gbk_old", sent(t, creds))
+
+	require.NoError(t, os.WriteFile(path, []byte("gbk_reissued"), 0o600))
+	require.NoError(t, os.Chtimes(path, time.Now(), time.Now().Add(time.Minute)))
+	require.Equal(t, "Bearer gbk_reissued", sent(t, creds))
+
+	require.NoError(t, os.Remove(path))
+	require.Equal(t, "Bearer gbk_reissued", sent(t, creds), "a file gone for a moment leaves the key last read")
+}
+
+func sent(t *testing.T, creds auth.Credentials) string {
+	t.Helper()
+
+	md, err := creds.GetRequestMetadata(context.Background())
+	require.NoError(t, err)
+
+	for _, v := range md {
+		if strings.HasPrefix(v, "Bearer ") {
+			return v
+		}
+	}
+
+	t.Fatal("no secret sent")
+
+	return ""
 }
 
 func TestAKeyWithAPasswordAfterItIsRefused(t *testing.T) {
-	_, err := remoteKey(parse(t, "goback://gbk_abc:secret@store.example"))
+	_, err := remoteCredentials(parse(t, "goback://gbk_abc:secret@store.example"), "a")
 	require.ErrorContains(t, err, "no password")
 }
 
 func TestAStoreServerWithNoKeyAnywhereSaysWhereToPutOne(t *testing.T) {
-	_, err := remoteKey(parse(t, "goback://store.example"))
+	_, err := remoteCredentials(parse(t, "goback://store.example"), "a")
 	require.ErrorContains(t, err, "in front of the host")
 	require.ErrorContains(t, err, "key-file")
 }
