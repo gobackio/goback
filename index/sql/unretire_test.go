@@ -133,8 +133,8 @@ func TestUnretireRefusesALiveCommit(t *testing.T) {
 }
 
 // TestUnretireFindsNoCommitOfASetItCannotSee stands a commit row whose set
-// the query cannot see, as row-level security on sets hides another
-// tenant's, for a commit of a hidden set.
+// the query cannot see, as row-level security on sets hides a set
+// from the role querying, for a commit of the hidden set.
 func TestUnretireFindsNoCommitOfASetItCannotSee(t *testing.T) {
 	f := newFixture(t)
 	ref := &proto.Ref{Hash: make([]byte, proto.HashSize)}

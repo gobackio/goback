@@ -53,7 +53,7 @@ func TestTheAgentReturnsTheCookiesItWasGiven(t *testing.T) {
 	go func() { _ = srv.Serve(listener) }()
 	t.Cleanup(srv.Stop)
 
-	jar := newCookies("dns:///store.goback.io:443", false)
+	jar := newCookies("dns:///store.example.com:443", false)
 	con, err := grpc.NewClient("passthrough:///bufnet",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }),
@@ -82,7 +82,7 @@ func TestTheAgentReturnsTheCookiesItWasGiven(t *testing.T) {
 }
 
 func TestACookieFromOneMethodGoesWithEveryMethod(t *testing.T) {
-	jar := newCookies("store.goback.io:443", true)
+	jar := newCookies("store.example.com:443", true)
 	jar.keep("/goback.Store/ReadParts", metadata.Pairs("set-cookie", "GOOGAPPUID=instance-2; Path=/; Secure"))
 
 	md, _ := metadata.FromOutgoingContext(jar.attach(context.Background(), "/goback.Store/Put"))

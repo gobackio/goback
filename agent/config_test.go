@@ -20,7 +20,7 @@ func decode(t *testing.T, doc string) (*Config, error) {
 func TestDecodeFillsInDefaultsAndDerivesSets(t *testing.T) {
 	cfg, err := decode(t, `
 store:
-  storage: goback://store.goback.io?key-file=/run/secrets/api-key
+  storage: goback://store.example.com?key-file=/run/secrets/api-key
   agent-id: db1
 backups:
   - name: db
@@ -147,7 +147,7 @@ backups:
   - {name: w, every: 1h, path: {dir: /w}}
   - {name: w, every: 2h, path: {dir: /v}}`,
 		"an api key inline": `
-store: {storage: "goback://secretkey@store.goback.io"}
+store: {storage: "goback://secretkey@store.example.com"}
 backups: [{name: w, every: 1h, path: {dir: /w}}]`,
 		"a password in a dbname": `
 backups: [{name: db, postgres: {pitr: false, dbname: "host=db password=hunter2"}}]`,
