@@ -28,6 +28,15 @@ type Splitter interface {
 	Split(ctx context.Context, opts pack.SplitOptions) (*pack.SplitReport, error)
 }
 
+// Halter is a store whose collections a pre-delete check can halt:
+// Halted says why, "" when they are not, and Resume ends the halt.
+type Halter interface {
+	Halted() (string, error)
+	Resume() error
+}
+
+var _ Halter = (*pack.PackStorage)(nil)
+
 // Presence is an index that builds presence filters on demand.
 type Presence interface {
 	BuildPendingPresence(ctx context.Context) (int, error)

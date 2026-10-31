@@ -84,6 +84,32 @@ var Command = cli.Command{
 			}),
 		},
 		{
+			Name:  "resume",
+			Usage: "Let collections drop again after a pre-delete check halted them",
+			Action: action(func(m *members) {
+				halter, ok := wrapped.Innermost(m.objects).(maintenance.Halter)
+				if !ok {
+					common.Fatalf("storage %s has no collections to resume", goback.Redacted(m.c.GlobalString("storage")))
+				}
+
+				why, err := halter.Halted()
+				if err != nil {
+					common.Fatal(err)
+				}
+
+				if why == "" {
+					common.Result(resumed{}, func() { log.Print("Collections are not halted") })
+
+					return
+				}
+
+				if err := halter.Resume(); err != nil {
+					common.Fatal(err)
+				}
+				common.Result(resumed{Resumed: true, Halted: why}, func() { log.Printf("Resumed collections, %s", why) })
+			}),
+		},
+		{
 			Name:  "retire",
 			Usage: "Tombstone the retired commits whose trash window has ended",
 			Action: action(func(m *members) {
@@ -257,6 +283,13 @@ func due(m *members) {
 }
 
 // counted is what a maintenance operation did, and to how many things.
+// resumed is what maintain resume did: whether collections were halted,
+// and why.
+type resumed struct {
+	Resumed bool   `json:"resumed"`
+	Halted  string `json:"halted,omitempty"`
+}
+
 type counted struct {
 	Action string `json:"action"`
 	Count  int    `json:"count"`
