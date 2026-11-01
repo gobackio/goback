@@ -190,13 +190,15 @@ func (x *Index) placeholderSet(ctx context.Context, wantID int64, dryRun bool) (
 		}
 
 		create := x.client.Set.Create().SetName(name).SetRetentionPaused(true)
-		if wantID != 0 {
-			create.SetID(wantID)
-		}
 
-		s, err := create.Save(ctx)
-		if err == nil && wantID != 0 {
-			err = x.advanceSetIDs(ctx, x.client)
+		var s *ent.Set
+		if wantID != 0 {
+			s, err = create.SetID(wantID).Save(ctx)
+			if err == nil {
+				err = x.advanceSetIDs(ctx, x.client)
+			}
+		} else {
+			s, err = x.saveSet(ctx, x.client, create, name)
 		}
 
 		if err == nil {

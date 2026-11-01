@@ -43,6 +43,19 @@ func WithBehind(behind backup.ObjectStore) Option {
 	}
 }
 
+// WithNewSetID gives every set the index creates without an id of its own
+// the id newSetID returns for its name, instead of the next from the
+// database's sequence. Commits filed under the set id they carry, as
+// IndexCommits files them, never ask it. An error refuses the write that
+// needed the set and reaches its caller as returned: one wrapping
+// backup.ErrCommitDenied refuses BeginCommit with its message as the
+// reason.
+func WithNewSetID(newSetID func(ctx context.Context, name string) (int64, error)) Option {
+	return func(x *Index) {
+		x.newSetID = newSetID
+	}
+}
+
 // externalDB is a caller-connected database.
 type externalDB struct {
 	db      *sql.DB

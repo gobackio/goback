@@ -72,6 +72,7 @@ type Index struct {
 	external  *externalDB
 	noMigrate bool
 	behind    backup.ObjectStore
+	newSetID  func(ctx context.Context, name string) (int64, error)
 
 	// DefaultPolicy is the retention policy sets inherit when the store
 	// has none set; nil means retention.Default.

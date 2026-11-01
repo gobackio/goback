@@ -96,7 +96,7 @@ func (x *Index) setNamed(ctx context.Context, c *ent.Client, name string, wantID
 		return id, err
 	}
 
-	created, err := c.Set.Create().SetName(name).Save(ctx)
+	created, err := x.saveSet(ctx, c, c.Set.Create().SetName(name), name)
 	if err == nil {
 		return created.ID, nil
 	}
@@ -135,10 +135,18 @@ func (x *Index) createSet(ctx context.Context, name string, policy *retention.Po
 		return 0, err
 	}
 
-	var id int64
+	id, err := x.assignSetID(ctx, name)
+	if err != nil {
+		return 0, err
+	}
 
 	err = x.policyTx(ctx, func(tx *ent.Tx) (*proto.Policy, error) {
-		s, err := tx.Set.Create().SetName(name).SetRetentionPolicy(*raw).Save(ctx)
+		create := tx.Set.Create().SetName(name).SetRetentionPolicy(*raw)
+		if id != 0 {
+			create.SetID(id)
+		}
+
+		s, err := create.Save(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +159,41 @@ func (x *Index) createSet(ctx context.Context, name string, policy *retention.Po
 		return liveSet(ctx, x.client, name)
 	}
 
+	if err == nil && x.newSetID != nil {
+		err = x.advanceSetIDs(ctx, x.client)
+	}
+
 	return id, err
+}
+
+// assignSetID is the id WithNewSetID gives a new set of the name, 0 for
+// the database's next.
+func (x *Index) assignSetID(ctx context.Context, name string) (int64, error) {
+	if x.newSetID == nil {
+		return 0, nil
+	}
+
+	return x.newSetID(ctx, name)
+}
+
+// saveSet saves a set create gives no id under the one assignSetID gives
+// the name.
+func (x *Index) saveSet(ctx context.Context, c *ent.Client, create *ent.SetCreate, name string) (*ent.Set, error) {
+	id, err := x.assignSetID(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	if id == 0 {
+		return create.Save(ctx)
+	}
+
+	s, err := create.SetID(id).Save(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s, x.advanceSetIDs(ctx, c)
 }
 
 // lockSet takes the set's row lock for the transaction.
