@@ -5,7 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -233,10 +236,10 @@ func (m *monitor) checkAsync(ctx context.Context, pid uint32, flush uint64) erro
 // base backups do, and lists what it lacks for replication capture: the
 // role's REPLICATION attribute, pg_hba.conf entries for both connections,
 // a pg_basebackup of the server's major version where base backups need
-// one (pgBasebackup, or pg_basebackup on the PATH when empty) and, unless
-// slot is empty because nothing streams, a version that streams, a capped
-// slot unless allowUncapped and a free one. An empty list means nothing is
-// missing.
+// one (pgBasebackup, or pg_basebackup on the PATH when empty) and a
+// password file it would not skip, and, unless slot is empty because
+// nothing streams, a version that streams, a capped slot unless
+// allowUncapped and a free one. An empty list means nothing is missing.
 func Check(ctx context.Context, connString, pgBasebackup, slot string, allowUncapped bool) []string {
 	m, err := connectMonitor(ctx, connString, "goback")
 	if err != nil {
@@ -257,6 +260,10 @@ func Check(ctx context.Context, connString, pgBasebackup, slot string, allowUnca
 
 	if s.version < minInProcessBaseVersion || pgBasebackup != "" {
 		if problem := checkBasebackup(ctx, cmp.Or(pgBasebackup, "pg_basebackup"), s.version); problem != "" {
+			problems = append(problems, problem)
+		}
+
+		if problem := checkPassFile(); problem != "" {
 			problems = append(problems, problem)
 		}
 	}
@@ -299,6 +306,39 @@ func checkBasebackup(ctx context.Context, program string, version int) string {
 
 	if got := basebackupMajor(string(out)); got != majorString(version) {
 		return fmt.Sprintf("Postgres %s takes base backups through pg_basebackup %s, and %s is %s", versionString(version), majorString(version), program, cmp.Or(got, "of an unknown version"))
+	}
+
+	return ""
+}
+
+// checkPassFile says why the libpq of pg_basebackup would skip the password
+// file, PGPASSFILE or ~/.pgpass, that pgx reads regardless, or nothing.
+func checkPassFile() string {
+	if runtime.GOOS == "windows" || os.Getenv("PGPASSWORD") != "" {
+		return ""
+	}
+
+	path := os.Getenv("PGPASSFILE")
+	if path == "" {
+		home := os.Getenv("HOME")
+		if home == "" {
+			return ""
+		}
+
+		path = filepath.Join(home, ".pgpass")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+
+	if !info.Mode().IsRegular() {
+		return fmt.Sprintf("pg_basebackup ignores the password file %s, which is not a regular file", path)
+	}
+
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		return fmt.Sprintf("pg_basebackup ignores the password file %s, which its group or others can access (mode %04o); chmod 600 it, owned by the user goback runs as", path, perm)
 	}
 
 	return ""
