@@ -627,6 +627,12 @@ func (x *Index) applyCommit(ctx context.Context, commit *proto.Commit, ref *prot
 			return err
 		}
 
+		if len(diff.gaps) > 0 {
+			if err := x.markGaps(ctx, tx, setID, diff.gaps); err != nil {
+				return err
+			}
+		}
+
 		steps.Lap("damage")
 
 		if len(diff.holes)+len(diff.gaps) > 0 {

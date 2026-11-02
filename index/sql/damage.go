@@ -102,36 +102,55 @@ func (x *Index) MarkDamaged(ctx context.Context, setID int64, paths []string) er
 	}
 
 	return x.tx(ctx, func(tx *ent.Tx) error {
-		s, err := forUpdate(x, tx.Set.Query().Where(set.ID(setID))).Only(ctx)
-		if ent.IsNotFound(err) {
-			return nil
-		}
-
-		if err != nil {
-			return err
-		}
-
-		// whatever the clocks say, damage found after a grant is newer than it
-		found := x.now()
-		if s.GrantedAt != nil && !found.After(*s.GrantedAt) {
-			found = s.GrantedAt.Add(time.Millisecond)
-		}
-
-		return inBatches(unique, func(batch []string) error {
-			builders := make([]*ent.DamagedPathCreate, len(batch))
-			for i, path := range batch {
-				builders[i] = tx.DamagedPath.Create().SetSetID(setID).SetPath(path).SetFoundAt(found)
-			}
-
-			err := tx.DamagedPath.CreateBulk(builders...).OnConflictColumns(damagedpath.FieldSetID, damagedpath.FieldPath).
-				UpdateFoundAt().Exec(ctx)
-			if err != nil {
-				return fmt.Errorf("marking %d paths of set %d damaged: %w", len(batch), setID, err)
-			}
-
-			return nil
-		})
+		return x.markDamaged(ctx, tx, setID, unique)
 	})
+}
+
+// markDamaged is MarkDamaged within tx, for paths each named once.
+func (x *Index) markDamaged(ctx context.Context, tx *ent.Tx, setID int64, paths []string) error {
+	s, err := forUpdate(x, tx.Set.Query().Where(set.ID(setID))).Only(ctx)
+	if ent.IsNotFound(err) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	// whatever the clocks say, damage found after a grant is newer than it
+	found := x.now()
+	if s.GrantedAt != nil && !found.After(*s.GrantedAt) {
+		found = s.GrantedAt.Add(time.Millisecond)
+	}
+
+	return inBatches(paths, func(batch []string) error {
+		builders := make([]*ent.DamagedPathCreate, len(batch))
+		for i, path := range batch {
+			builders[i] = tx.DamagedPath.Create().SetSetID(setID).SetPath(path).SetFoundAt(found)
+		}
+
+		err := tx.DamagedPath.CreateBulk(builders...).OnConflictColumns(damagedpath.FieldSetID, damagedpath.FieldPath).
+			UpdateFoundAt().Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("marking %d paths of set %d damaged: %w", len(batch), setID, err)
+		}
+
+		return nil
+	})
+}
+
+// markGaps records the open versions of paths, whose file objects the
+// store lacked when their commit was indexed, as lost and their paths as
+// damaged, so the next run reads them again and no check finds them.
+func (x *Index) markGaps(ctx context.Context, tx *ent.Tx, setID int64, paths []string) error {
+	err := inBatches(paths, func(batch []string) error {
+		return tx.File.Update().Where(file.SetID(setID), file.PathIn(batch...), file.ValidUntilIsNil()).SetLost(true).Exec(ctx)
+	})
+	if err != nil {
+		return fmt.Errorf("marking %d versions of set %d lost: %w", len(paths), setID, err)
+	}
+
+	return x.markDamaged(ctx, tx, setID, paths)
 }
 
 // MarkRescan records that a whole set must be read again, for damage no

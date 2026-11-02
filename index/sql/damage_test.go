@@ -414,6 +414,40 @@ func TestFindDamageLeavesWhatItMarkedLostBefore(t *testing.T) {
 	require.Empty(t, report.Rescan)
 }
 
+func TestARebuildMarksAFileItCannotReadLostSoNoCheckFindsIt(t *testing.T) {
+	f := newFixture(t)
+	ctx := f.ctx
+
+	split := proto.NewObject(&proto.File{Inline: []byte("lost")})
+	require.NoError(t, f.store.Put(ctx, split))
+
+	big := proto.NewObject(&proto.File{Splits: []*proto.Ref{split.Ref()}, SplitLengths: []uint64{4}, SplitDepth: 2})
+	require.NoError(t, f.store.Put(ctx, big))
+
+	f.commit("world", f.tree(f.file("level.dat", "intact"), &proto.TreeNode{
+		Stat: &proto.FileInfo{Name: []byte("big.bin"), Type: proto.NodeType_NODE_FILE, MtimeNs: f.epoch.UnixNano(), Size: backup.SplitFileSize, Mode: 0644},
+		Ref:  big.Ref(),
+	}), false)
+	f.forget(split.Ref())
+
+	y := f.index()
+	require.NoError(t, reindexErr(y.ReIndex(ctx)))
+
+	lost, err := y.LostVersions(ctx, "world")
+	require.NoError(t, err)
+	require.Len(t, lost, 1)
+	require.Equal(t, "big.bin", lost[0].Path)
+
+	report, err := y.FindDamage(ctx)
+	require.NoError(t, err)
+	require.Empty(t, report.Lost)
+	require.Empty(t, report.Paths)
+
+	grant, err := y.BeginCommit(ctx, "world")
+	require.NoError(t, err)
+	require.Equal(t, []string{"big.bin"}, grant.Damaged)
+}
+
 // setID is the id of the fixture's named set.
 func (f *fixture) setID(name string) int64 {
 	f.t.Helper()
