@@ -3,6 +3,7 @@ package sql
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -73,6 +74,16 @@ func (x *Index) DropOrphans(ctx context.Context, before time.Time, dryRun bool) 
 		return nil, err
 	}
 
+	dropped, err := x.dropOrphans(ctx, orphans, before, dryRun)
+	if dryRun || len(dropped) == 0 {
+		return dropped, err
+	}
+
+	// the tombstones already written count, whatever stopped the rest
+	return dropped, errors.Join(err, x.flush())
+}
+
+func (x *Index) dropOrphans(ctx context.Context, orphans []index.OrphanCommit, before time.Time, dryRun bool) ([]index.OrphanCommit, error) {
 	var dropped []index.OrphanCommit
 
 	for _, orphan := range orphans {
@@ -99,11 +110,7 @@ func (x *Index) DropOrphans(ctx context.Context, before time.Time, dryRun bool) 
 		dropped = append(dropped, orphan)
 	}
 
-	if dryRun || len(dropped) == 0 {
-		return dropped, nil
-	}
-
-	return dropped, x.flush()
+	return dropped, nil
 }
 
 // refAbsentFrom keeps the objects whose ref no row of table holds in column.

@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -89,4 +90,37 @@ func TestDroppingOrphansTombstonesTheOrphansReceivedBeforeTheCutoff(t *testing.T
 	has, err := packs.Has(ctx, indexed.Ref())
 	require.NoError(t, err)
 	require.True(t, has, "an indexed commit stays")
+}
+
+func TestDroppingOrphansStoresTheTombstonesWrittenBeforeAnOrphanFailed(t *testing.T) {
+	ctx := context.Background()
+	bucket, err := fileblob.OpenBucket(t.TempDir(), nil)
+	require.NoError(t, err)
+	packs, index := openPacks(t, bucket)
+
+	tree := proto.NewObject(&proto.Tree{})
+	require.NoError(t, packs.Put(ctx, tree))
+
+	received := time.Now().Add(-2 * time.Hour).UnixNano()
+	a := proto.NewObject(&proto.Commit{Tree: tree.Ref(), BackupSet: "world", ReceivedAtNs: received})
+	b := proto.NewObject(&proto.Commit{Tree: tree.Ref(), BackupSet: "other", ReceivedAtNs: received})
+	require.NoError(t, packs.Put(ctx, a))
+	require.NoError(t, packs.Put(ctx, b))
+	require.NoError(t, packs.Flush())
+
+	first, second := a, b
+	if bytes.Compare(a.Ref().Hash, b.Ref().Hash) > 0 {
+		first, second = b, a
+	}
+
+	index.ObjectStore = losingStore{PackStorage: packs, lost: second.Ref()}
+
+	dropped, err := index.DropOrphans(ctx, time.Now().Add(-time.Hour), false)
+	require.Error(t, err)
+	require.Len(t, dropped, 1)
+
+	rebuilt, _ := openPacks(t, bucket)
+	has, err := rebuilt.Has(ctx, first.Ref())
+	require.NoError(t, err)
+	require.False(t, has, "the orphan dropped before the failure stays dropped")
 }

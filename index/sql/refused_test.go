@@ -114,3 +114,88 @@ func TestACommitTheIndexFailedToRecordCanBeStoredAgain(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, has, "the commit stored again is live in the store")
 }
+
+// racingStore runs before once, at the first read of the tree, while the
+// commit that names it is being indexed.
+type racingStore struct {
+	*pack.PackStorage
+	tree   *proto.Ref
+	before func()
+}
+
+func (s *racingStore) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
+	if ref.Equal(s.tree) && s.before != nil {
+		before := s.before
+		s.before = nil
+		before()
+	}
+
+	return s.PackStorage.Get(ctx, ref)
+}
+
+func (s *racingStore) ReadRecords(context.Context, []*proto.Ref) ([]*proto.Object, error) {
+	return nil, errors.New("reading records is not supported")
+}
+
+func TestAPutKeepsItsCommitWhenAnEarlierAttemptsRefusalTombstonesItMeanwhile(t *testing.T) {
+	ctx := context.Background()
+	bucket, err := fileblob.OpenBucket(t.TempDir(), nil)
+	require.NoError(t, err)
+	packs, index := openPacks(t, bucket)
+
+	tree := proto.NewObject(&proto.Tree{})
+	require.NoError(t, packs.Put(ctx, tree))
+
+	commit := proto.NewObject(&proto.Commit{Tree: tree.Ref(), BackupSet: "world", Timestamp: 1, ReceivedAtNs: time.Now().Add(-time.Minute).UnixNano()})
+	index.ObjectStore = &racingStore{PackStorage: packs, tree: tree.Ref(), before: func() {
+		index.refuse(ctx, []*proto.Object{commit}, errors.New("the first attempt's request ended"))
+	}}
+
+	require.NoError(t, index.Put(ctx, commit))
+	require.NoError(t, packs.Flush())
+
+	rebuilt, _ := openPacks(t, bucket)
+	has, err := rebuilt.Has(ctx, commit.Ref())
+	require.NoError(t, err)
+	require.True(t, has, "the recorded commit is live in the store")
+}
+
+// recordingStore indexes the commit it tombstones right after, as a retry
+// that stored it again does while a refusal runs.
+type recordingStore struct {
+	*pack.PackStorage
+	index  *Index
+	commit *proto.Object
+}
+
+func (s recordingStore) Delete(ctx context.Context, ref *proto.Ref) error {
+	if err := s.PackStorage.Delete(ctx, ref); err != nil {
+		return err
+	}
+
+	_, err := s.index.indexCommit(ctx, s.commit.GetCommit(), s.commit.Ref(), true, true, nil)
+
+	return err
+}
+
+func TestARefusalTakesItsTombstoneBackWhenARetryRecordedTheCommit(t *testing.T) {
+	ctx := context.Background()
+	bucket, err := fileblob.OpenBucket(t.TempDir(), nil)
+	require.NoError(t, err)
+	packs, index := openPacks(t, bucket)
+
+	tree := proto.NewObject(&proto.Tree{})
+	require.NoError(t, packs.Put(ctx, tree))
+
+	commit := proto.NewObject(&proto.Commit{Tree: tree.Ref(), BackupSet: "world", Timestamp: 1, ReceivedAtNs: time.Now().Add(-time.Minute).UnixNano()})
+	require.NoError(t, packs.Put(ctx, commit))
+
+	index.ObjectStore = recordingStore{PackStorage: packs, index: index, commit: commit}
+	index.refuse(ctx, []*proto.Object{commit}, errors.New("the first attempt's request ended"))
+	require.NoError(t, packs.Flush())
+
+	rebuilt, _ := openPacks(t, bucket)
+	has, err := rebuilt.Has(ctx, commit.Ref())
+	require.NoError(t, err)
+	require.True(t, has, "the recorded commit is live in the store")
+}

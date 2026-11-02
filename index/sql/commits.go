@@ -155,9 +155,10 @@ func (x *Index) Put(ctx context.Context, object *proto.Object) error {
 		_, err := x.indexCommit(ctx, object.GetCommit(), object.Ref(), true, true, steps)
 		if err != nil {
 			x.refuse(ctx, []*proto.Object{object}, err)
+			return err
 		}
 
-		return err
+		return x.keepStored(ctx, object)
 	case proto.ObjectType_PIN:
 		// the pin is durable before its row says so, so that an index
 		// rebuilt from the store keeps it
@@ -168,9 +169,10 @@ func (x *Index) Put(ctx context.Context, object *proto.Object) error {
 
 		if err != nil {
 			x.refuse(ctx, []*proto.Object{object}, err)
+			return err
 		}
 
-		return err
+		return x.keepStored(ctx, object)
 	}
 
 	return nil
@@ -207,6 +209,10 @@ func (x *Index) PutCommits(ctx context.Context, commits []*proto.Object) error {
 			x.refuse(ctx, commits[i:], err)
 			return err
 		}
+
+		if err := x.keepStored(ctx, object); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -221,32 +227,74 @@ func (x *Index) refuse(ctx context.Context, objects []*proto.Object, cause error
 	// committed
 	ctx = backup.WithSession(context.WithoutCancel(ctx), nil)
 
+	var tombstoned []*proto.Object
+
 	for _, object := range objects {
-		if _, err := x.tombstoneUnindexed(ctx, object.Type(), object.Ref()); err != nil {
+		did, err := x.tombstoneUnindexed(ctx, object.Type(), object.Ref())
+		if err != nil {
 			x.logger().Error("tombstoning an object the index failed to record failed; the store keeps it as a root",
 				"type", object.Type(), "ref", fmt.Sprintf("%x", object.Ref().Hash), "cause", cause, "err", err)
+		}
+
+		if did {
+			tombstoned = append(tombstoned, object)
 		}
 	}
 
 	if err := x.flush(); err != nil {
 		x.logger().Error("storing the tombstones of objects the index failed to record failed", "cause", cause, "err", err)
+		return
 	}
+
+	// a retry of the same object may have recorded it meanwhile, after its
+	// own check, in keepStored, came too early to see the tombstone
+	var revived bool
+
+	for _, object := range tombstoned {
+		indexed, err := x.indexed(ctx, object.Type(), object.Ref())
+		if err == nil && indexed {
+			err = x.ObjectStore.Put(ctx, object)
+			revived = revived || err == nil
+		}
+
+		if err != nil {
+			x.logger().Error("taking back the tombstone of an object a retry recorded failed",
+				"type", object.Type(), "ref", fmt.Sprintf("%x", object.Ref().Hash), "err", err)
+		}
+	}
+
+	if revived {
+		if err := x.flush(); err != nil {
+			x.logger().Error("storing objects a retry recorded again failed", "err", err)
+		}
+	}
+}
+
+// keepStored puts again an object the index just recorded whose ref the
+// store no longer holds, as when the refusal of an earlier attempt at the
+// same object tombstoned it after this one stored it.
+func (x *Index) keepStored(ctx context.Context, object *proto.Object) error {
+	held, err := x.ObjectStore.Has(ctx, object.Ref())
+	if err != nil || held {
+		return err
+	}
+
+	return x.ObjectStore.Put(ctx, object)
+}
+
+// indexed reports whether a row names the commit or pin.
+func (x *Index) indexed(ctx context.Context, t proto.ObjectType, ref *proto.Ref) (bool, error) {
+	if t == proto.ObjectType_PIN {
+		return x.client.Pin.Query().Where(pin.Ref(ref.Hash)).Exist(ctx)
+	}
+
+	return x.client.CommitRow.Query().Where(commitrow.Ref(ref.Hash)).Exist(ctx)
 }
 
 // tombstoneUnindexed tombstones the commit or pin unless a row names it,
 // and reports whether it did.
 func (x *Index) tombstoneUnindexed(ctx context.Context, t proto.ObjectType, ref *proto.Ref) (bool, error) {
-	var (
-		indexed bool
-		err     error
-	)
-
-	if t == proto.ObjectType_PIN {
-		indexed, err = x.client.Pin.Query().Where(pin.Ref(ref.Hash)).Exist(ctx)
-	} else {
-		indexed, err = x.client.CommitRow.Query().Where(commitrow.Ref(ref.Hash)).Exist(ctx)
-	}
-
+	indexed, err := x.indexed(ctx, t, ref)
 	if err != nil || indexed {
 		return false, err
 	}
@@ -1507,33 +1555,49 @@ func (x *Index) reIndex(ctx context.Context, report *backup.ReIndexReport) error
 // setWorkers is how many sets a rebuild indexes at once.
 const setWorkers = 4
 
-// indexGroups indexes each group into its target, setWorkers at a time,
-// and adds up where the commits went.
+// indexGroups indexes each group into its target, the groups of one set in
+// their order and setWorkers sets at a time, and adds up where the commits
+// went.
 func (x *Index) indexGroups(ctx context.Context, groups [][]pending, targets []index.IndexedSet, report *backup.ReIndexReport) error {
 	phase := progress.Start(ctx, progress.OpReIndex, progress.PhaseSets, int64(len(groups)), 0)
 	defer phase.Finish()
+
+	// a group that names its set by id and one that names it only by name
+	// can resolve to the same set
+	bySet := map[int64][]int{}
+	var sets []int64
+
+	for i, target := range targets {
+		if _, ok := bySet[target.SetID]; !ok {
+			sets = append(sets, target.SetID)
+		}
+
+		bySet[target.SetID] = append(bySet[target.SetID], i)
+	}
 
 	var mtx sync.Mutex
 
 	grp, gctx := errgroup.WithContext(ctx)
 	grp.SetLimit(setWorkers)
 
-	for i, group := range groups {
+	for _, setID := range sets {
 		grp.Go(func() error {
-			counts, err := x.indexGroup(gctx, targets[i], group)
-			if err != nil {
-				return err
-			}
+			for _, i := range bySet[setID] {
+				counts, err := x.indexGroup(gctx, targets[i], groups[i])
+				if err != nil {
+					return err
+				}
 
-			mtx.Lock()
-			report.Tied += counts[tied]
-			report.Behind += counts[behind]
-			if targets[i].Placeholder {
-				report.Unnamed += counts[inOrder] + counts[tied]
-			}
-			mtx.Unlock()
+				mtx.Lock()
+				report.Tied += counts[tied]
+				report.Behind += counts[behind]
+				if targets[i].Placeholder {
+					report.Unnamed += counts[inOrder] + counts[tied]
+				}
+				mtx.Unlock()
 
-			phase.Add(1, 0)
+				phase.Add(1, 0)
+			}
 
 			return nil
 		})

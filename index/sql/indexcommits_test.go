@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -57,6 +58,28 @@ func TestReIndexPutsTheCommitsThatNameNoSetUnderAPlaceholderSet(t *testing.T) {
 	commits, err := y.CommitInfo(f.ctx, index.PlaceholderSet+"-2", f.clock.Add(time.Hour), 10)
 	require.NoError(t, err)
 	require.Len(t, commits, 2)
+}
+
+func TestReIndexIndexesTheGroupsOfOneSetInOrder(t *testing.T) {
+	f := newFixture(t)
+
+	for i := range 20 {
+		f.advance(time.Hour)
+
+		var id uint64
+		if i%2 == 1 {
+			id = 5
+		}
+
+		require.NoError(t, f.store.Put(f.ctx, proto.NewObject(&proto.Commit{Timestamp: f.clock.Unix(), Tree: f.tree(f.file("a.txt", fmt.Sprint(i))).Ref(),
+			BackupSet: "web", AgentId: "node-1", ReceivedAtNs: f.clock.UnixNano(), SetId: id})))
+	}
+
+	y := f.index()
+	report, err := y.ReIndex(f.ctx)
+	require.NoError(t, err)
+	require.Equal(t, backup.ReIndexReport{Behind: 10}, report, "the commits naming the set by id go first, the others then fall behind them")
+	require.Equal(t, map[int64]string{5: "web"}, f.setNames(y))
 }
 
 func TestIndexCommitsPutsCommitsThatNameNoSetUnderAPlaceholderSet(t *testing.T) {

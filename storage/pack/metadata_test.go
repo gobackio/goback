@@ -82,3 +82,30 @@ func TestCachingMetadataReadsNeighboursTogetherAndOnlyOnce(t *testing.T) {
 
 	require.Equal(t, before, storage.count(), "what the cache holds is neither read again nor read to serve it")
 }
+
+func TestCachingMetadataLeavesOutARecordThatDoesNotDecode(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+
+	store := newTestStore(t, base)
+
+	var files []*proto.Object
+	for i := range 3 {
+		file := proto.NewObject(&proto.File{Inline: fmt.Appendf(nil, "file %d", i)})
+		require.NoError(t, store.Put(ctx, file))
+		files = append(files, file)
+	}
+	require.NoError(t, store.Close())
+
+	damageRecord(t, base, files[1].Ref())
+
+	cache, err := badger.New(t.TempDir())
+	require.NoError(t, err)
+
+	store = newTestStore(t, base, WithMetadataCache(cache))
+	t.Cleanup(func() { _ = store.Close() })
+
+	require.NoError(t, store.CacheMetadata(ctx))
+	requireCached(t, cache, []*proto.Object{files[0], files[2]}, true)
+	requireCached(t, cache, []*proto.Object{files[1]}, false)
+}
