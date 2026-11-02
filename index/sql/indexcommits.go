@@ -66,9 +66,20 @@ func groupBySet(commits []pending) [][]pending {
 		groups[i] = group
 	}
 
-	sort.SliceStable(groups, func(i, j int) bool {
-		return groups[i][0].commit.GetBackupSet() != "" && groups[j][0].commit.GetBackupSet() == ""
-	})
+	// named groups before unnamed ones, and of the named those naming their
+	// set by id before those naming it only by name
+	rank := func(g []pending) int {
+		switch {
+		case g[0].commit.GetBackupSet() == "":
+			return 2
+		case g[0].commit.GetSetId() == 0:
+			return 1
+		default:
+			return 0
+		}
+	}
+
+	sort.SliceStable(groups, func(i, j int) bool { return rank(groups[i]) < rank(groups[j]) })
 
 	return groups
 }
