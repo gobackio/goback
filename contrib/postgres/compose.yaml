@@ -1,18 +1,19 @@
 name: goback-postgres
 
 services:
-  # copies goback into the volume the Postgres container restores with, on
-  # every `docker compose up`
+  # copies goback into the volume the Postgres container restores with, and
+  # makes the index directories goback needs, on every `docker compose up`
   goback-bin:
     image: goback
     build: ../..
     entrypoint:
       - sh
       - -c
-      - cp /usr/bin/goback /opt/goback/goback && mkdir -p /var/lib/goback && chown -R 999:999 /var/lib/goback
+      - cp /usr/bin/goback /opt/goback/goback && mkdir -p /var/lib/goback/index /var/lib/goback-agent/index && chown -R 999:999 /var/lib/goback
     volumes:
       - goback-bin:/opt/goback
       - goback:/var/lib/goback
+      - goback-agent:/var/lib/goback-agent
 
   postgres:
     image: postgres:17
