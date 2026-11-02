@@ -94,7 +94,7 @@ func (o *Options) tlsConfig() (cfg *tls.Config, optional bool, err error) {
 }
 
 func (o *Options) tlsFor(mode string) (*tls.Config, error) {
-	cfg := &tls.Config{ServerName: o.Host, MinVersion: tls.VersionTLS12}
+	cfg := &tls.Config{ServerName: o.Host, MinVersion: tls.VersionTLS12, CipherSuites: cipherSuites()}
 
 	if o.SSLCert != "" || o.SSLKey != "" {
 		cert, err := tls.LoadX509KeyPair(o.SSLCert, o.SSLKey)
@@ -135,6 +135,17 @@ func (o *Options) tlsFor(mode string) (*tls.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// cipherSuites are Go's TLS 1.2 defaults and, after them, the RSA key
+// exchange suites Go leaves out, which MySQL 5.7 offers alongside only DHE.
+func cipherSuites() []uint16 {
+	var suites []uint16
+	for _, s := range tls.CipherSuites() {
+		suites = append(suites, s.ID)
+	}
+
+	return append(suites, tls.TLS_RSA_WITH_AES_128_GCM_SHA256, tls.TLS_RSA_WITH_AES_256_GCM_SHA384)
 }
 
 // noServerTLS is what go-mysql fails a connection with whose server offers

@@ -291,6 +291,7 @@ func (s *source) held(chain int, name string) []byte {
 func TestReceivingThroughMySQL(t *testing.T) {
 	for _, tc := range []struct{ version, replayImage, reset string }{
 		{"5.5", "", "RESET MASTER"},
+		{"5.7", "percona/percona-server:5.7", "RESET MASTER"},
 		{"8.0", "percona/percona-server:8.0", "RESET MASTER"},
 		{"8.4", "percona/percona-server:8.4", "RESET BINARY LOGS AND GTIDS"},
 	} {
