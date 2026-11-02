@@ -349,9 +349,9 @@ type RecordReader interface {
 // A MetadataCacher is a store with a metadata cache it can fill in bulk.
 type MetadataCacher interface {
 	// CacheMetadata reads every commit, tree and file the store holds into
-	// its metadata cache, skipping what the cache already has. A store
-	// without a cache does nothing.
-	CacheMetadata(ctx context.Context) error
+	// its metadata cache, skipping what the cache already has, and reports
+	// it as the metadata phase of op. A store without a cache does nothing.
+	CacheMetadata(ctx context.Context, op string) error
 }
 
 // Eraser deletes as an erasure: the tombstone asks garbage collection to

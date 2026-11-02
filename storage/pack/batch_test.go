@@ -8,7 +8,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
-	"github.com/gobackio/goback/storage/badger"
+	"github.com/gobackio/goback/storage/pebble"
 
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +29,7 @@ func TestSeveralCommitsInOneSessionAskTheBucketWhatOneCommitAsks(t *testing.T) {
 		bucket := newMemBucket()
 		storage := newRequestCounting(bucket)
 
-		cache, err := badger.New(t.TempDir())
+		cache, err := pebble.New(t.TempDir())
 		require.NoError(t, err)
 
 		store, err := NewPackStorage(

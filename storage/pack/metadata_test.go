@@ -8,7 +8,7 @@ import (
 
 	"github.com/gobackio/goback/progress"
 	"github.com/gobackio/goback/proto"
-	"github.com/gobackio/goback/storage/badger"
+	"github.com/gobackio/goback/storage/pebble"
 
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +42,7 @@ func TestCachingMetadataReadsNeighboursTogetherAndOnlyOnce(t *testing.T) {
 
 	metadata = append(metadata, tree, commit)
 
-	cache, err := badger.New(t.TempDir())
+	cache, err := pebble.New(t.TempDir())
 	require.NoError(t, err)
 
 	store, err = NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(NewInMemoryIndex()), WithMetadataCache(cache))
@@ -62,7 +62,7 @@ func TestCachingMetadataReadsNeighboursTogetherAndOnlyOnce(t *testing.T) {
 	})
 
 	before := storage.count()
-	require.NoError(t, store.CacheMetadata(reported))
+	require.NoError(t, store.CacheMetadata(reported, progress.OpReIndex))
 	require.Less(t, storage.count()-before, files/2, "neighbouring records come back in one read, not one each")
 	requireCached(t, cache, metadata, true)
 
@@ -73,7 +73,7 @@ func TestCachingMetadataReadsNeighboursTogetherAndOnlyOnce(t *testing.T) {
 	require.Positive(t, last.Bytes)
 
 	before = storage.count()
-	require.NoError(t, store.CacheMetadata(ctx))
+	require.NoError(t, store.CacheMetadata(ctx, progress.OpReIndex))
 
 	for _, obj := range metadata {
 		_, err := store.Get(ctx, obj.Ref())
@@ -99,13 +99,13 @@ func TestCachingMetadataLeavesOutARecordThatDoesNotDecode(t *testing.T) {
 
 	damageRecord(t, base, files[1].Ref())
 
-	cache, err := badger.New(t.TempDir())
+	cache, err := pebble.New(t.TempDir())
 	require.NoError(t, err)
 
 	store = newTestStore(t, base, WithMetadataCache(cache))
 	t.Cleanup(func() { _ = store.Close() })
 
-	require.NoError(t, store.CacheMetadata(ctx))
+	require.NoError(t, store.CacheMetadata(ctx, progress.OpReIndex))
 	requireCached(t, cache, []*proto.Object{files[0], files[2]}, true)
 	requireCached(t, cache, []*proto.Object{files[1]}, false)
 }

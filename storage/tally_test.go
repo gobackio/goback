@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/gobackio/goback/proto"
-	"github.com/gobackio/goback/storage/badger"
 	"github.com/gobackio/goback/storage/pack"
+	"github.com/gobackio/goback/storage/pebble"
 
 	"github.com/stretchr/testify/require"
 	"gocloud.dev/blob/memblob"
@@ -49,7 +49,7 @@ func TestWhatTheMetadataCacheAnswersAsksTheBucketNothing(t *testing.T) {
 	bucket := memblob.OpenBucket(nil)
 	t.Cleanup(func() { _ = bucket.Close() })
 
-	cache, err := badger.New(t.TempDir())
+	cache, err := pebble.New(t.TempDir())
 	require.NoError(t, err)
 
 	store, err := pack.NewPackStorage(

@@ -63,7 +63,8 @@ CONSTANTS
     SkipRecheck, \* mutation: a delayed session keeps what it assumed without asking again
     Tries,       \* commit records the store refuses, disjoint from Objects
     SkipCommittedRefusal, \* mutation: a refusal after its session committed stores no tombstone
-    KeepRefusingSession   \* mutation: a session goes on when its refusal's tombstone cannot be stored
+    KeepRefusingSession, \* mutation: a session goes on when its refusal's tombstone cannot be stored
+    SkipMarkEdge \* mutation: a mark takes a record's references from a cached copy that lacks one
 
 None == "none"
 
@@ -99,6 +100,15 @@ RECURSIVE Closure(_)
 Closure(S) == IF S = {} THEN {} ELSE S \cup Closure(UNION {Children(o) : o \in S})
 
 Reachable == Closure({p[2] : p \in roots})
+
+\* the references a mark takes from the copy it reads, the metadata cache's
+\* or the bucket's, which hold the same content under the same hash
+MarkEdges == IF SkipMarkEdge THEN Edges \ {CHOOSE e \in Edges : TRUE} ELSE Edges
+
+RECURSIVE MarkClosure(_)
+MarkClosure(S) == IF S = {} THEN {} ELSE S \cup MarkClosure(UNION {{c \in Objects : 10 * o + c \in MarkEdges} : o \in S})
+
+Marked == MarkClosure({p[2] : p \in roots})
 
 Committed == {r \in records : r.owner = None}
 
@@ -358,7 +368,7 @@ Mark(m) ==
     /\ gc[m].pc = "idle"
     /\ Holds(m)
     /\ SkipPlanWait \/ plans = {}
-    /\ gc' = [gc EXCEPT ![m].pc = "marked", ![m].m1 = Reachable,
+    /\ gc' = [gc EXCEPT ![m].pc = "marked", ![m].m1 = Marked,
                         ![m].snap = {c \in Committed : c.kind = "copy"}]
     /\ UNCHANGED <<answer, moved, records, clock, phase, refs, roots, lease, cycles, dedup, sealed, plans, rw, state, seen, retired>>
 
@@ -401,7 +411,7 @@ Confirm(m) ==
     /\ gc[m].pc = IF Resurrect THEN "sealed" ELSE "listed"
     /\ Holds(m)
     /\ SkipWait \/ Resurrect \/ \A s \in gc[m].older : Ended(s)
-    /\ gc' = [gc EXCEPT ![m].pc = "confirmed", ![m].m2 = IF SkipConfirm THEN gc[m].m1 ELSE Reachable]
+    /\ gc' = [gc EXCEPT ![m].pc = "confirmed", ![m].m2 = IF SkipConfirm THEN gc[m].m1 ELSE Marked]
     /\ UNCHANGED <<answer, moved, records, clock, phase, refs, roots, lease, cycles, dedup, sealed, plans, rw, state, seen, retired>>
 
 \* pick the snapshot copies older than a tombstone of an object still
@@ -412,7 +422,7 @@ Plan(m) ==
         tombs == g.tombs \cap records
         untombs == IF EarlyUntombs THEN g.untombs \cap records ELSE {r \in records : r.kind = "untomb"}
         \* what a live session's un-tombstones take back is a root
-        kept == IF SkipClosure THEN {} ELSE Closure({u.obj : u \in {v \in untombs : v.writer \in g.live}})
+        kept == IF SkipClosure THEN {} ELSE MarkClosure({u.obj : u \in {v \in untombs : v.writer \in g.live}})
         dead == {c \in records :
                     /\ SkipSnapshot \/ c \in g.snap
                     /\ c.kind = "copy" /\ c.owner = None /\ c.obj \notin g.m2 \cup kept
@@ -490,12 +500,12 @@ RewriterCrash(w) ==
 Untombs == {r \in IF SkipPendingRoots THEN Committed ELSE records : r.kind = "untomb"}
 
 PMark(m) ==
-    LET kept == IF SkipUntombRoots THEN {} ELSE Closure({u.obj : u \in Untombs})
+    LET kept == IF SkipUntombRoots THEN {} ELSE MarkClosure({u.obj : u \in Untombs})
     IN /\ Pipelined
        /\ gc[m].pc = "idle"
        /\ Holds(m)
        /\ SkipPlanWait \/ plans = {}
-       /\ gc' = [gc EXCEPT ![m].pc = "marked", ![m].m1 = Reachable \cup kept,
+       /\ gc' = [gc EXCEPT ![m].pc = "marked", ![m].m1 = Marked \cup kept,
                            ![m].snap = {c \in Committed : c.kind = "copy"},
                            ![m].untombs = Untombs]
        /\ UNCHANGED <<answer, moved, records, clock, phase, refs, roots, lease, cycles, dedup, sealed, plans, rw, state, seen, retired>>

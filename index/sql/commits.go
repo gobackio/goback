@@ -1404,7 +1404,7 @@ func (x *Index) reIndex(ctx context.Context, report *backup.ReIndexReport) error
 	}
 
 	if cacher, ok := storeAs[backup.MetadataCacher](x.ObjectStore); ok {
-		if err := cacher.CacheMetadata(ctx); err != nil {
+		if err := cacher.CacheMetadata(ctx, progress.OpReIndex); err != nil {
 			return fmt.Errorf("filling the metadata cache: %w", err)
 		}
 	}

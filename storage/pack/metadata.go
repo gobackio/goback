@@ -28,9 +28,8 @@ type uncachedMetadata struct {
 }
 
 // CacheMetadata implements backup.MetadataCacher over the archives closed
-// to writes, reporting as the metadata phase of a rebuild. Neighbouring
-// records come back in one range read.
-func (ps *PackStorage) CacheMetadata(ctx context.Context) error {
+// to writes. Neighbouring records come back in one range read.
+func (ps *PackStorage) CacheMetadata(ctx context.Context, op string) error {
 	if ps.cache == nil {
 		return nil
 	}
@@ -78,7 +77,7 @@ func (ps *PackStorage) CacheMetadata(ctx context.Context) error {
 		}
 	}
 
-	phase := progress.Start(ctx, progress.OpReIndex, progress.PhaseMetadata, int64(len(archives)), size)
+	phase := progress.Start(ctx, op, progress.PhaseMetadata, int64(len(archives)), size)
 
 	grp, gctx = errgroup.WithContext(ctx)
 	grp.SetLimit(cacheReaders)

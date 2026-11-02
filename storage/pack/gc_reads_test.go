@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gobackio/goback/proto"
+	"github.com/gobackio/goback/storage/pebble"
 
 	"github.com/stretchr/testify/require"
 	pb "google.golang.org/protobuf/proto"
@@ -106,6 +107,92 @@ func TestMarkReadsNeighboursTogether(t *testing.T) {
 
 	reads := storage.count() - before
 	require.Less(t, reads, files/2, "neighbouring records come back in one read, not one each")
+}
+
+func TestMarkReadsWhatTheMetadataCacheHoldsFromIt(t *testing.T) {
+	ctx := context.Background()
+	storage := &countingStorage{localArchiveStorage: newLocal(t.TempDir())}
+
+	store, err := NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(NewInMemoryIndex()))
+	require.NoError(t, err)
+	require.NoError(t, store.Open())
+
+	var dirs []*proto.Object
+	for d := range 6 {
+		var files []*proto.Object
+
+		for i := range 8 {
+			blob := proto.NewObject(&proto.Blob{Data: fmt.Appendf(nil, "blob %d/%d", d, i)})
+			require.NoError(t, store.Put(ctx, blob))
+
+			file := proto.NewObject(&proto.File{Parts: []*proto.FilePart{{Length: uint64(len(blob.GetBlob().GetData())), Ref: blob.Ref()}}})
+			require.NoError(t, store.Put(ctx, file))
+			files = append(files, file)
+		}
+
+		dir := treeOf(files)
+		require.NoError(t, store.Put(ctx, dir))
+		dirs = append(dirs, dir)
+	}
+
+	root := treeOf(dirs)
+	require.NoError(t, store.Put(ctx, root))
+	require.NoError(t, store.Put(ctx, proto.NewObject(&proto.Commit{Tree: root.Ref(), Timestamp: 1, BackupSet: "world"})))
+	require.NoError(t, store.Close())
+
+	const objects = 6*(8+8+1) + 2
+
+	for _, uncached := range [][]*proto.Object{nil, {dirs[0], dirs[3], dirs[5]}} {
+		cache, err := pebble.New(t.TempDir())
+		require.NoError(t, err)
+
+		leaving := &leavingOutCache{Store: cache, left: map[string]bool{}}
+		for _, obj := range uncached {
+			leaving.left[string(obj.Ref().Hash)] = true
+		}
+
+		store, err := NewPackStorage(WithArchiveStorage(storage), WithArchiveIndex(NewInMemoryIndex()), WithMetadataCache(leaving))
+		require.NoError(t, err)
+		require.NoError(t, store.Open())
+
+		collect := func() (marked uint64, reads int) {
+			before := storage.count()
+
+			report, err := store.Collect(ctx, CollectOptions{NoSweep: true, TempDir: t.TempDir()})
+			require.NoError(t, err)
+
+			return report.Marked, storage.count() - before
+		}
+
+		marked, _ := collect()
+		require.EqualValues(t, objects, marked)
+
+		marked, reads := collect()
+		require.EqualValues(t, objects, marked, "a mark through the cache marks the same")
+
+		if len(uncached) == 0 {
+			require.Zero(t, reads, "what the cache holds is not read again")
+		} else {
+			require.Positive(t, reads, "what the cache lacks is read")
+			require.LessOrEqual(t, reads, len(uncached), "only what the cache lacks is read")
+		}
+
+		require.NoError(t, store.Close())
+	}
+}
+
+// leavingOutCache is a metadata cache that never holds the objects left.
+type leavingOutCache struct {
+	*pebble.Store
+	left map[string]bool
+}
+
+func (c *leavingOutCache) Put(ctx context.Context, obj *proto.Object) error {
+	if c.left[string(obj.Ref().Hash)] {
+		return nil
+	}
+
+	return c.Store.Put(ctx, obj)
 }
 
 func TestScanIndexYieldsTheStoredRecords(t *testing.T) {

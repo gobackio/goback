@@ -484,6 +484,10 @@ func (ps *PackStorage) Collect(ctx context.Context, opts CollectOptions) (*Colle
 		return nil, err
 	}
 
+	if err := ps.CacheMetadata(ctx, progress.OpCollect); err != nil {
+		ps.logger.Warn("marking without filling the metadata cache", "err", err)
+	}
+
 	markStart := time.Now()
 	live, err := run.mark(ctx)
 	if err != nil {
@@ -1553,10 +1557,11 @@ func (r *gcRun) markRoots(ctx context.Context, roots []gcRoot, claim func([]refK
 	return r.markBatch(ctx, walked, claim, live, roots[0].shallow, roots[0].death)
 }
 
-// markBatch walks breadth-first from the frontier, reading each run of
-// records that sit close together in an archive at once, up to Readers runs
-// at a time, and records what it reaches as dying with death. A shallow
-// walk leaves the parts of files out.
+// markBatch walks breadth-first from the frontier, taking what the metadata
+// cache holds from it and reading each other run of records that sit close
+// together in an archive at once, up to Readers runs at a time, and records
+// what it reaches as dying with death. A shallow walk leaves the parts of
+// files out.
 func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]refKey) []refKey, live *liveRuns, shallow bool, death deathClass) error {
 	for len(frontier) > 0 {
 		records, err := r.placeAll(ctx, frontier)
@@ -1567,6 +1572,44 @@ func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]r
 		var next []refKey
 		var nextMtx sync.Mutex
 
+		visit := func(reads []markRead) error {
+			var children []refKey
+			var found []liveRef
+
+			for _, read := range reads {
+				found = append(found, liveRef{key: read.key, size: uint64(len(read.obj.GetFile().GetInline()))})
+
+				if shallow {
+					var parts []liveRef
+					children = appendChildren(children, &parts, read.obj)
+				} else {
+					children = appendChildren(children, &found, read.obj)
+				}
+			}
+
+			for i := range found {
+				found[i].death = death
+			}
+
+			if err := live.add(found); err != nil {
+				return err
+			}
+
+			fresh := claim(children)
+			if len(fresh) > 0 {
+				nextMtx.Lock()
+				next = append(next, fresh...)
+				nextMtx.Unlock()
+			}
+
+			return nil
+		}
+
+		records, err = r.markCached(ctx, records, visit)
+		if err != nil {
+			return err
+		}
+
 		grp, gctx := errgroup.WithContext(ctx)
 		grp.SetLimit(r.opts.Readers)
 
@@ -1574,9 +1617,6 @@ func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]r
 			run := records[start:end]
 
 			grp.Go(func() error {
-				var children []refKey
-				var found []liveRef
-
 				release, err := r.read(gctx, span)
 				if err != nil {
 					return err
@@ -1588,33 +1628,7 @@ func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]r
 					return err
 				}
 
-				for _, read := range reads {
-					found = append(found, liveRef{key: read.key, size: uint64(len(read.obj.GetFile().GetInline()))})
-
-					if shallow {
-						var parts []liveRef
-						children = appendChildren(children, &parts, read.obj)
-					} else {
-						children = appendChildren(children, &found, read.obj)
-					}
-				}
-
-				for i := range found {
-					found[i].death = death
-				}
-
-				if err := live.add(found); err != nil {
-					return err
-				}
-
-				fresh := claim(children)
-				if len(fresh) > 0 {
-					nextMtx.Lock()
-					next = append(next, fresh...)
-					nextMtx.Unlock()
-				}
-
-				return nil
+				return visit(reads)
 			})
 		})
 
@@ -1626,6 +1640,73 @@ func (r *gcRun) markBatch(ctx context.Context, frontier []refKey, claim func([]r
 	}
 
 	return nil
+}
+
+// cachedChunk is how many records the mark looks up in the metadata cache
+// at once.
+const cachedChunk = 1024
+
+// markCached visits the objects the metadata cache holds for the sorted
+// records of finished archives, holding at most a span's worth of records
+// a reader, and returns the records left to read, still sorted.
+func (r *gcRun) markCached(ctx context.Context, records []placed, visit func([]markRead) error) ([]placed, error) {
+	if r.ps.cache == nil {
+		return records, nil
+	}
+
+	missed := make([][]placed, (len(records)+cachedChunk-1)/cachedChunk)
+
+	grp, gctx := errgroup.WithContext(ctx)
+	grp.SetLimit(r.opts.Readers)
+
+	for c := range missed {
+		chunk := records[c*cachedChunk : min((c+1)*cachedChunk, len(records))]
+
+		grp.Go(func() error {
+			release, err := r.read(gctx, markSpan)
+			if err != nil {
+				return err
+			}
+			defer release()
+
+			var reads []markRead
+			var held int64
+
+			for _, p := range chunk {
+				var obj *proto.Object
+				if p.a.readOnlyNow() {
+					obj = r.ps.getCache(gctx, &proto.Ref{Hash: p.key[:]})
+				}
+
+				if obj == nil {
+					missed[c] = append(missed[c], p)
+					continue
+				}
+
+				reads = append(reads, markRead{key: p.key, obj: obj})
+
+				if held += int64(p.rec.Length); held >= markSpan {
+					if err := visit(reads); err != nil {
+						return err
+					}
+
+					reads, held = nil, 0
+				}
+			}
+
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+
+			return visit(reads)
+		})
+	}
+
+	if err := grp.Wait(); err != nil {
+		return nil, err
+	}
+
+	return slices.Concat(missed...), nil
 }
 
 // placeAll places the keys in archive and offset order, leaving out those

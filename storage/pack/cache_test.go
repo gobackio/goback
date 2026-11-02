@@ -6,15 +6,15 @@ import (
 	"time"
 
 	"github.com/gobackio/goback/proto"
-	"github.com/gobackio/goback/storage/badger"
+	"github.com/gobackio/goback/storage/pebble"
 
 	"github.com/stretchr/testify/require"
 )
 
-func newCachedStore(t *testing.T) (*PackStorage, *badger.Store) {
+func newCachedStore(t *testing.T) (*PackStorage, *pebble.Store) {
 	t.Helper()
 
-	cache, err := badger.New(t.TempDir())
+	cache, err := pebble.New(t.TempDir())
 	require.NoError(t, err)
 
 	store, err := NewPackStorage(
@@ -29,7 +29,7 @@ func newCachedStore(t *testing.T) (*PackStorage, *badger.Store) {
 	return store, cache
 }
 
-func requireCached(t *testing.T, cache *badger.Store, objects []*proto.Object, cached bool) {
+func requireCached(t *testing.T, cache *pebble.Store, objects []*proto.Object, cached bool) {
 	t.Helper()
 
 	for _, obj := range objects {

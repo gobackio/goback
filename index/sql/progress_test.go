@@ -84,10 +84,11 @@ func TestReIndexReportsItsPhases(t *testing.T) {
 type cachingStore struct {
 	*memStore
 	cached, early bool
+	op            string
 }
 
-func (c *cachingStore) CacheMetadata(context.Context) error {
-	c.cached = true
+func (c *cachingStore) CacheMetadata(_ context.Context, op string) error {
+	c.cached, c.op = true, op
 	return nil
 }
 
@@ -111,6 +112,28 @@ func TestAReBuildCachesTheMetadataBeforeReadingATree(t *testing.T) {
 
 	require.True(t, store.cached)
 	require.False(t, store.early)
+}
+
+func TestRetireCachesTheMetadataBeforePruning(t *testing.T) {
+	f := newFixture(t)
+	f.commit("world", f.tree(f.dir("a", f.file("a.txt", "one"))), false)
+	f.advance(time.Hour)
+	f.commit("world", f.tree(f.dir("a", f.file("a.txt", "two"))), false)
+
+	store := &cachingStore{memStore: f.store}
+	y := openIndex(t, store)
+	y.Now = func() time.Time { return f.clock }
+	require.NoError(t, reindexErr(y.ReIndex(f.ctx)))
+	require.NoError(t, y.DeleteSet(f.ctx, "world", false))
+
+	store.cached, store.early = false, false
+
+	_, err := y.RetireCommits(f.ctx, f.clock.Add(15*24*time.Hour))
+	require.NoError(t, err)
+
+	require.True(t, store.cached)
+	require.False(t, store.early)
+	require.Equal(t, progress.OpRetire, store.op)
 }
 
 func TestFindDamageReportsItsPhases(t *testing.T) {

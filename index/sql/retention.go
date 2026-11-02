@@ -843,6 +843,14 @@ func (x *Index) RetireCommits(ctx context.Context, now time.Time) ([]index.Retir
 		return retired, err
 	}
 
+	if cacher, ok := storeAs[backup.MetadataCacher](x.ObjectStore); ok && len(pending) > 0 {
+		if err := cacher.CacheMetadata(ctx, progress.OpRetire); err != nil {
+			x.logger().Warn("pruning without filling the metadata cache", "err", err)
+		}
+
+		phases.done("metadata")
+	}
+
 	phase = progress.Start(ctx, progress.OpRetire, progress.PhasePrune, int64(len(pending)), 0)
 
 	// one set's failure leaves the others to prune

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gobackio/goback/storage/badger"
 	"github.com/gobackio/goback/storage/pack"
+	"github.com/gobackio/goback/storage/pebble"
 
 	gcs "cloud.google.com/go/storage"
 	"github.com/pkg/errors"
@@ -847,9 +847,9 @@ func NewBucketObjectStore(bucket *blob.Bucket, index pack.ArchiveIndex, cacheDir
 			return nil, err
 		}
 
-		cache, err := badger.New(cacheDir, badger.WithCapacity(cacheSize))
+		cache, err := pebble.New(cacheDir, pebble.WithCapacity(cacheSize))
 		switch {
-		case errors.Is(err, badger.ErrLocked):
+		case errors.Is(err, pebble.ErrLocked):
 			slog.Warn("running without the metadata cache, which another goback process has open", "dir", cacheDir)
 		case err != nil:
 			return nil, err

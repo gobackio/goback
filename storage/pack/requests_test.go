@@ -16,7 +16,7 @@ import (
 
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
-	"github.com/gobackio/goback/storage/badger"
+	"github.com/gobackio/goback/storage/pebble"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -224,7 +224,7 @@ func TestACommitAsksTheBucketForLittleBeyondWhatItWrites(t *testing.T) {
 			storage := newRequestCounting(bucket)
 			storage.reports = reports
 
-			cache, err := badger.New(t.TempDir())
+			cache, err := pebble.New(t.TempDir())
 			require.NoError(t, err)
 
 			index := NewInMemoryIndex()
@@ -404,7 +404,7 @@ func TestAServerServesWhatItCachesAndLocatesTheRest(t *testing.T) {
 	ctx := context.Background()
 	storage := newRequestCounting(newMemBucket())
 
-	cache, err := badger.New(t.TempDir())
+	cache, err := pebble.New(t.TempDir())
 	require.NoError(t, err)
 
 	store, err := NewPackStorage(
@@ -493,7 +493,7 @@ func TestAServerReadsWhatItsBoundedCacheLetGoFromTheBucket(t *testing.T) {
 		}
 	}
 
-	cache, err := badger.New(t.TempDir(), badger.WithCapacity(int64(metadataBytes/2)))
+	cache, err := pebble.New(t.TempDir(), pebble.WithCapacity(int64(metadataBytes/2)))
 	require.NoError(t, err)
 
 	store, err := NewPackStorage(
