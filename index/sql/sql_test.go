@@ -54,6 +54,8 @@ type memStore struct {
 	// asked counts the Has calls for each ref, and read the Get calls
 	asked map[string]int
 	read  map[string]int
+	// fileWalks counts the walks of the file objects
+	fileWalks int
 	// beforeGet runs once, before the first Get of its ref
 	beforeGet map[string]func()
 	// getErr fails the next Get of its ref once
@@ -206,6 +208,10 @@ func (m *memStore) Holds(_ context.Context, commits []*proto.Ref) ([]bool, error
 
 func (m *memStore) Walk(_ context.Context, load bool, t proto.ObjectType, fn backup.ObjectReceiver) error {
 	m.mu.Lock()
+	if t == proto.ObjectType_FILE {
+		m.fileWalks++
+	}
+
 	objects := make([]*proto.Object, 0, len(m.objects))
 	for _, obj := range m.objects {
 		if t == proto.ObjectType_INVALID || obj.Type() == t {
@@ -461,5 +467,9 @@ func sameInstant(t *testing.T, got *time.Time, want time.Time) {
 }
 
 func reindexErr(_ backup.ReIndexReport, err error) error {
+	return err
+}
+
+func damageErr(_ *backup.DamageReport, err error) error {
 	return err
 }

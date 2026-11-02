@@ -269,6 +269,7 @@ func TestARebuildFindsWhatTheStoreLost(t *testing.T) {
 
 	y := f.index()
 	require.NoError(t, reindexErr(y.ReIndex(ctx)))
+	require.NoError(t, damageErr(y.FindDamage(ctx)))
 
 	grant, err := y.BeginCommit(ctx, "world")
 	require.NoError(t, err)
@@ -311,6 +312,7 @@ func TestARebuildAsksAboutAPartTheVersionsShareOnce(t *testing.T) {
 
 	y := f.index()
 	require.NoError(t, reindexErr(y.ReIndex(ctx)))
+	require.NoError(t, damageErr(y.FindDamage(ctx)))
 
 	f.store.mu.Lock()
 	require.Equal(t, 1, f.store.asked[string(shared.Ref().Hash)])
@@ -355,10 +357,61 @@ func TestARebuildFindsWhatTheStoreLostAPageOfFilesAtATime(t *testing.T) {
 
 	y := f.index()
 	require.NoError(t, reindexErr(y.ReIndex(ctx)))
+	require.NoError(t, damageErr(y.FindDamage(ctx)))
 
 	grant, err := y.BeginCommit(ctx, "world")
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"r.0.mca", "r.1.mca", "r.2.mca"}, grant.Damaged)
+}
+
+func TestFindDamagePlacesALossInASplitAtItsFileWithoutWalkingTheStore(t *testing.T) {
+	f := newFixture(t)
+	ctx := f.ctx
+
+	lost := proto.NewObject(&proto.Blob{Data: []byte("lost")})
+	require.NoError(t, f.store.Put(ctx, lost))
+
+	child := proto.NewObject(&proto.File{Parts: []*proto.FilePart{{Offset: 0, Length: 4, Ref: lost.Ref()}}})
+	require.NoError(t, f.store.Put(ctx, child))
+
+	parent := proto.NewObject(&proto.File{Splits: []*proto.Ref{child.Ref()}})
+	require.NoError(t, f.store.Put(ctx, parent))
+
+	f.commit("world", f.tree(f.file("level.dat", "intact"), &proto.TreeNode{
+		Stat: &proto.FileInfo{Name: []byte("r.0.0.mca"), Type: proto.NodeType_NODE_FILE, MtimeNs: f.epoch.UnixNano(), Size: 4, Mode: 0644},
+		Ref:  parent.Ref(),
+	}), false)
+	f.forget(lost.Ref())
+
+	report, err := f.x.FindDamage(ctx)
+	require.NoError(t, err)
+	require.Equal(t, map[int64][]string{f.setID("world"): {"r.0.0.mca"}}, report.Paths)
+	require.Empty(t, report.Rescan)
+
+	f.store.mu.Lock()
+	require.Zero(t, f.store.fileWalks, "the losses are placed from the indexed versions")
+	f.store.mu.Unlock()
+}
+
+func TestFindDamageLeavesWhatItMarkedLostBefore(t *testing.T) {
+	f := newFixture(t)
+	ctx := f.ctx
+
+	old := f.file("level.dat", "the version that will be lost")
+	f.commit("world", f.tree(old), false)
+
+	f.clock = f.clock.Add(time.Hour)
+	f.commit("world", f.tree(f.file("level.dat", "the version on disk today")), false)
+	f.forget(old.Ref)
+
+	report, err := f.x.FindDamage(ctx)
+	require.NoError(t, err)
+	require.Len(t, report.Lost, 1)
+
+	report, err = f.x.FindDamage(ctx)
+	require.NoError(t, err)
+	require.Empty(t, report.Lost, "a version is found lost once")
+	require.Empty(t, report.Rescan)
 }
 
 // setID is the id of the fixture's named set.

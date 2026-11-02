@@ -74,7 +74,54 @@ func TestReIndexReportsItsPhases(t *testing.T) {
 	}
 
 	require.Equal(t, []string{progress.PhaseTombstones, progress.PhasePins, progress.PhaseCommits, progress.PhaseSets,
-		progress.PhasePolicies, progress.PhaseDamage}, phases)
+		progress.PhasePolicies}, phases)
 	require.EqualValues(t, 2, updates()[2].Done, "both commits walked")
 	require.Equal(t, progress.Update{Op: progress.OpReIndex, Phase: progress.PhaseSets, Done: 2, Total: 2}, updates()[3])
+}
+
+// cachingStore records whether the metadata was cached before a tree was
+// read.
+type cachingStore struct {
+	*memStore
+	cached, early bool
+}
+
+func (c *cachingStore) CacheMetadata(context.Context) error {
+	c.cached = true
+	return nil
+}
+
+func (c *cachingStore) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
+	obj, err := c.memStore.Get(ctx, ref)
+	if err == nil && obj.Type() == proto.ObjectType_TREE && !c.cached {
+		c.early = true
+	}
+
+	return obj, err
+}
+
+func TestAReBuildCachesTheMetadataBeforeReadingATree(t *testing.T) {
+	f := newFixture(t)
+	f.commit("world", f.tree(f.file("a.txt", "one")), false)
+
+	store := &cachingStore{memStore: f.store}
+	y := openIndex(t, store)
+	y.Now = func() time.Time { return f.clock }
+	require.NoError(t, reindexErr(y.ReIndex(f.ctx)))
+
+	require.True(t, store.cached)
+	require.False(t, store.early)
+}
+
+func TestFindDamageReportsItsPhases(t *testing.T) {
+	f := newFixture(t)
+
+	f.commit("world", f.tree(f.file("a.txt", "one"), f.file("b.txt", "two")), false)
+
+	ctx, updates := lastUpdates(f.ctx)
+	_, err := f.x.FindDamage(ctx)
+	require.NoError(t, err)
+
+	require.Equal(t, []progress.Update{{Op: progress.OpDamage, Phase: progress.PhaseCheck, Done: 2, Total: 2}}, updates(),
+		"nothing lost leaves nothing to place")
 }

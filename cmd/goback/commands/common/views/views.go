@@ -60,6 +60,12 @@ type Mapper interface {
 
 	ReIndex(in backup.ReIndexReport) ReIndexView
 
+	// field:Paths using:"CountPaths"
+	// field:Lost using:"CountVersions"
+	// field:Rescan using:"CountSets"
+	// field:Unplaced using:"CountRefs"
+	Damage(in *backup.DamageReport) DamageView
+
 	IndexedSet(in index.IndexedSet) IndexedSetView
 
 	// field:Keep from:"Brackets"
@@ -327,6 +333,36 @@ type ReIndexView struct {
 	Behind  int `json:"behind"`
 	Unnamed int `json:"unnamed"`
 }
+
+// DamageView is what a check of the store against the index's versions
+// found, as JSON output shows it: the paths the next backups read again,
+// the versions lost for good, the sets read in full and the lost objects
+// no path holds.
+type DamageView struct {
+	Paths    int `json:"paths"`
+	Lost     int `json:"lost"`
+	Rescan   int `json:"rescan"`
+	Unplaced int `json:"unplaced"`
+}
+
+// CountPaths counts the paths of every set.
+func CountPaths(paths map[int64][]string) int {
+	n := 0
+	for _, p := range paths {
+		n += len(p)
+	}
+
+	return n
+}
+
+// CountVersions counts versions.
+func CountVersions(versions []backup.FilePath) int { return len(versions) }
+
+// CountSets counts set ids.
+func CountSets(ids []int64) int { return len(ids) }
+
+// CountRefs counts refs.
+func CountRefs(refs []*proto.Ref) int { return len(refs) }
 
 // IndexedSetView is what goback index commits did, or would do, with the
 // commits of one set, as JSON output shows it.

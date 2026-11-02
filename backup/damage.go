@@ -34,6 +34,15 @@ type DamageIndex interface {
 	MarkRescan(ctx context.Context, setID int64) error
 }
 
+// A DamageFinder is an index that checks the store still holds what its
+// versions reference.
+type DamageFinder interface {
+	// FindDamage records what the indexed versions not yet marked lost
+	// reference but the store no longer holds, as ReportDamage does, and
+	// returns the report. It may run while the index takes writes.
+	FindDamage(ctx context.Context) (*DamageReport, error)
+}
+
 // DamageReport is what ReportDamage made of a store's losses.
 type DamageReport struct {
 	// Paths are the paths marked for a re-read, by set id.

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -1331,9 +1332,11 @@ func (x *Index) lockCommitRow(ctx context.Context, tx *ent.Tx, ref []byte) (*ent
 	return row, err
 }
 
-// ReIndex rebuilds the caches from the archives in three passes:
-// tombstones, then pins, then commits per set in receipt order. Sets it
-// has to create come up with retention paused.
+// ReIndex rebuilds the caches from the archives: it fills the store's
+// metadata cache, then reads tombstones, then pins, then commits per set in
+// receipt order. Sets it has to create come up with retention paused. It
+// checks nothing the versions reference; FindDamage does, and may run
+// while the index takes writes again.
 func (x *Index) ReIndex(ctx context.Context) (backup.ReIndexReport, error) {
 	var report backup.ReIndexReport
 	err := x.reIndex(ctx, &report)
@@ -1344,6 +1347,12 @@ func (x *Index) ReIndex(ctx context.Context) (backup.ReIndexReport, error) {
 func (x *Index) reIndex(ctx context.Context, report *backup.ReIndexReport) error {
 	if _, err := x.client.WalkedArchive.Delete().Exec(ctx); err != nil {
 		return err
+	}
+
+	if cacher, ok := storeAs[backup.MetadataCacher](x.ObjectStore); ok {
+		if err := cacher.CacheMetadata(ctx); err != nil {
+			return fmt.Errorf("filling the metadata cache: %w", err)
+		}
 	}
 
 	// sets that lose a commit to a tombstone this database had not seen
@@ -1453,29 +1462,20 @@ func (x *Index) reIndex(ctx context.Context, report *backup.ReIndexReport) error
 	phase.Finish()
 
 	groups := groupBySet(commits)
-	phase = progress.Start(ctx, progress.OpReIndex, progress.PhaseSets, int64(len(groups)), 0)
 
-	for _, group := range groups {
-		target, err := x.groupSet(ctx, group, false)
-		if err != nil {
+	// targets are resolved in order, so a placeholder set never takes a
+	// name a later group claims
+	targets := make([]index.IndexedSet, len(groups))
+	for i, group := range groups {
+		if targets[i], err = x.groupSet(ctx, group, false); err != nil {
 			return err
 		}
-
-		counts, err := x.indexGroup(ctx, target, group)
-		if err != nil {
-			return err
-		}
-
-		report.Tied += counts[tied]
-		report.Behind += counts[behind]
-		if target.Placeholder {
-			report.Unnamed += counts[inOrder] + counts[tied]
-		}
-
-		phase.Add(1, 0)
 	}
 
-	phase.Finish()
+	if err := x.indexGroups(ctx, groups, targets, report); err != nil {
+		return err
+	}
+
 	phase = progress.Start(ctx, progress.OpReIndex, progress.PhasePolicies, 0, 0)
 
 	err = x.replayPolicies(ctx)
@@ -1494,14 +1494,46 @@ func (x *Index) reIndex(ctx context.Context, report *backup.ReIndexReport) error
 	}
 
 	phase.Finish()
-	phase = progress.Start(ctx, progress.OpReIndex, progress.PhaseDamage, 0, 0)
-
-	if err := x.findDamage(ctx); err != nil {
-		return err
-	}
-	phase.Finish()
 
 	return nil
+}
+
+// setWorkers is how many sets a rebuild indexes at once.
+const setWorkers = 4
+
+// indexGroups indexes each group into its target, setWorkers at a time,
+// and adds up where the commits went.
+func (x *Index) indexGroups(ctx context.Context, groups [][]pending, targets []index.IndexedSet, report *backup.ReIndexReport) error {
+	phase := progress.Start(ctx, progress.OpReIndex, progress.PhaseSets, int64(len(groups)), 0)
+	defer phase.Finish()
+
+	var mtx sync.Mutex
+
+	grp, gctx := errgroup.WithContext(ctx)
+	grp.SetLimit(setWorkers)
+
+	for i, group := range groups {
+		grp.Go(func() error {
+			counts, err := x.indexGroup(gctx, targets[i], group)
+			if err != nil {
+				return err
+			}
+
+			mtx.Lock()
+			report.Tied += counts[tied]
+			report.Behind += counts[behind]
+			if targets[i].Placeholder {
+				report.Unnamed += counts[inOrder] + counts[tied]
+			}
+			mtx.Unlock()
+
+			phase.Add(1, 0)
+
+			return nil
+		})
+	}
+
+	return grp.Wait()
 }
 
 // advanceSetIDs moves the set id sequence past the ids sets were created

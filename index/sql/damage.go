@@ -17,6 +17,7 @@ import (
 	"github.com/gobackio/goback/index/sql/ent/file"
 	"github.com/gobackio/goback/index/sql/ent/predicate"
 	"github.com/gobackio/goback/index/sql/ent/set"
+	"github.com/gobackio/goback/progress"
 	"github.com/gobackio/goback/proto"
 
 	"golang.org/x/sync/errgroup"
@@ -296,50 +297,30 @@ func (x *Index) LostVersions(ctx context.Context, name string) ([]index.LostVers
 	return out, nil
 }
 
-// damageWorkers is how many file objects findDamage checks at once.
+// damageWorkers is how many file objects FindDamage checks at once.
 const damageWorkers = 16
 
-// damagePage is how many distinct file objects findDamage reads the refs
+// damagePage is how many distinct file objects FindDamage reads the refs
 // of and checks at a time.
 var damagePage = 10000
 
-// findDamage marks what the indexed versions reference but the store no
-// longer holds, as the repair that lost it did in the index a rebuild
-// replaces.
-func (x *Index) findDamage(ctx context.Context) error {
+var _ backup.DamageFinder = (*Index)(nil)
+
+// FindDamage implements backup.DamageFinder.
+func (x *Index) FindDamage(ctx context.Context) (*backup.DamageReport, error) {
+	total, err := x.client.File.Query().Where(file.RefNotNil(), file.Lost(false)).Unique(true).Select(file.FieldRef).Count(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var (
-		lost    []*proto.Ref
-		named   = map[string]bool{}
-		after   []byte
-		checked int
+		lost  []*proto.Ref
+		named = map[string]bool{}
 	)
 
-	began := time.Now()
+	phase := progress.Start(ctx, progress.OpDamage, progress.PhaseCheck, int64(total), 0)
 
-	for {
-		var rows []struct {
-			Ref []byte `json:"ref"`
-		}
-
-		query := x.client.File.Query().Where(file.RefNotNil())
-		if after != nil {
-			query.Where(file.RefGT(after))
-		}
-
-		err := query.Unique(true).Order(ent.Asc(file.FieldRef)).Limit(damagePage).Select(file.FieldRef).Scan(ctx, &rows)
-		if err != nil {
-			return err
-		}
-
-		if len(rows) == 0 {
-			break
-		}
-
-		refs := make([][]byte, len(rows))
-		for i, row := range rows {
-			refs[i] = row.Ref
-		}
-
+	err = x.pageFileRefs(ctx, func(refs [][]byte) error {
 		gone, err := x.lostOf(ctx, refs)
 		if err != nil {
 			return err
@@ -353,30 +334,153 @@ func (x *Index) findDamage(ctx context.Context) error {
 			}
 		}
 
-		after = refs[len(refs)-1]
-		checked += len(refs)
+		phase.Add(int64(len(refs)), 0)
 
-		x.logger().Info("checking that the store holds what the versions reference", "files", checked, "elapsed", time.Since(began).Round(time.Second))
+		return nil
+	})
+	phase.Finish()
+
+	if err != nil {
+		return nil, err
 	}
 
 	if len(lost) == 0 {
-		return nil
+		return &backup.DamageReport{Paths: map[int64][]string{}}, nil
 	}
 
 	sets, err := x.client.Set.Query().IDs(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	report, err := backup.ReportDamage(ctx, x.ObjectStore, x, sets, lost)
+	phase = progress.Start(ctx, progress.OpDamage, progress.PhasePlace, int64(total), 0)
+	defer phase.Finish()
+
+	report, err := backup.ReportDamage(ctx, indexedFiles{ObjectStore: x.ObjectStore, x: x, phase: phase}, x, sets, lost)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	x.logger().Warn("the store lost objects its versions reference", "objects", len(lost),
 		"damaged sets", len(report.Paths), "unrecoverable versions", len(report.Lost), "sets to read again", len(report.Rescan))
 
-	return nil
+	return report, nil
+}
+
+// pageFileRefs calls fn with the distinct file refs of the indexed
+// versions not yet marked lost, in order, damagePage at a time.
+func (x *Index) pageFileRefs(ctx context.Context, fn func(refs [][]byte) error) error {
+	var after []byte
+
+	for {
+		var rows []struct {
+			Ref []byte `json:"ref"`
+		}
+
+		query := x.client.File.Query().Where(file.RefNotNil(), file.Lost(false))
+		if after != nil {
+			query.Where(file.RefGT(after))
+		}
+
+		err := query.Unique(true).Order(ent.Asc(file.FieldRef)).Limit(damagePage).Select(file.FieldRef).Scan(ctx, &rows)
+		if err != nil || len(rows) == 0 {
+			return err
+		}
+
+		refs := make([][]byte, len(rows))
+		for i, row := range rows {
+			refs[i] = row.Ref
+		}
+
+		if err := fn(refs); err != nil {
+			return err
+		}
+
+		after = refs[len(refs)-1]
+	}
+}
+
+// indexedFiles is the store whose file objects are only those the indexed
+// versions name and their splits, read through the store's cache rather
+// than walked archive by archive.
+type indexedFiles struct {
+	backup.ObjectStore
+	x     *Index
+	phase *progress.Phase
+}
+
+// Walk walks the file objects the indexed versions name and their splits,
+// each once; it walks nothing of any other type.
+func (s indexedFiles) Walk(ctx context.Context, _ bool, t proto.ObjectType, fn backup.ObjectReceiver) error {
+	if t != proto.ObjectType_FILE {
+		return nil
+	}
+
+	seen := map[string]bool{}
+
+	return s.x.pageFileRefs(ctx, func(page [][]byte) error {
+		refs := make([]*proto.Ref, len(page))
+		for i, ref := range page {
+			refs[i] = &proto.Ref{Hash: ref}
+		}
+
+		for len(refs) > 0 {
+			objects, err := s.read(ctx, refs, seen)
+			if err != nil {
+				return err
+			}
+
+			refs = refs[:0:0]
+			for _, obj := range objects {
+				if err := fn(obj); err != nil {
+					return err
+				}
+
+				refs = append(refs, obj.GetFile().GetSplits()...)
+			}
+		}
+
+		s.phase.Add(int64(len(page)), 0)
+
+		return nil
+	})
+}
+
+// read gets the objects of refs not seen yet, damageWorkers at a time,
+// leaving out those the store no longer holds.
+func (s indexedFiles) read(ctx context.Context, refs []*proto.Ref, seen map[string]bool) ([]*proto.Object, error) {
+	var fresh []*proto.Ref
+
+	for _, ref := range refs {
+		if !seen[string(ref.GetHash())] {
+			seen[string(ref.GetHash())] = true
+			fresh = append(fresh, ref)
+		}
+	}
+
+	objects := make([]*proto.Object, len(fresh))
+
+	group, gctx := errgroup.WithContext(ctx)
+	group.SetLimit(damageWorkers)
+
+	for i, ref := range fresh {
+		group.Go(func() error {
+			obj, err := s.ObjectStore.Get(gctx, ref)
+			if errors.Is(err, backup.ErrNotFound) {
+				return nil
+			}
+
+			objects[i] = obj
+
+			return err
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+
+	return slices.DeleteFunc(objects, func(obj *proto.Object) bool { return obj == nil }), nil
 }
 
 // lostOf returns what of the file objects refs name, their parts and

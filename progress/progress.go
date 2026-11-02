@@ -22,6 +22,7 @@ const (
 	OpScrub   = "scrub"
 	OpRetire  = "retire"
 	OpReIndex = "reindex"
+	OpDamage  = "damage"
 	OpIngest  = "ingest"
 	OpCommit  = "commit"
 	OpReseal  = "reseal"
@@ -52,13 +53,16 @@ const (
 	PhaseTombstones = "tombstones"
 	PhaseRows       = "rows"
 	PhasePrune      = "prune"
-	// reindex: tombstones, pins, commits, sets, policies, damage; reseal:
-	// commits, then pins.
+	// reindex: metadata, counting archives and the bytes read, tombstones,
+	// pins, commits, sets, policies; reseal: commits, then pins.
+	PhaseMetadata = "metadata"
 	PhasePins     = "pins"
 	PhaseCommits  = "commits"
 	PhaseSets     = "sets"
 	PhasePolicies = "policies"
-	PhaseDamage   = "damage"
+	// damage: check, counting the file objects checked, then place,
+	// counting the file objects read to place what was lost.
+	PhasePlace = "place"
 	// ingest.
 	PhaseIngest = "ingest"
 	// commit: check, counting the session's objects walked, lost, counting

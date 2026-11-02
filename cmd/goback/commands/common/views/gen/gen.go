@@ -61,6 +61,19 @@ func (m MapperImpl) Compact(in *pack.CompactReport) views.CompactView {
 	}
 }
 
+func (m MapperImpl) Damage(in *backup.DamageReport) views.DamageView {
+	if in == nil {
+		return views.DamageView{}
+	}
+
+	return views.DamageView{
+		Paths:    views.CountPaths(in.Paths),
+		Lost:     views.CountVersions(in.Lost),
+		Rescan:   views.CountSets(in.Rescan),
+		Unplaced: views.CountRefs(in.Unplaced),
+	}
+}
+
 func (m MapperImpl) Expected(in *schedule.Reported) *views.ExpectedView {
 	if in == nil {
 		return nil
