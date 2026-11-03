@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/progress"
 	"github.com/gobackio/goback/proto"
+	"github.com/gobackio/goback/storage/pebble"
 
 	"github.com/stretchr/testify/require"
 )
@@ -51,7 +53,7 @@ func mixedNames(t *testing.T, store *PackStorage) []string {
 	return names
 }
 
-func TestSplittingRewritesTheOldMixedArchivesOldestFirstWithinTheBudget(t *testing.T) {
+func TestSplittingRewritesTheMixedArchivesOldestFirstWithinTheBudget(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t, t.TempDir(), WithMaxSize(64<<20))
 	defer store.Close()
@@ -64,13 +66,7 @@ func TestSplittingRewritesTheOldMixedArchivesOldestFirstWithinTheBudget(t *testi
 	second := putMixed(t, store, 20)
 	require.Len(t, mixedNames(t, store), 2)
 
-	report, err := store.Split(ctx, SplitOptions{})
-	require.NoError(t, err)
-	require.Zero(t, report.Rewritten, "an archive younger than the age stays")
-
-	later := time.Now().Add(8 * 24 * time.Hour)
-
-	report, err = store.Split(ctx, SplitOptions{Now: later, Budget: 1})
+	report, err := store.Split(ctx, SplitOptions{Budget: 1})
 	require.NoError(t, err)
 	require.Equal(t, 1, report.Rewritten, "the budget takes the oldest archive however small it is")
 
@@ -78,12 +74,12 @@ func TestSplittingRewritesTheOldMixedArchivesOldestFirstWithinTheBudget(t *testi
 	require.Len(t, left, 1)
 	require.NotEqual(t, oldest[0], left[0])
 
-	report, err = store.Split(ctx, SplitOptions{Now: later})
+	report, err = store.Split(ctx, SplitOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 1, report.Rewritten)
 	require.Empty(t, mixedNames(t, store))
 
-	report, err = store.Split(ctx, SplitOptions{Now: later})
+	report, err = store.Split(ctx, SplitOptions{})
 	require.NoError(t, err)
 	require.Zero(t, report.Rewritten, "what a split wrote is split already")
 
@@ -92,4 +88,27 @@ func TestSplittingRewritesTheOldMixedArchivesOldestFirstWithinTheBudget(t *testi
 		require.NoError(t, err)
 		require.Equal(t, plain(object), plain(got))
 	}
+}
+
+func TestSplittingCachesTheMetadataItCopies(t *testing.T) {
+	ctx := context.Background()
+	storage := &countingStorage{localArchiveStorage: newLocal(t.TempDir())}
+
+	store := newTestStore(t, "", WithArchiveStorage(storage), WithMaxSize(64<<20))
+	putMixed(t, store, 20)
+	require.NoError(t, store.Close())
+
+	cache, err := pebble.New(t.TempDir())
+	require.NoError(t, err)
+
+	store = newTestStore(t, "", WithArchiveStorage(storage), WithMaxSize(64<<20), WithMetadataCache(cache))
+	defer store.Close()
+
+	report, err := store.Split(ctx, SplitOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Rewritten)
+
+	before := storage.count()
+	require.NoError(t, store.CacheMetadata(ctx, progress.OpCollect))
+	require.Equal(t, before, storage.count(), "the fill after a split reads nothing")
 }

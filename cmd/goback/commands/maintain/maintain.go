@@ -24,7 +24,7 @@ import (
 var Command = cli.Command{
 	Name:        "maintain",
 	Usage:       "Run the housekeeping that is due, for example from cron",
-	Description: "Without a subcommand, maintain sweeps, retires, compacts, splits and builds presence filters. It collects garbage once the last collection is older than --gc-interval. It also rebuilds the database indexes of heavily changed tables in the index. A subcommand runs one of these operations. A store server runs this housekeeping on its own schedule.",
+	Description: "Without a subcommand, maintain sweeps, compacts, splits, retires and builds presence filters. It collects garbage once the last collection is older than --gc-interval. It also rebuilds the database indexes of heavily changed tables in the index. A subcommand runs one of these operations. A store server runs this housekeeping on its own schedule.",
 	Flags: []cli.Flag{
 		cli.DurationFlag{
 			Name:  "gc-interval",
@@ -60,9 +60,8 @@ var Command = cli.Command{
 		},
 		{
 			Name:  "split",
-			Usage: "Rewrite old archives holding file data beside metadata into archives holding one or the other, oldest first",
+			Usage: "Rewrite archives holding file data beside metadata into archives holding one or the other, oldest first",
 			Flags: []cli.Flag{
-				cli.DurationFlag{Name: "age", Usage: "split only archives at least this old", Value: 7 * 24 * time.Hour},
 				cli.StringFlag{Name: "budget", Usage: "split at most this much", Value: "30GB"},
 			},
 			Action: action(func(m *members) {
@@ -76,7 +75,7 @@ var Command = cli.Command{
 					common.Fatalf("Reading --budget: %v", err)
 				}
 
-				report, err := splitter.Split(common.Context(m.c), pack.SplitOptions{Age: m.c.Duration("age"), Budget: budget})
+				report, err := splitter.Split(common.Context(m.c), pack.SplitOptions{Budget: budget})
 				if err != nil {
 					common.Fatal(err)
 				}

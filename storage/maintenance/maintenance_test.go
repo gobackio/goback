@@ -188,6 +188,40 @@ func TestDueRunsEveryJobPastAFailingOne(t *testing.T) {
 	require.Len(t, ran.Reindexed, 1, "what the jobs churned is reindexed after them")
 }
 
+type orderedJobs struct {
+	fakeStore
+	ran []string
+}
+
+func (o *orderedJobs) Compact(ctx context.Context) (*pack.CompactReport, error) {
+	o.ran = append(o.ran, "compact")
+	return &pack.CompactReport{}, nil
+}
+
+func (o *orderedJobs) Split(context.Context, pack.SplitOptions) (*pack.SplitReport, error) {
+	o.ran = append(o.ran, "split")
+	return &pack.SplitReport{}, nil
+}
+
+func (o *orderedJobs) Retire(context.Context, time.Time) (int, error) {
+	o.ran = append(o.ran, "retire")
+	return 0, nil
+}
+
+func (o *orderedJobs) Collect(context.Context, pack.CollectOptions) (*pack.CollectReport, error) {
+	o.ran = append(o.ran, "collect")
+	return &pack.CollectReport{}, nil
+}
+
+func TestDueRewritesBeforeItRetiresOrCollects(t *testing.T) {
+	jobs := &orderedJobs{}
+	r := &Runner{Store: jobs, Splitter: jobs, Retirer: jobs, Collector: jobs, Schedule: DefaultSchedule}
+
+	_, err := r.Due(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"compact", "split", "retire", "collect"}, jobs.ran)
+}
+
 type fakeArchives struct {
 	backup.ObjectStore
 	fakeStore

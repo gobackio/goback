@@ -1065,7 +1065,16 @@ func (rw *rewrite) candidate(ctx context.Context, worker int, candidate *archive
 		copied += uint64(length)
 		moved++
 
-		return rw.put(ctx, worker, candidate, pos, hdr, bytes, version)
+		if err := rw.put(ctx, worker, candidate, pos, hdr, bytes, version); err != nil {
+			return err
+		}
+
+		if hdr.Type.Metadata() && rw.ps.cache != nil {
+			obj, err := proto.ObjectFromStored(hdr, bytes)
+			_ = rw.ps.putWriteCache(ctx, obj, err)
+		}
+
+		return nil
 	})
 	if err != nil {
 		return err

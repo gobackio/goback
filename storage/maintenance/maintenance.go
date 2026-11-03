@@ -22,7 +22,7 @@ type Store interface {
 	Compact(ctx context.Context) (*pack.CompactReport, error)
 }
 
-// Splitter is a store that rewrites its old archives holding blobs beside
+// Splitter is a store that rewrites its archives holding blobs beside
 // other objects into archives holding one kind or the other.
 type Splitter interface {
 	Split(ctx context.Context, opts pack.SplitOptions) (*pack.SplitReport, error)
@@ -300,7 +300,9 @@ type Ran struct {
 
 // Due runs every scheduled job once, except a collection, which runs only
 // when the store's last one is at least Schedule.Collect old, and then
-// reindexes what they churned. It is what a cron job calls; errors are
+// reindexes what they churned. Compact and Split run before Retire and the
+// collection, so the metadata cache those fill already holds what the
+// rewrites copied. It is what a cron job calls; errors are
 // joined and every job still runs.
 func (r *Runner) Due(ctx context.Context) (Ran, error) {
 	var ran Ran
@@ -311,12 +313,6 @@ func (r *Runner) Due(ctx context.Context) (Ran, error) {
 		ran.Swept = true
 	}
 
-	if r.Retirer != nil && r.Schedule.Retire > 0 {
-		n, err := r.Retirer.Retire(ctx, r.now())
-		ran.Retired = n
-		errs = append(errs, err)
-	}
-
 	if r.Store != nil && r.Schedule.Compact > 0 {
 		report, err := r.Store.Compact(ctx)
 		ran.Compacted = report
@@ -324,8 +320,14 @@ func (r *Runner) Due(ctx context.Context) (Ran, error) {
 	}
 
 	if r.Splitter != nil && r.Schedule.Split > 0 {
-		report, err := r.Splitter.Split(ctx, pack.SplitOptions{Now: r.now()})
+		report, err := r.Splitter.Split(ctx, pack.SplitOptions{})
 		ran.Split = report
+		errs = append(errs, err)
+	}
+
+	if r.Retirer != nil && r.Schedule.Retire > 0 {
+		n, err := r.Retirer.Retire(ctx, r.now())
+		ran.Retired = n
 		errs = append(errs, err)
 	}
 
@@ -400,14 +402,14 @@ func (r *Runner) logCompact(ctx context.Context) {
 	}
 }
 
-// Split rewrites the old archives holding blobs beside other objects and
+// Split rewrites the archives holding blobs beside other objects and
 // rebuilds the indexes that churned. Without a Splitter it does nothing.
 func (r *Runner) Split(ctx context.Context) (*pack.SplitReport, error) {
 	if r.Splitter == nil {
 		return &pack.SplitReport{}, nil
 	}
 
-	report, err := r.Splitter.Split(ctx, pack.SplitOptions{Now: r.now()})
+	report, err := r.Splitter.Split(ctx, pack.SplitOptions{})
 
 	return report, errors.Join(err, reindex(ctx, r.Reindexer))
 }
