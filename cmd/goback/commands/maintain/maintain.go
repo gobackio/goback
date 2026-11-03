@@ -79,7 +79,7 @@ var Command = cli.Command{
 				if err != nil {
 					common.Fatal(err)
 				}
-				common.Result(common.View.Compact(&report.CompactReport), func() { log.Print(report.Summary()) })
+				common.Result(common.View.Split(report), func() { log.Print(report.Summary()) })
 			}),
 		},
 		{
@@ -249,7 +249,7 @@ func due(m *members) {
 	}
 
 	if ran.Split != nil {
-		report := common.View.Compact(&ran.Split.CompactReport)
+		report := common.View.Split(ran.Split)
 		view.Split = &report
 	}
 

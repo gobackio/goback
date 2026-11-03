@@ -23,9 +23,12 @@ type SplitOptions struct {
 const defaultSplitBudget = 30_000_000_000
 
 // SplitReport summarizes one Split. Candidates counts the mixed archives
-// Split found within its age and budget.
+// Split took within its budget, and Left and LeftBytes those past it,
+// which a later Split takes.
 type SplitReport struct {
 	CompactReport
+	Left      int
+	LeftBytes uint64
 }
 
 // Summary renders the report as a line for a log or an operator.
@@ -42,9 +45,15 @@ func (r *SplitReport) Summary() string {
 		return "Split no archives"
 	}
 
-	return fmt.Sprintf("Split %d mixed archives (%s) into %d (%s): moved %d objects (%s), %d superseded, %s",
+	summary := fmt.Sprintf("Split %d mixed archives (%s) into %d (%s): moved %d objects (%s), %d superseded, %s",
 		r.Rewritten, humanize.Bytes(r.ReadBytes), r.Written, humanize.Bytes(r.WrittenBytes), r.Moved, humanize.Bytes(r.CopiedBytes),
 		r.Superseded, r.Duration.Round(time.Millisecond))
+
+	if r.Left > 0 {
+		summary += fmt.Sprintf("; %d mixed archives (%s) left past the budget", r.Left, humanize.Bytes(r.LeftBytes))
+	}
+
+	return summary
 }
 
 // Split rewrites the committed archives that hold blobs beside other
@@ -88,12 +97,17 @@ func (ps *PackStorage) Split(ctx context.Context, opts SplitOptions) (*SplitRepo
 		return report, err
 	}
 
-	group, err := ps.mixedArchives(ctx, opts.Budget)
+	group, left, err := ps.mixedArchives(ctx, opts.Budget)
 	if err != nil {
 		return nil, err
 	}
 
 	report.Candidates, report.CandidateBytes = len(group.candidates), group.total
+	report.Left, report.LeftBytes = len(left.candidates), left.total
+
+	if report.Left > 0 {
+		ps.logger.Warn("splitting leaves mixed archives past its budget", "left", report.Left, "size", humanize.Bytes(report.LeftBytes), "budget", humanize.Bytes(opts.Budget))
+	}
 
 	if len(group.candidates) > 0 {
 		ps.logger.Info("splitting archives", "count", len(group.candidates), "size", humanize.Bytes(group.total))
@@ -115,8 +129,9 @@ func (ps *PackStorage) Split(ctx context.Context, opts SplitOptions) (*SplitRepo
 }
 
 // mixedArchives groups the committed archives that hold blobs beside
-// other objects, oldest first, until the next would take them past budget.
-func (ps *PackStorage) mixedArchives(ctx context.Context, budget uint64) (*compactionGroup, error) {
+// other objects, oldest first, until the next would take them past budget,
+// and the rest of them.
+func (ps *PackStorage) mixedArchives(ctx context.Context, budget uint64) (group, left *compactionGroup, err error) {
 	type committed struct {
 		a       *archive
 		created time.Time
@@ -155,25 +170,26 @@ func (ps *PackStorage) mixedArchives(ctx context.Context, budget uint64) (*compa
 	}
 
 	if err := grp.Wait(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	group := &compactionGroup{}
+	group, left = &compactionGroup{}, &compactionGroup{}
 
 	for _, o := range all {
 		if !o.mixed {
 			continue
 		}
 
-		if len(group.candidates) > 0 && group.total+o.size > budget {
-			break
+		into := group
+		if len(left.candidates) > 0 || len(group.candidates) > 0 && group.total+o.size > budget {
+			into = left
 		}
 
-		group.candidates = append(group.candidates, o.a)
-		group.total += o.size
+		into.candidates = append(into.candidates, o.a)
+		into.total += o.size
 	}
 
-	return group, nil
+	return group, left, nil
 }
 
 // mixed reports whether the archive holds blobs beside other records.

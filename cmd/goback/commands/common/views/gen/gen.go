@@ -276,6 +276,19 @@ func (m MapperImpl) Set(in index.SetInfo) views.SetView {
 	}
 }
 
+func (m MapperImpl) Split(in *pack.SplitReport) views.SplitView {
+	if in == nil {
+		return views.SplitView{}
+	}
+	tmp0 := in.CompactReport
+
+	return views.SplitView{
+		CompactView: m.Compact(&tmp0),
+		Left:        in.Left,
+		LeftBytes:   in.LeftBytes,
+	}
+}
+
 func (m MapperImpl) TrashedCommit(in *proto.TrashedCommit) views.TrashedCommitView {
 	if in == nil {
 		return views.TrashedCommitView{}

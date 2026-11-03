@@ -69,6 +69,8 @@ func TestSplittingRewritesTheMixedArchivesOldestFirstWithinTheBudget(t *testing.
 	report, err := store.Split(ctx, SplitOptions{Budget: 1})
 	require.NoError(t, err)
 	require.Equal(t, 1, report.Rewritten, "the budget takes the oldest archive however small it is")
+	require.Equal(t, 1, report.Left, "the archive past the budget is left for later")
+	require.Positive(t, report.LeftBytes)
 
 	left := mixedNames(t, store)
 	require.Len(t, left, 1)
@@ -77,6 +79,7 @@ func TestSplittingRewritesTheMixedArchivesOldestFirstWithinTheBudget(t *testing.
 	report, err = store.Split(ctx, SplitOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 1, report.Rewritten)
+	require.Zero(t, report.Left)
 	require.Empty(t, mixedNames(t, store))
 
 	report, err = store.Split(ctx, SplitOptions{})

@@ -45,6 +45,9 @@ type Mapper interface {
 	// field:Seconds from:"Duration" using:"Seconds"
 	Compact(in *pack.CompactReport) CompactView
 
+	// field:CompactView from:"CompactReport"
+	Split(in *pack.SplitReport) SplitView
+
 	// field:Collected from:"-"
 	// field:Compacted from:"-"
 	// field:Split from:"-"
@@ -318,6 +321,14 @@ type CompactView struct {
 	Seconds        float64 `json:"seconds"`
 }
 
+// SplitView is what a split did, as JSON output shows it: a compaction's
+// counts and the mixed archives it left past its budget.
+type SplitView struct {
+	CompactView
+	Left      int    `json:"left"`
+	LeftBytes uint64 `json:"left_bytes"`
+}
+
 // OrphanCommitView is a commit the store holds that the index has no row
 // for, as JSON output shows it.
 type OrphanCommitView struct {
@@ -385,7 +396,7 @@ type IndexedSetView struct {
 type MaintenanceView struct {
 	Swept     bool            `json:"swept"`
 	Compacted *CompactView    `json:"compacted,omitempty"`
-	Split     *CompactView    `json:"split,omitempty"`
+	Split     *SplitView      `json:"split,omitempty"`
 	Retired   int             `json:"retired"`
 	Presence  int             `json:"presence"`
 	Measured  int             `json:"measured"`
