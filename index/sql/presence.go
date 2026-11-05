@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/presence"
 	"github.com/gobackio/goback/index/sql/ent"
 	"github.com/gobackio/goback/index/sql/ent/commitrow"
 	"github.com/gobackio/goback/index/sql/ent/set"
@@ -191,9 +192,17 @@ func (x *Index) BuildPendingPresence(ctx context.Context) (int, error) {
 func (x *Index) buildPresence(ctx context.Context, setID int64, name string, commit, tree *proto.Ref) error {
 	start := time.Now()
 
-	filter, err := backup.CollectPresence(ctx, x.ObjectStore, tree)
+	filter, read, err := x.updatePresence(ctx, setID, tree)
 	if err != nil {
-		return fmt.Errorf("building the filter of commit %x: %w", commit.Hash, err)
+		return fmt.Errorf("updating the filter of commit %x: %w", commit.Hash, err)
+	}
+
+	incremental := filter != nil
+	if !incremental {
+		filter, err = backup.CollectPresence(ctx, x.ObjectStore, tree)
+		if err != nil {
+			return fmt.Errorf("building the filter of commit %x: %w", commit.Hash, err)
+		}
 	}
 
 	filter.Commit = commit
@@ -204,7 +213,50 @@ func (x *Index) buildPresence(ctx context.Context, setID int64, name string, com
 		return fmt.Errorf("storing the filter of commit %x: %w", commit.Hash, err)
 	}
 
-	x.logger().Info("built presence filter", "set", name, "refs", filter.Entries(), "bytes", filter.Size(), "took", time.Since(start).Round(time.Millisecond))
+	x.logger().Info("built presence filter", "set", name, "refs", filter.Entries(), "bytes", filter.Size(),
+		"incremental", incremental, "objects", read, "took", time.Since(start).Round(time.Millisecond))
 
 	return nil
+}
+
+// updatePresence builds the filter of tree from the filter the set holds,
+// reading only what changed since the tree that filter was built for. It
+// returns no filter when the set holds none it can start from, or when the
+// result would hold more refs than it was sized for.
+func (x *Index) updatePresence(ctx context.Context, setID int64, tree *proto.Ref) (*presence.Filter, int, error) {
+	row, err := x.client.CommitRow.Query().Where(commitrow.SetID(setID), commitrow.PresenceNotNil()).
+		Select(commitrow.FieldPresence, commitrow.FieldTree).First(ctx)
+	if ent.IsNotFound(err) {
+		return nil, 0, nil
+	}
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	stored := &proto.PresenceFilter{}
+	if err := pb.Unmarshal(row.Presence, stored); err != nil {
+		return nil, 0, nil
+	}
+
+	old, err := presence.FromProto(stored)
+	if err != nil {
+		return nil, 0, nil
+	}
+
+	filter, read, err := backup.UpdatePresence(ctx, x.ObjectStore, old, &proto.Ref{Hash: row.Tree}, tree)
+	if ctx.Err() != nil {
+		return nil, read, ctx.Err()
+	}
+
+	if err != nil {
+		x.logger().Warn("building presence filter in full", "error", err)
+		return nil, read, nil
+	}
+
+	if filter.Entries() > filter.Capacity() {
+		return nil, read, nil
+	}
+
+	return filter, read, nil
 }

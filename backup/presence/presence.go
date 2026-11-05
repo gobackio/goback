@@ -68,18 +68,24 @@ func (f *Filter) position(hash []byte, i uint32) uint64 {
 	return (h1 + uint64(i)*h2) % f.bits
 }
 
-// Add records a ref. Refs shorter than 16 bytes are ignored.
+// Add records a ref. Refs shorter than 16 bytes are ignored, and so is a
+// ref the filter already tests positive for.
 func (f *Filter) Add(hash []byte) {
 	if len(hash) < minHashLen {
 		return
 	}
 
+	added := false
 	for i := uint32(0); i < f.hashes; i++ {
 		pos := f.position(hash, i)
-		f.data[pos/8] |= 1 << (pos % 8)
+		bit := byte(1) << (pos % 8)
+		added = added || f.data[pos/8]&bit == 0
+		f.data[pos/8] |= bit
 	}
 
-	f.entries++
+	if added {
+		f.entries++
+	}
 }
 
 // Test reports whether the ref may have been added.
@@ -100,6 +106,19 @@ func (f *Filter) Test(hash []byte) bool {
 
 // Entries is the number of refs added.
 func (f *Filter) Entries() uint64 { return f.entries }
+
+// Capacity is how many refs the filter holds at FalsePositiveRate.
+func (f *Filter) Capacity() uint64 {
+	return uint64(float64(f.bits) * math.Ln2 * math.Ln2 / -math.Log(FalsePositiveRate))
+}
+
+// Clone returns a copy of the filter.
+func (f *Filter) Clone() *Filter {
+	clone := *f
+	clone.data = slices.Clone(f.data)
+
+	return &clone
+}
 
 // Size is the byte size of the bit array.
 func (f *Filter) Size() int { return len(f.data) }

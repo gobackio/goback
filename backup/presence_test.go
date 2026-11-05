@@ -363,3 +363,54 @@ func TestAFilterIsCollectedInRecordReadsWithoutGettingObjectsOneByOne(t *testing
 
 	require.Zero(t, store.gets.Load(), "every tree and file came from record reads")
 }
+
+func TestUpdatePresenceReadsOnlyWhatChanged(t *testing.T) {
+	f := newWalkerFixture(t)
+	writeMany(f, 1000)
+	f.write("a.bin", f.random(200<<10))
+	f.write("dir/b.bin", f.random(150<<10))
+
+	first := f.run()
+	old := f.filterOf(first.Ref)
+
+	f.write("many/file-0500.txt", f.random(100<<10))
+	f.write("a.bin", f.random(200<<10))
+	f.write("dir/new/c.bin", f.random(150<<10))
+
+	second := f.run()
+	updated, read, err := UpdatePresence(context.Background(), f.store, old, first.Commit.Tree, second.Commit.Tree)
+	require.NoError(t, err)
+	require.Less(t, read, 20, "the changed paths, not the 1000 files")
+
+	parts := f.fileParts(second.Ref, "a.bin")
+	many := f.tree(f.tree(second.Commit.Tree)["many"].Ref)
+	file, err := f.store.Get(context.Background(), many["file-0500.txt"].Ref)
+	require.NoError(t, err)
+	parts = append(parts, file.GetFile().GetParts()...)
+	sub := f.tree(f.tree(f.tree(second.Commit.Tree)["dir"].Ref)["new"].Ref)
+	file, err = f.store.Get(context.Background(), sub["c.bin"].Ref)
+	require.NoError(t, err)
+	parts = append(parts, file.GetFile().GetParts()...)
+
+	require.NotEmpty(t, parts)
+	for _, part := range parts {
+		require.True(t, updated.Test(part.Ref.Hash))
+	}
+
+	for _, part := range f.fileParts(first.Ref, "a.bin") {
+		require.True(t, updated.Test(part.Ref.Hash), "refs are only ever added")
+	}
+}
+
+func TestUpdatePresenceOfAnUnchangedTreeReadsNothing(t *testing.T) {
+	f := newWalkerFixture(t)
+	f.write("a.bin", f.random(200<<10))
+
+	first := f.run()
+	old := f.filterOf(first.Ref)
+
+	updated, read, err := UpdatePresence(context.Background(), f.store, old, first.Commit.Tree, first.Commit.Tree)
+	require.NoError(t, err)
+	require.Zero(t, read)
+	require.Equal(t, old.Proto().Data, updated.Proto().Data)
+}

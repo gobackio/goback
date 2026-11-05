@@ -27,7 +27,7 @@ func TestFilterNoFalseNegatives(t *testing.T) {
 		f.Add(h)
 	}
 
-	require.EqualValues(t, len(added), f.Entries())
+	require.InDelta(t, len(added), f.Entries(), float64(len(added))*FalsePositiveRate)
 
 	for _, h := range added {
 		require.True(t, f.Test(h))
@@ -71,7 +71,7 @@ func TestFilterProtoRoundTrip(t *testing.T) {
 	back, err := FromProto(msg)
 	require.NoError(t, err)
 	require.Equal(t, "world", back.Set)
-	require.EqualValues(t, len(added), back.Entries())
+	require.Equal(t, f.Entries(), back.Entries())
 
 	for _, h := range added {
 		require.True(t, back.Test(h))
@@ -117,4 +117,28 @@ func TestADigestNamesTheFiltersInAnyOrder(t *testing.T) {
 
 	b.Add(randomHashes(1)[0])
 	require.NotEqual(t, digest, Digest([]*proto.PresenceFilter{a.Proto(), b.Proto()}))
+}
+
+func TestFilterCapacityIsWhatItWasSizedFor(t *testing.T) {
+	f := New(100_000)
+	require.InDelta(t, 100_000, f.Capacity(), 100)
+}
+
+func TestFilterAddCountsOnlyNewRefs(t *testing.T) {
+	h := randomHashes(1)[0]
+	f := New(10)
+	f.Add(h)
+	f.Add(h)
+	require.EqualValues(t, 1, f.Entries())
+}
+
+func TestCloneLeavesTheOriginalAlone(t *testing.T) {
+	f := New(10)
+	clone := f.Clone()
+	h := randomHashes(1)[0]
+	clone.Add(h)
+
+	require.True(t, clone.Test(h))
+	require.False(t, f.Test(h))
+	require.Zero(t, f.Entries())
 }

@@ -1,8 +1,10 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/gobackio/goback/backup/presence"
@@ -177,34 +179,187 @@ func CollectPresence(ctx context.Context, store ObjectStore, tree *proto.Ref) (*
 			return nil, err
 		}
 
-		err = readChunks(ctx, store, files, func(ref *proto.Ref, obj *proto.Object) error {
-			file := obj.GetFile()
-			if file == nil {
-				return fmt.Errorf("object %x is not a file", ref.Hash)
-			}
-
-			parts, err := FileParts(ctx, store, file)
-			if err != nil {
-				return fmt.Errorf("file %x: %w", ref.Hash, err)
-			}
-
-			add(parts)
-
-			return nil
-		})
-		if err != nil {
+		if err := readFileParts(ctx, store, files, add); err != nil {
 			return nil, err
 		}
 
 		level = next
 	}
 
-	filter := presence.New(uint64(len(refs)))
+	filter := presence.New(uint64(len(refs)) * 5 / 4)
 	for ref := range refs {
 		filter.Add([]byte(ref))
 	}
 
 	return filter, nil
+}
+
+// UpdatePresence returns a copy of old, the filter of a commit whose tree
+// is oldTree, that also holds every blob ref tree reaches, and how many
+// tree and file objects it read. It skips every entry of tree whose ref
+// equals the one at the same path in oldTree, so its reads grow with what
+// changed, not with the tree.
+func UpdatePresence(ctx context.Context, store ObjectStore, old *presence.Filter, oldTree, tree *proto.Ref) (*presence.Filter, int, error) {
+	filter := old.Clone()
+	add := func(parts []*proto.FilePart) {
+		for _, part := range parts {
+			if part.GetRef() != nil {
+				filter.Add(part.Ref.Hash)
+			}
+		}
+	}
+
+	read := 0
+	dirs := []*presenceDir{{old: []*proto.Ref{oldTree}, new: []*proto.Ref{tree}}}
+
+	for len(dirs) > 0 {
+		var refs, files []*proto.Ref
+		for _, d := range dirs {
+			d.dropCommon()
+			refs = append(append(refs, d.old...), d.new...)
+		}
+
+		objects, err := readObjects(ctx, store, refs)
+		if err != nil {
+			return nil, read, err
+		}
+
+		read += len(refs)
+
+		var next []*presenceDir
+		at := 0
+		for _, d := range dirs {
+			n := len(d.old) + len(d.new)
+			if err := d.expand(refs[at:at+n], objects[at:at+n]); err != nil {
+				return nil, read, err
+			}
+
+			at += n
+
+			if len(d.old)+len(d.new) > 0 {
+				next = append(next, d)
+				continue
+			}
+
+			next, files = d.changed(next, files)
+		}
+
+		if err := readFileParts(ctx, store, files, add); err != nil {
+			return nil, read, err
+		}
+
+		read += len(files)
+		dirs = next
+	}
+
+	return filter, read, nil
+}
+
+// presenceDir is one directory UpdatePresence compares: the tree objects
+// of each side still to read, and the nodes read so far.
+type presenceDir struct {
+	old, new           []*proto.Ref
+	oldNodes, newNodes []*proto.TreeNode
+}
+
+// dropCommon drops the tree objects both sides still have to read: names
+// are unique within a directory, so the nodes they hold are the same on
+// both sides and pair with nothing else.
+func (d *presenceDir) dropCommon() {
+	common := map[string]bool{}
+	for _, ref := range d.old {
+		common[string(ref.GetHash())] = false
+	}
+
+	for _, ref := range d.new {
+		if _, ok := common[string(ref.GetHash())]; ok {
+			common[string(ref.GetHash())] = true
+		}
+	}
+
+	keep := func(refs []*proto.Ref) []*proto.Ref {
+		return slices.DeleteFunc(refs, func(ref *proto.Ref) bool { return common[string(ref.GetHash())] })
+	}
+
+	d.old, d.new = keep(d.old), keep(d.new)
+}
+
+// expand collects the nodes of the objects read for d's pending refs, old
+// side first, and makes their splits the refs still pending.
+func (d *presenceDir) expand(refs []*proto.Ref, objects []*proto.Object) error {
+	var oldSplits, newSplits []*proto.Ref
+	for i, obj := range objects {
+		t := obj.GetTree()
+		if t == nil {
+			return fmt.Errorf("object %x is not a tree", refs[i].Hash)
+		}
+
+		if i < len(d.old) {
+			oldSplits = append(oldSplits, t.Splits...)
+			d.oldNodes = append(d.oldNodes, t.GetNodes()...)
+		} else {
+			newSplits = append(newSplits, t.Splits...)
+			d.newNodes = append(d.newNodes, t.GetNodes()...)
+		}
+	}
+
+	d.old, d.new = oldSplits, newSplits
+
+	return nil
+}
+
+// changed queues the subdirectories of d whose refs differ from the old
+// side's at the same name, and lists its files whose refs differ.
+func (d *presenceDir) changed(dirs []*presenceDir, files []*proto.Ref) ([]*presenceDir, []*proto.Ref) {
+	old := make(map[string]*proto.TreeNode, len(d.oldNodes))
+	for _, node := range d.oldNodes {
+		old[string(node.GetStat().GetName())] = node
+	}
+
+	for _, node := range d.newNodes {
+		if node.Ref == nil {
+			continue
+		}
+
+		was := old[string(node.GetStat().GetName())]
+		if was.GetRef() != nil && bytes.Equal(was.Ref.Hash, node.Ref.Hash) {
+			continue
+		}
+
+		switch {
+		case node.GetStat().IsDir():
+			sub := &presenceDir{new: []*proto.Ref{node.Ref}}
+			if was.GetRef() != nil && was.GetStat().IsDir() {
+				sub.old = []*proto.Ref{was.Ref}
+			}
+
+			dirs = append(dirs, sub)
+		case node.GetStat().GetType() == proto.NodeType_NODE_FILE:
+			files = append(files, node.Ref)
+		}
+	}
+
+	return dirs, files
+}
+
+// readFileParts reads the file objects of refs and hands the parts of each
+// to add.
+func readFileParts(ctx context.Context, store ObjectStore, refs []*proto.Ref, add func([]*proto.FilePart)) error {
+	return readChunks(ctx, store, refs, func(ref *proto.Ref, obj *proto.Object) error {
+		file := obj.GetFile()
+		if file == nil {
+			return fmt.Errorf("object %x is not a file", ref.Hash)
+		}
+
+		parts, err := FileParts(ctx, store, file)
+		if err != nil {
+			return fmt.Errorf("file %x: %w", ref.Hash, err)
+		}
+
+		add(parts)
+
+		return nil
+	})
 }
 
 // readChunks hands each of refs to fn with its object, in order, reading

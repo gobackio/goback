@@ -18,6 +18,7 @@ import (
 	"github.com/gobackio/goback/storage/pack"
 
 	"github.com/stretchr/testify/require"
+	pb "google.golang.org/protobuf/proto"
 )
 
 func TestEnsureSetFindsASetByName(t *testing.T) {
@@ -746,4 +747,86 @@ func TestASetWhoseRecentFilterWasRetiredGetsANewOne(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, built)
 	require.NotEmpty(t, f.commitRow(head).Presence)
+}
+
+// chunked stores a file of count blobs, each made from seed.
+func (f *fixture) chunked(name, seed string, count int) (*proto.TreeNode, []*proto.Ref) {
+	var parts []*proto.FilePart
+	var refs []*proto.Ref
+	for i := range count {
+		blob := proto.NewObject(&proto.Blob{Data: []byte(fmt.Sprintf("%s-%d", seed, i))})
+		require.NoError(f.t, f.store.Put(f.ctx, blob))
+		parts = append(parts, &proto.FilePart{Offset: uint64(i), Length: 1, Ref: blob.Ref()})
+		refs = append(refs, blob.Ref())
+	}
+
+	file := proto.NewObject(&proto.File{Parts: parts})
+	require.NoError(f.t, f.store.Put(f.ctx, file))
+
+	return &proto.TreeNode{
+		Stat: &proto.FileInfo{Name: []byte(name), Type: proto.NodeType_NODE_FILE, MtimeNs: f.epoch.UnixNano(), Size: int64(count), Mode: 0644},
+		Ref:  file.Ref(),
+	}, refs
+}
+
+func (f *fixture) requireInFilter(commit *proto.Ref, refs ...*proto.Ref) {
+	f.t.Helper()
+
+	filter := presenceMust(f.t, presenceOf(f.t, f.commitRow(commit).Presence))
+	for _, ref := range refs {
+		require.True(f.t, filter.Test(ref.Hash), "ref %x", ref.Hash)
+	}
+}
+
+func presenceOf(t *testing.T, data []byte) *proto.PresenceFilter {
+	t.Helper()
+
+	filter := &proto.PresenceFilter{}
+	require.NoError(t, pb.Unmarshal(data, filter))
+
+	return filter
+}
+
+func TestPresenceIsBuiltFromTheSetsFilterReadingOnlyWhatChanged(t *testing.T) {
+	f := newFixture(t)
+
+	kept, keptRefs := f.chunked("kept.bin", "kept", 20)
+	dir := f.dir("dir", kept)
+	changed, _ := f.chunked("changed.bin", "one", 1)
+	f.commit("a", f.tree(dir, changed), false)
+
+	read := f.store.read[string(dir.Ref.Hash)]
+	f.advance(PresenceEvery)
+
+	next, nextRefs := f.chunked("changed.bin", "two", 1)
+	head := f.commit("a", f.tree(dir, next), false)
+
+	require.Equal(t, read, f.store.read[string(dir.Ref.Hash)], "the unchanged directory is not read")
+	f.requireInFilter(head, append(keptRefs, nextRefs...)...)
+}
+
+func TestPresenceIsBuiltInFullWhenTheFilterCannotGrowOrItsTreeIsGone(t *testing.T) {
+	f := newFixture(t)
+
+	kept, keptRefs := f.chunked("kept.bin", "kept", 20)
+	dir := f.dir("dir", kept)
+	f.commit("a", f.tree(dir), false)
+
+	read := f.store.read[string(dir.Ref.Hash)]
+	f.advance(PresenceEvery)
+
+	big, bigRefs := f.chunked("big.bin", "big", 20)
+	second := f.tree(dir, big)
+	head := f.commit("a", second, false)
+
+	require.Greater(t, f.store.read[string(dir.Ref.Hash)], read, "past its capacity the filter is built anew")
+	f.requireInFilter(head, append(keptRefs, bigRefs...)...)
+
+	require.NoError(t, f.store.Delete(f.ctx, second.Ref()))
+	f.advance(PresenceEvery)
+
+	next, nextRefs := f.chunked("next.bin", "next", 1)
+	head = f.commit("a", f.tree(dir, big, next), false)
+
+	f.requireInFilter(head, append(append(keptRefs, bigRefs...), nextRefs...)...)
 }
