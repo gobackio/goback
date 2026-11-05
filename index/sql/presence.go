@@ -199,10 +199,14 @@ func (x *Index) buildPresence(ctx context.Context, setID int64, name string, com
 
 	incremental := filter != nil
 	if !incremental {
-		filter, err = backup.CollectPresence(ctx, x.ObjectStore, tree)
+		var walked int
+
+		filter, walked, err = backup.CollectPresence(ctx, x.ObjectStore, tree)
 		if err != nil {
 			return fmt.Errorf("building the filter of commit %x: %w", commit.Hash, err)
 		}
+
+		read += walked
 	}
 
 	filter.Commit = commit

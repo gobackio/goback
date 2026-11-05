@@ -140,8 +140,9 @@ func Missing(ctx context.Context, store ObjectStore, refs []*proto.Ref) ([]*prot
 }
 
 // CollectPresence walks a tree and returns a filter over every blob ref it
-// reaches, reading each level of the tree and the files on it together.
-func CollectPresence(ctx context.Context, store ObjectStore, tree *proto.Ref) (*presence.Filter, error) {
+// reaches, and how many tree and file objects it read, reading each level of
+// the tree and the files on it together.
+func CollectPresence(ctx context.Context, store ObjectStore, tree *proto.Ref) (*presence.Filter, int, error) {
 	refs := map[string]struct{}{}
 	add := func(parts []*proto.FilePart) {
 		for _, part := range parts {
@@ -151,6 +152,7 @@ func CollectPresence(ctx context.Context, store ObjectStore, tree *proto.Ref) (*
 		}
 	}
 
+	read := 0
 	level := []*proto.Ref{tree}
 	for len(level) > 0 {
 		var next, files []*proto.Ref
@@ -176,13 +178,16 @@ func CollectPresence(ctx context.Context, store ObjectStore, tree *proto.Ref) (*
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, read, err
 		}
+
+		read += len(level)
 
 		if err := readFileParts(ctx, store, files, add); err != nil {
-			return nil, err
+			return nil, read, err
 		}
 
+		read += len(files)
 		level = next
 	}
 
@@ -191,7 +196,7 @@ func CollectPresence(ctx context.Context, store ObjectStore, tree *proto.Ref) (*
 		filter.Add([]byte(ref))
 	}
 
-	return filter, nil
+	return filter, read, nil
 }
 
 // UpdatePresence returns a copy of old, the filter of a commit whose tree

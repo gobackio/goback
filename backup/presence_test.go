@@ -79,7 +79,7 @@ func (f *walkerFixture) filterOf(ref *proto.Ref) *presence.Filter {
 	obj, err := f.store.Get(context.Background(), ref)
 	require.NoError(f.t, err)
 
-	filter, err := CollectPresence(context.Background(), f.store, obj.GetCommit().Tree)
+	filter, _, err := CollectPresence(context.Background(), f.store, obj.GetCommit().Tree)
 	require.NoError(f.t, err)
 
 	return filter
@@ -478,8 +478,9 @@ func TestAFilterIsCollectedInRecordReadsWithoutGettingObjectsOneByOne(t *testing
 	second := put(&proto.Tree{Nodes: []*proto.TreeNode{fileIn(7)}})
 	root := put(&proto.Tree{Splits: []*proto.Ref{first, second}})
 
-	filter, err := CollectPresence(ctx, store, root)
+	filter, read, err := CollectPresence(ctx, store, root)
 	require.NoError(t, err)
+	require.Equal(t, 14, read, "the root, its 2 splits, 3 directories and 8 files")
 
 	for _, blob := range blobs {
 		require.True(t, filter.Test(blob.Hash), "every part of every file, a split tree's too")
