@@ -1799,6 +1799,12 @@ func (ps *PackStorage) Open() error {
 
 	steps.Lap("marks")
 
+	if _, err := ps.sealGenerations(); err != nil {
+		return errors.Wrap(err, "failed listing seals")
+	}
+
+	steps.Lap("seals")
+
 	sem := semaphore.NewWeighted(indexOpenerThreads)
 	group, ctx := errgroup.WithContext(context.Background())
 

@@ -344,6 +344,28 @@ func TestACollectionKeepsTheSealsOfTheSessionsThatBeganBeforeThem(t *testing.T) 
 	require.Equal(t, []uint64{3}, generations)
 }
 
+func TestASessionBegunRightAfterTheStoreOpensRecordsTheNewestSeal(t *testing.T) {
+	base := t.TempDir()
+	store := newGCStore(t, base)
+	ctx := context.Background()
+
+	for _, ahead := range []time.Duration{0, 48 * time.Hour} {
+		_, err := store.Collect(ctx, gcOptions(t, ahead))
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, store.Close())
+
+	reopened := newGCStore(t, base)
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	_, s := beginSession(t, reopened, "agent-a")
+
+	marker, err := reopened.markers.SessionBegin(s.ID)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, marker.Sealed)
+}
+
 func TestACollectionFindsTheTombstonesNoNewerThanTheCopiesTheyCondemn(t *testing.T) {
 	store := newGCStore(t, t.TempDir())
 	t.Cleanup(func() { _ = store.Close() })
