@@ -221,12 +221,20 @@ func (w *Walker) putAltStream(ctx context.Context, fsys MetadataFS, path string,
 // putContent stores content as a file object the way a file's content is
 // stored. A failure to store it comes back as a storageError.
 func (w *Walker) putContent(ctx context.Context, size int64, content io.Reader) (*proto.Ref, error) {
+	return writeContent(w.contentWriter(ctx, size), content)
+}
+
+func (w *Walker) contentWriter(ctx context.Context, size int64) *fileWriter {
 	writer := newFileWriter(ctx, w.Objects, w.Key, size)
 	writer.sent = w.sent
 	writer.cache = w.BlobCache
 	writer.uploaded = &w.result.Uploaded
 	writer.blobs = w.blobs
 
+	return writer
+}
+
+func writeContent(writer *fileWriter, content io.Reader) (*proto.Ref, error) {
 	read := &readErr{r: content}
 	if _, err := io.Copy(writer, read); err != nil {
 		if read.err != nil {

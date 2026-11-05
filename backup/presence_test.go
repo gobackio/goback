@@ -1,10 +1,15 @@
 package backup
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,11 +29,20 @@ type presenceStore struct {
 	mtx       sync.Mutex
 	confirms  int
 	missing   int
+	checks    int
 	onConfirm func()
 }
 
 func (p *presenceStore) Presence(context.Context, string) (presence.Set, error) {
 	return p.filters, nil
+}
+
+func (p *presenceStore) Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error) {
+	p.mtx.Lock()
+	p.checks++
+	p.mtx.Unlock()
+
+	return Missing(ctx, p.memStore, refs)
 }
 
 func (p *presenceStore) PutAssuming(ctx context.Context, obj *proto.Object, assumed []*proto.Ref) ([]*proto.Ref, error) {
@@ -267,6 +281,116 @@ type sourceOnly struct {
 
 func (s *sourceOnly) Presence(context.Context, string) (presence.Set, error) {
 	return s.filters, nil
+}
+
+type tarEntry struct {
+	name    string
+	content []byte
+}
+
+func tarStream(t *testing.T, entries ...tarEntry) *Stream {
+	t.Helper()
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+
+	for _, entry := range entries {
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: entry.name, Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(entry.content))}))
+		_, err := tw.Write(entry.content)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, tw.Close())
+
+	return &Stream{Tar: &buf}
+}
+
+// requireStreamed checks that the file at name in the commit's tree reads
+// back as content.
+func (f *walkerFixture) requireStreamed(commit *proto.Commit, name string, content []byte) {
+	f.t.Helper()
+
+	ctx := context.Background()
+	nodes := f.tree(commit.Tree)
+	var token []byte
+
+	dirs := strings.Split(name, "/")
+	for _, dir := range dirs[:len(dirs)-1] {
+		token = NameToken(nil, token, []byte(dir))
+
+		tree, err := OpenTree(ctx, f.store, nodes[dir].Ref, nil, token)
+		require.NoError(f.t, err)
+
+		nodes = map[string]*proto.TreeNode{}
+		for _, node := range tree.Nodes {
+			nodes[string(node.Stat.Name)] = node
+		}
+	}
+
+	read, err := NewBackupReader(f.store).ReadFile(ctx, nodes[dirs[len(dirs)-1]].Ref)
+	require.NoError(f.t, err)
+	got, err := io.ReadAll(read)
+	require.NoError(f.t, err)
+	require.Equal(f.t, content, got, name)
+}
+
+func TestAStreamSkipsThePartsItsBaseHeldAtTheSamePath(t *testing.T) {
+	f := newWalkerFixture(t)
+	ps := withPresence(f, nil)
+	a, b := f.random(3<<20), f.random(2<<20)
+
+	f.walker.Stream = tarStream(t, tarEntry{"db/1/a", a}, tarEntry{"db/1/b", b})
+	f.run()
+
+	changed := slices.Clone(b)
+	changed[len(changed)/2] ^= 0xff
+
+	f.walker.Stream = tarStream(t, tarEntry{"db/1/a", a}, tarEntry{"db/1/b", changed})
+	second := f.run()
+
+	f.requireStreamed(second.Commit, "db/1/a", a)
+	f.requireStreamed(second.Commit, "db/1/b", changed)
+	require.Less(t, second.Uploaded, int64(1<<20), "only the chunks around the changed byte go up")
+	require.Positive(t, second.Assumed)
+	require.Zero(t, ps.missing)
+}
+
+func TestAStreamSkipsWhatTheFiltersHitOnceTheStoreSaysItHoldsIt(t *testing.T) {
+	f := newWalkerFixture(t)
+	content := f.random(3 << 20)
+
+	f.walker.Stream = tarStream(t, tarEntry{"a", content})
+	first := f.run()
+
+	ps := withPresence(f, presence.Set{f.filterOf(first.Ref)})
+	f.walker.Stream = tarStream(t, tarEntry{"moved/a", content})
+	second := f.run()
+
+	f.requireStreamed(second.Commit, "moved/a", content)
+	require.Zero(t, second.Uploaded, "every chunk moved with the file")
+	require.Positive(t, second.Assumed)
+	require.Positive(t, ps.checks)
+	require.Zero(t, ps.missing)
+}
+
+func TestAStreamUploadsTheFilterHitsTheStoreLacks(t *testing.T) {
+	content := make([]byte, 3<<20)
+	copy(content, []byte("false positive"))
+
+	donor := newWalkerFixture(t)
+	donor.walker.Stream = tarStream(t, tarEntry{"a", content})
+	filter := donor.filterOf(donor.run().Ref)
+
+	f := newWalkerFixture(t)
+	f.walker.WindowBytes = 1
+	ps := withPresence(f, presence.Set{filter})
+	f.walker.Stream = tarStream(t, tarEntry{"a", content})
+	result := f.run()
+
+	f.requireStreamed(result.Commit, "a", content)
+	require.Zero(t, result.Assumed)
+	require.Positive(t, ps.checks)
+	require.Zero(t, ps.missing, "nothing the store lacked was assumed")
 }
 
 func TestChunkWindowEvictsOldest(t *testing.T) {

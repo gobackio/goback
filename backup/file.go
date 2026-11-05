@@ -94,6 +94,12 @@ type fileWriter struct {
 	// forced refs are uploaded whatever known and the filters say
 	forced map[string]struct{}
 
+	// checker, set for content that cannot be read again, asks the store
+	// about filter hits before they are dropped instead of assuming them
+	checker refChecker
+	held    []heldChunk
+	heldLen int
+
 	// assumed are the parts skipped on the strength of known or a filter,
 	// by ref, until the confirmer answers for them
 	assumed  map[string]*proto.FilePart
@@ -208,6 +214,11 @@ func (bfw *fileWriter) split(length int) {
 	if _, forced := bfw.forced[key]; !forced {
 		_, known := bfw.known[key]
 		if known || (bfw.confirmer != nil && bfw.filters.Test(ref.Hash)) {
+			if !known && bfw.checker != nil {
+				bfw.hold(heldChunk{ref: ref, blob: blob, part: part})
+				return
+			}
+
 			if bfw.confirmer != nil {
 				bfw.assumed[key] = part
 				bfw.window.put(key, blob, length)
@@ -218,6 +229,67 @@ func (bfw *fileWriter) split(length int) {
 	}
 
 	bfw.upload(ref, blob, length)
+}
+
+// Filter hits a checker answers for are held until heldChunks of them or
+// heldBytes of content wait.
+const (
+	heldChunks = 256
+	heldBytes  = 32 << 20
+)
+
+type refChecker interface {
+	Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, error)
+}
+
+type heldChunk struct {
+	ref  *proto.Ref
+	blob *proto.Object
+	part *proto.FilePart
+}
+
+func (bfw *fileWriter) hold(chunk heldChunk) {
+	bfw.held = append(bfw.held, chunk)
+	bfw.heldLen += int(chunk.part.Length)
+
+	if len(bfw.held) >= heldChunks || bfw.heldLen >= heldBytes {
+		bfw.check()
+	}
+}
+
+// check asks the store which held chunks it lacks, uploads those and
+// assumes the rest.
+func (bfw *fileWriter) check() {
+	if len(bfw.held) == 0 {
+		return
+	}
+
+	held := bfw.held
+	bfw.held, bfw.heldLen = nil, 0
+
+	refs := make([]*proto.Ref, len(held))
+	for i, chunk := range held {
+		refs[i] = chunk.ref
+	}
+
+	missing, err := bfw.checker.Missing(bfw.ctx, refs)
+	if err != nil {
+		bfw.storageErr.Store(err)
+		return
+	}
+
+	lacks := make(map[string]bool, len(missing))
+	for _, ref := range missing {
+		lacks[string(ref.Hash)] = true
+	}
+
+	for _, chunk := range held {
+		if lacks[string(chunk.ref.Hash)] {
+			bfw.upload(chunk.ref, chunk.blob, int(chunk.part.Length))
+		} else {
+			bfw.assumed[string(chunk.ref.Hash)] = chunk.part
+		}
+	}
 }
 
 // hole records the next n bytes of the file as a run of zeros it left
@@ -511,9 +583,15 @@ func (bfw *fileWriter) Close() (err error) {
 		bfw.chunker.Reset()
 	}
 
+	bfw.check()
+
 	// the store checks a file's parts, so the uploads must land first
 	if err = bfw.settle(); err != nil {
 		return err
+	}
+
+	if deferred := bfw.storageErr.Load(); deferred != nil {
+		return deferred.(error)
 	}
 
 	return bfw.putParts()

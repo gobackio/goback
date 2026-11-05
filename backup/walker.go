@@ -179,6 +179,7 @@ type Walker struct {
 
 	filters   presence.Set
 	confirmer Confirmer
+	checker   refChecker
 	blobs     *blobBatcher
 	// rescan and damaged come from the commit grant: what the store lost
 	// and needs read again rather than assumed unchanged
@@ -628,7 +629,7 @@ func (w *Walker) walk(ctx context.Context) (*WalkResult, error) {
 	)
 
 	if w.Stream != nil {
-		nodes, err = w.putStream(ctx)
+		nodes, err = w.putStream(ctx, baseNodes)
 		if err != nil {
 			return nil, err
 		}
@@ -768,6 +769,7 @@ func (w *Walker) loadPresence(ctx context.Context) {
 	inner := unwrapStore(w.Objects)
 
 	w.confirmer, _ = inner.(Confirmer)
+	w.checker, _ = inner.(refChecker)
 	w.filters = nil
 
 	budget := w.WindowBytes
