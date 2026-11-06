@@ -18,6 +18,7 @@ import (
 	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 func TestIndexKeepsSealedOwnerNames(t *testing.T) {
@@ -1500,4 +1501,14 @@ func TestOneRetirementPrunesEachSetsDeepTreesOnItsOwn(t *testing.T) {
 			require.True(t, ok, "%s: %x the live commit reaches", name, ref.Hash)
 		}
 	}
+}
+
+func TestARebuildStopsAtACommitWithFieldsItDoesNotKnow(t *testing.T) {
+	f := newFixture(t)
+
+	commit := &proto.Commit{Timestamp: 1, Tree: f.tree(f.file("a.txt", "one")).Ref(), BackupSet: "world"}
+	commit.ProtoReflect().SetUnknown(protowire.AppendVarint(protowire.AppendTag(nil, 99, protowire.VarintType), 1))
+	f.store.objects["newer"] = proto.NewObject(commit)
+
+	require.ErrorIs(t, reindexErr(f.index().ReIndex(f.ctx)), proto.ErrInvalidObject)
 }

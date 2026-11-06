@@ -1488,6 +1488,11 @@ func (x *Index) reIndex(ctx context.Context, report *backup.ReIndexReport) error
 
 	err = x.ObjectStore.Walk(ctx, true, proto.ObjectType_COMMIT, func(obj *proto.Object) error {
 		phase.Add(1, 0)
+
+		if err := obj.Validate(); err != nil {
+			return fmt.Errorf("rebuilding from a commit: %w", err)
+		}
+
 		ref := obj.Ref()
 
 		gone, err := isDeleted(ctx, x.client, ref.Hash)

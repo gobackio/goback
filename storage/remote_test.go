@@ -1067,7 +1067,7 @@ type sized struct{ *memIndex }
 func (sized) CommitSizes(context.Context, string, time.Time, int) ([]*proto.Commit, []*proto.CommitSize, error) {
 	bytes, files := int64(4096), int64(3)
 
-	return []*proto.Commit{{BackupSet: "world"}}, []*proto.CommitSize{{LogicalBytes: &bytes, Files: &files}}, nil
+	return []*proto.Commit{{BackupSet: "world", Tree: proto.HashPayload(proto.ObjectType_TREE, nil)}}, []*proto.CommitSize{{LogicalBytes: &bytes, Files: &files}}, nil
 }
 
 func TestRemoteCommitSizesCrossTheWire(t *testing.T) {
@@ -1080,7 +1080,7 @@ func TestRemoteCommitSizesCrossTheWire(t *testing.T) {
 	require.EqualValues(t, 3, sizes[0].GetFiles())
 
 	unmeasured := newMemIndex()
-	unmeasured.commits = []*proto.Commit{{BackupSet: "world"}}
+	unmeasured.commits = []*proto.Commit{{BackupSet: "world", Tree: proto.HashPayload(proto.ObjectType_TREE, nil)}}
 	commits, sizes, err = startServerWith(t, unmeasured, nil)("node-1").CommitSizes(ctx, "world", time.Now(), 1)
 	require.NoError(t, err)
 	require.Len(t, sizes, len(commits), "a store that measures nothing still answers each commit")

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/storage/pack"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 // wire is a store server that records the objects its clients send and
@@ -27,6 +29,9 @@ type wire struct {
 	mtx    sync.Mutex
 	sent   []*proto.Stored
 	served []*proto.Stored
+
+	// commits, when set, is what CommitInfo answers with
+	commits []*proto.Commit
 }
 
 func (w *wire) record(to *[]*proto.Stored, stored ...*proto.Stored) {
@@ -34,6 +39,14 @@ func (w *wire) record(to *[]*proto.Stored, stored ...*proto.Stored) {
 	defer w.mtx.Unlock()
 
 	*to = append(*to, stored...)
+}
+
+func (w *wire) CommitInfo(ctx context.Context, request *proto.CommitInfoRequest) (*proto.CommitInfoResponse, error) {
+	if w.commits != nil {
+		return &proto.CommitInfoResponse{Commits: w.commits}, nil
+	}
+
+	return w.Server.CommitInfo(ctx, request)
 }
 
 func (w *wire) Put(ctx context.Context, request *proto.PutRequest) (*proto.PutResponse, error) {
@@ -346,4 +359,15 @@ func TestTreesFilesAndCommitsTravelCompressed(t *testing.T) {
 		require.Equal(t, proto.Compression_ZSTD, sent.Compression, kind.String())
 		require.Less(t, len(sent.Data), len(payload), kind.String())
 	}
+}
+
+func TestACommitListedWithFieldsTheClientDoesNotKnowIsAnError(t *testing.T) {
+	w, client, _ := serveWire(t)
+
+	commit := &proto.Commit{Timestamp: 1, Tree: proto.HashPayload(proto.ObjectType_TREE, nil), BackupSet: "s"}
+	commit.ProtoReflect().SetUnknown(protowire.AppendVarint(protowire.AppendTag(nil, 99, protowire.VarintType), 1))
+	w.commits = []*proto.Commit{commit}
+
+	_, err := client.CommitInfo(context.Background(), "s", time.Now(), 1)
+	require.ErrorIs(t, err, proto.ErrInvalidObject)
 }

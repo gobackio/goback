@@ -273,6 +273,12 @@ func (r *Client) CommitSizes(ctx context.Context, set string, notAfter time.Time
 		return nil, nil, err
 	}
 
+	for _, commit := range response.Commits {
+		if err := proto.NewObject(commit).Validate(); err != nil {
+			return nil, nil, fmt.Errorf("commit of set %s: %w", set, err)
+		}
+	}
+
 	sizes := response.Sizes
 	if len(sizes) != len(response.Commits) {
 		sizes = make([]*proto.CommitSize, len(response.Commits))
