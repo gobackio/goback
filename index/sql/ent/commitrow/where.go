@@ -165,11 +165,6 @@ func FileCount(v int64) predicate.CommitRow {
 	return predicate.CommitRow(sql.FieldEQ(FieldFileCount, v))
 }
 
-// GobackVersion applies equality check predicate on the "goback_version" field. It's identical to GobackVersionEQ.
-func GobackVersion(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldEQ(FieldGobackVersion, v))
-}
-
 // RefEQ applies the EQ predicate on the "ref" field.
 func RefEQ(v []byte) predicate.CommitRow {
 	return predicate.CommitRow(sql.FieldEQ(FieldRef, v))
@@ -1148,81 +1143,6 @@ func MetadataIsNil() predicate.CommitRow {
 // MetadataNotNil applies the NotNil predicate on the "metadata" field.
 func MetadataNotNil() predicate.CommitRow {
 	return predicate.CommitRow(sql.FieldNotNull(FieldMetadata))
-}
-
-// GobackVersionEQ applies the EQ predicate on the "goback_version" field.
-func GobackVersionEQ(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldEQ(FieldGobackVersion, v))
-}
-
-// GobackVersionNEQ applies the NEQ predicate on the "goback_version" field.
-func GobackVersionNEQ(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldNEQ(FieldGobackVersion, v))
-}
-
-// GobackVersionIn applies the In predicate on the "goback_version" field.
-func GobackVersionIn(vs ...string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldIn(FieldGobackVersion, vs...))
-}
-
-// GobackVersionNotIn applies the NotIn predicate on the "goback_version" field.
-func GobackVersionNotIn(vs ...string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldNotIn(FieldGobackVersion, vs...))
-}
-
-// GobackVersionGT applies the GT predicate on the "goback_version" field.
-func GobackVersionGT(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldGT(FieldGobackVersion, v))
-}
-
-// GobackVersionGTE applies the GTE predicate on the "goback_version" field.
-func GobackVersionGTE(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldGTE(FieldGobackVersion, v))
-}
-
-// GobackVersionLT applies the LT predicate on the "goback_version" field.
-func GobackVersionLT(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldLT(FieldGobackVersion, v))
-}
-
-// GobackVersionLTE applies the LTE predicate on the "goback_version" field.
-func GobackVersionLTE(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldLTE(FieldGobackVersion, v))
-}
-
-// GobackVersionContains applies the Contains predicate on the "goback_version" field.
-func GobackVersionContains(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldContains(FieldGobackVersion, v))
-}
-
-// GobackVersionHasPrefix applies the HasPrefix predicate on the "goback_version" field.
-func GobackVersionHasPrefix(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldHasPrefix(FieldGobackVersion, v))
-}
-
-// GobackVersionHasSuffix applies the HasSuffix predicate on the "goback_version" field.
-func GobackVersionHasSuffix(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldHasSuffix(FieldGobackVersion, v))
-}
-
-// GobackVersionIsNil applies the IsNil predicate on the "goback_version" field.
-func GobackVersionIsNil() predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldIsNull(FieldGobackVersion))
-}
-
-// GobackVersionNotNil applies the NotNil predicate on the "goback_version" field.
-func GobackVersionNotNil() predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldNotNull(FieldGobackVersion))
-}
-
-// GobackVersionEqualFold applies the EqualFold predicate on the "goback_version" field.
-func GobackVersionEqualFold(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldEqualFold(FieldGobackVersion, v))
-}
-
-// GobackVersionContainsFold applies the ContainsFold predicate on the "goback_version" field.
-func GobackVersionContainsFold(v string) predicate.CommitRow {
-	return predicate.CommitRow(sql.FieldContainsFold(FieldGobackVersion, v))
 }
 
 // HasSet applies the HasEdge predicate on the "set" edge.

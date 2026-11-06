@@ -526,7 +526,7 @@ func TestWalkerUnchangedRunUploadsOnlyTheCommit(t *testing.T) {
 	require.EqualValues(t, 0, first.Reused)
 	require.False(t, first.Commit.Partial)
 	require.Equal(t, "agent", first.Commit.AgentId)
-	require.Equal(t, map[string]string{"env": "test"}, first.Commit.Metadata)
+	require.Equal(t, "test", first.Commit.Metadata["env"])
 	require.NotZero(t, first.Commit.ScanStartNs)
 
 	root := f.tree(first.Commit.Tree)

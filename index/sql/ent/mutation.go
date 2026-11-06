@@ -818,7 +818,6 @@ type CommitRowMutation struct {
 	file_count        *int64
 	addfile_count     *int64
 	metadata          *map[string]string
-	goback_version    *string
 	clearedFields     map[string]struct{}
 	set               *int64
 	clearedset        bool
@@ -1978,55 +1977,6 @@ func (m *CommitRowMutation) ResetMetadata() {
 	delete(m.clearedFields, commitrow.FieldMetadata)
 }
 
-// SetGobackVersion sets the "goback_version" field.
-func (m *CommitRowMutation) SetGobackVersion(s string) {
-	m.goback_version = &s
-}
-
-// GobackVersion returns the value of the "goback_version" field in the mutation.
-func (m *CommitRowMutation) GobackVersion() (r string, exists bool) {
-	v := m.goback_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldGobackVersion returns the old "goback_version" field's value of the CommitRow entity.
-// If the CommitRow object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *CommitRowMutation) OldGobackVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldGobackVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldGobackVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldGobackVersion: %w", err)
-	}
-	return oldValue.GobackVersion, nil
-}
-
-// ClearGobackVersion clears the value of the "goback_version" field.
-func (m *CommitRowMutation) ClearGobackVersion() {
-	m.goback_version = nil
-	m.clearedFields[commitrow.FieldGobackVersion] = struct{}{}
-}
-
-// GobackVersionCleared returns if the "goback_version" field was cleared in this mutation.
-func (m *CommitRowMutation) GobackVersionCleared() bool {
-	_, ok := m.clearedFields[commitrow.FieldGobackVersion]
-	return ok
-}
-
-// ResetGobackVersion resets all changes to the "goback_version" field.
-func (m *CommitRowMutation) ResetGobackVersion() {
-	m.goback_version = nil
-	delete(m.clearedFields, commitrow.FieldGobackVersion)
-}
-
 // ClearSet clears the "set" edge to the Set entity.
 func (m *CommitRowMutation) ClearSet() {
 	m.clearedset = true
@@ -2088,7 +2038,7 @@ func (m *CommitRowMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *CommitRowMutation) Fields() []string {
-	fields := make([]string, 0, 24)
+	fields := make([]string, 0, 23)
 	if m.ref != nil {
 		fields = append(fields, commitrow.FieldRef)
 	}
@@ -2158,9 +2108,6 @@ func (m *CommitRowMutation) Fields() []string {
 	if m.metadata != nil {
 		fields = append(fields, commitrow.FieldMetadata)
 	}
-	if m.goback_version != nil {
-		fields = append(fields, commitrow.FieldGobackVersion)
-	}
 	return fields
 }
 
@@ -2215,8 +2162,6 @@ func (m *CommitRowMutation) Field(name string) (ent.Value, bool) {
 		return m.FileCount()
 	case commitrow.FieldMetadata:
 		return m.Metadata()
-	case commitrow.FieldGobackVersion:
-		return m.GobackVersion()
 	}
 	return nil, false
 }
@@ -2272,8 +2217,6 @@ func (m *CommitRowMutation) OldField(ctx context.Context, name string) (ent.Valu
 		return m.OldFileCount(ctx)
 	case commitrow.FieldMetadata:
 		return m.OldMetadata(ctx)
-	case commitrow.FieldGobackVersion:
-		return m.OldGobackVersion(ctx)
 	}
 	return nil, fmt.Errorf("unknown CommitRow field %s", name)
 }
@@ -2444,13 +2387,6 @@ func (m *CommitRowMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetMetadata(v)
 		return nil
-	case commitrow.FieldGobackVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetGobackVersion(v)
-		return nil
 	}
 	return fmt.Errorf("unknown CommitRow field %s", name)
 }
@@ -2565,9 +2501,6 @@ func (m *CommitRowMutation) ClearedFields() []string {
 	if m.FieldCleared(commitrow.FieldMetadata) {
 		fields = append(fields, commitrow.FieldMetadata)
 	}
-	if m.FieldCleared(commitrow.FieldGobackVersion) {
-		fields = append(fields, commitrow.FieldGobackVersion)
-	}
 	return fields
 }
 
@@ -2614,9 +2547,6 @@ func (m *CommitRowMutation) ClearField(name string) error {
 		return nil
 	case commitrow.FieldMetadata:
 		m.ClearMetadata()
-		return nil
-	case commitrow.FieldGobackVersion:
-		m.ClearGobackVersion()
 		return nil
 	}
 	return fmt.Errorf("unknown CommitRow nullable field %s", name)
@@ -2694,9 +2624,6 @@ func (m *CommitRowMutation) ResetField(name string) error {
 		return nil
 	case commitrow.FieldMetadata:
 		m.ResetMetadata()
-		return nil
-	case commitrow.FieldGobackVersion:
-		m.ResetGobackVersion()
 		return nil
 	}
 	return fmt.Errorf("unknown CommitRow field %s", name)

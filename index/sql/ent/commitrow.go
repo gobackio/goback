@@ -65,8 +65,6 @@ type CommitRow struct {
 	FileCount *int64 `json:"file_count,omitempty"`
 	// Metadata holds the value of the "metadata" field.
 	Metadata map[string]string `json:"metadata,omitempty"`
-	// GobackVersion holds the value of the "goback_version" field.
-	GobackVersion string `json:"goback_version,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the CommitRowQuery when eager-loading is set.
 	Edges        CommitRowEdges `json:"edges"`
@@ -104,7 +102,7 @@ func (*CommitRow) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case commitrow.FieldID, commitrow.FieldScanStartNs, commitrow.FieldPolicyVersion, commitrow.FieldSetID, commitrow.FieldLogicalSize, commitrow.FieldFileCount:
 			values[i] = new(sql.NullInt64)
-		case commitrow.FieldAgentID, commitrow.FieldKeyID, commitrow.FieldRetainedBy, commitrow.FieldRetirePolicy, commitrow.FieldGobackVersion:
+		case commitrow.FieldAgentID, commitrow.FieldKeyID, commitrow.FieldRetainedBy, commitrow.FieldRetirePolicy:
 			values[i] = new(sql.NullString)
 		case commitrow.FieldTimestamp, commitrow.FieldReceivedAt, commitrow.FieldRetireAt, commitrow.FieldDeletedAt, commitrow.FieldExpiresAt, commitrow.FieldTombstonedAt:
 			values[i] = new(sql.NullTime)
@@ -277,12 +275,6 @@ func (_m *CommitRow) assignValues(columns []string, values []any) error {
 					return fmt.Errorf("unmarshal field metadata: %w", err)
 				}
 			}
-		case commitrow.FieldGobackVersion:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field goback_version", values[i])
-			} else if value.Valid {
-				_m.GobackVersion = value.String
-			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -408,9 +400,6 @@ func (_m *CommitRow) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("metadata=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Metadata))
-	builder.WriteString(", ")
-	builder.WriteString("goback_version=")
-	builder.WriteString(_m.GobackVersion)
 	builder.WriteByte(')')
 	return builder.String()
 }

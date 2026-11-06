@@ -251,3 +251,5 @@ require (
 go 1.27.0
 
 tool github.com/ligustah/mapper
+
+retract v1.120.0 // its commits are refused by every other version

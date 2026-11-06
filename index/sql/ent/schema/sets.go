@@ -112,7 +112,6 @@ func (CommitRow) Fields() []ent.Field {
 		// logical_size
 		field.Int64("file_count").Optional().Nillable(),
 		field.JSON("metadata", map[string]string{}).Optional(),
-		field.String("goback_version").Optional(),
 	}
 }
 

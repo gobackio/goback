@@ -23,7 +23,6 @@ type Mapper interface {
 	// field:Parent using:"Hex"
 	// field:Set from:"BackupSet"
 	// field:Agent from:"AgentId"
-	// field:Version from:"GobackVersion"
 	// field:Time from:"Timestamp" using:"Unix"
 	Commit(in *proto.Commit) CommitView
 
@@ -216,7 +215,6 @@ type CommitView struct {
 	Parent     string            `json:"parent,omitempty"`
 	Set        string            `json:"set"`
 	Agent      string            `json:"agent,omitempty"`
-	Version    string            `json:"version,omitempty"`
 	Time       time.Time         `json:"time"`
 	Consistent bool              `json:"consistent"`
 	Partial    bool              `json:"partial,omitempty"`

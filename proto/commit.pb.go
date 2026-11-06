@@ -54,10 +54,7 @@ type Commit struct {
 	// the store may lack: the store marks what it lacks lost and stores the
 	// commit with the trees rewritten, or with the flag cleared when it lacks
 	// nothing
-	Incomplete bool `protobuf:"varint,15,opt,name=incomplete,proto3" json:"incomplete,omitempty"`
-	// the goback version that wrote the commit, as backup.Version reports it;
-	// empty on a commit written before it was recorded
-	GobackVersion string `protobuf:"bytes,16,opt,name=goback_version,json=gobackVersion,proto3" json:"goback_version,omitempty"`
+	Incomplete    bool `protobuf:"varint,15,opt,name=incomplete,proto3" json:"incomplete,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -190,18 +187,11 @@ func (x *Commit) GetIncomplete() bool {
 	return false
 }
 
-func (x *Commit) GetGobackVersion() string {
-	if x != nil {
-		return x.GobackVersion
-	}
-	return ""
-}
-
 var File_commit_proto protoreflect.FileDescriptor
 
 const file_commit_proto_rawDesc = "" +
 	"\n" +
-	"\fcommit.proto\x12\x05proto\x1a\tref.proto\"\xd0\x04\n" +
+	"\fcommit.proto\x12\x05proto\x1a\tref.proto\"\xaf\x04\n" +
 	"\x06Commit\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\x12\x1e\n" +
 	"\x04tree\x18\x02 \x01(\v2\n" +
@@ -224,12 +214,11 @@ const file_commit_proto_rawDesc = "" +
 	"\x06key_id\x18\x0e \x01(\fH\x00R\x05keyId\x88\x01\x01\x12\x1e\n" +
 	"\n" +
 	"incomplete\x18\x0f \x01(\bR\n" +
-	"incomplete\x12%\n" +
-	"\x0egoback_version\x18\x10 \x01(\tR\rgobackVersion\x1a;\n" +
+	"incomplete\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\t\n" +
-	"\a_key_idJ\x04\b\b\x10\tB\"Z github.com/gobackio/goback/protob\x06proto3"
+	"\a_key_idJ\x04\b\b\x10\tJ\x04\b\x10\x10\x11B\"Z github.com/gobackio/goback/protob\x06proto3"
 
 var (
 	file_commit_proto_rawDescOnce sync.Once

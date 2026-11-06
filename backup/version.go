@@ -1,14 +1,21 @@
 package backup
 
-import "runtime/debug"
+import (
+	"maps"
+	"runtime/debug"
+)
+
+// MetaVersion is the commit metadata key holding the Version that wrote the
+// commit.
+const MetaVersion = "goback.version"
 
 const module = "github.com/gobackio/goback"
 
 var buildVersion = readVersion()
 
 // Version returns the goback module version the running program was built
-// with, whether goback is the program or a library it links. It is empty when
-// the build records none, and every commit a Walker writes carries it.
+// with, whether goback is the program or a library it links, and is empty
+// when the build records none.
 func Version() string { return buildVersion }
 
 func readVersion() string {
@@ -38,4 +45,22 @@ func moduleVersion(info *debug.BuildInfo) string {
 	}
 
 	return ""
+}
+
+// commitMetadata is what a commit of this run records: the walker's Metadata
+// and the Version writing it.
+func (w *Walker) commitMetadata() map[string]string {
+	version := Version()
+	if version == "" {
+		return w.Metadata
+	}
+
+	metadata := maps.Clone(w.Metadata)
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+
+	metadata[MetaVersion] = version
+
+	return metadata
 }

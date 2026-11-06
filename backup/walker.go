@@ -715,7 +715,7 @@ func (w *Walker) recent(base *proto.Commit) bool {
 		return false
 	}
 
-	if base.PolicyVersion != w.policyVersion || !maps.Equal(base.Metadata, w.Metadata) {
+	if base.PolicyVersion != w.policyVersion || !maps.Equal(base.Metadata, w.commitMetadata()) {
 		return false
 	}
 
@@ -857,16 +857,15 @@ func (w *Walker) loadBase(ctx context.Context) ([]*proto.TreeNode, error) {
 
 func (w *Walker) putCommit(ctx context.Context, tree *proto.Ref, partial bool) (*proto.Ref, *proto.Commit, error) {
 	commit := &proto.Commit{
-		Timestamp:     time.Now().Unix(),
-		Tree:          tree,
-		BackupSet:     w.Set,
-		Parent:        w.base,
-		AgentId:       w.AgentID,
-		Metadata:      w.Metadata,
-		ScanStartNs:   w.scanStart,
-		Partial:       partial,
-		Consistent:    !partial && w.Quiesced && atomic.LoadInt64(&w.result.Torn) == 0 && atomic.LoadInt64(&w.result.Unreadable) == 0,
-		GobackVersion: Version(),
+		Timestamp:   time.Now().Unix(),
+		Tree:        tree,
+		BackupSet:   w.Set,
+		Parent:      w.base,
+		AgentId:     w.AgentID,
+		Metadata:    w.commitMetadata(),
+		ScanStartNs: w.scanStart,
+		Partial:     partial,
+		Consistent:  !partial && w.Quiesced && atomic.LoadInt64(&w.result.Torn) == 0 && atomic.LoadInt64(&w.result.Unreadable) == 0,
 	}
 
 	commit.PolicyVersion = w.policyVersion

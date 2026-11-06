@@ -31,7 +31,6 @@ func (m MapperImpl) Commit(in *proto.Commit) views.CommitView {
 		Parent:     views.Hex(in.Parent),
 		Set:        in.BackupSet,
 		Agent:      in.AgentId,
-		Version:    in.GobackVersion,
 		Time:       views.Unix(in.Timestamp),
 		Consistent: in.Consistent,
 		Partial:    in.Partial,

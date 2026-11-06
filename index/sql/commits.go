@@ -650,7 +650,7 @@ func (x *Index) applyCommit(ctx context.Context, commit *proto.Commit, ref *prot
 		steps.Lap("size")
 
 		row := c.CommitRow.Create().SetRef(ref.Hash).SetTimestamp(time.Unix(commit.Timestamp, 0).UTC()).SetReceivedAt(at).
-			SetTree(commit.Tree.Hash).SetParent(commit.GetParent().GetHash()).SetAgentID(commit.GetAgentId()).SetGobackVersion(commit.GetGobackVersion()).
+			SetTree(commit.Tree.Hash).SetParent(commit.GetParent().GetHash()).SetAgentID(commit.GetAgentId()).
 			SetScanStartNs(commit.GetScanStartNs()).SetPolicyVersion(commit.GetPolicyVersion()).SetConsistent(commit.GetConsistent()).
 			SetSetID(setID).SetPartial(commit.Partial).SetMetadata(commit.GetMetadata()).SetLogicalSize(size).SetFileCount(files).
 			SetIncomplete(commit.GetIncomplete() || len(diff.holes)+len(diff.gaps) > 0)

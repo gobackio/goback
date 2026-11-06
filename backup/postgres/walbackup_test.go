@@ -485,15 +485,16 @@ func TestTheSegmentBeingReceivedIsCommittedAsPartialUntilItIsWhole(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, map[string]int64{one: 41, walName(1, 2) + partialSuffix: 1000}, f.sizes(result))
 	require.Equal(t, map[string]string{
-		MetaFirstWALFile: one,
-		MetaLastWALFile:  one,
-		MetaSystemID:     "42",
-		MetaTimeline:     "1",
-		MetaEndLSN:       FormatLSN(2*segSize + 1000),
-		MetaCapture:      CaptureReplication,
-		MetaBaseSet:      "db-base",
-		MetaWindow:       "336h0m0s",
-		backup.MetaKind:  backup.KindPostgresWAL,
+		MetaFirstWALFile:   one,
+		MetaLastWALFile:    one,
+		MetaSystemID:       "42",
+		MetaTimeline:       "1",
+		MetaEndLSN:         FormatLSN(2*segSize + 1000),
+		MetaCapture:        CaptureReplication,
+		MetaBaseSet:        "db-base",
+		MetaWindow:         "336h0m0s",
+		backup.MetaKind:    backup.KindPostgresWAL,
+		backup.MetaVersion: backup.Version(),
 	}, result.Commit.Metadata)
 
 	result, err = f.receive(f.receiving(1, 2, 300<<10))

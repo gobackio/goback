@@ -281,20 +281,6 @@ func (_c *CommitRowCreate) SetMetadata(v map[string]string) *CommitRowCreate {
 	return _c
 }
 
-// SetGobackVersion sets the "goback_version" field.
-func (_c *CommitRowCreate) SetGobackVersion(v string) *CommitRowCreate {
-	_c.mutation.SetGobackVersion(v)
-	return _c
-}
-
-// SetNillableGobackVersion sets the "goback_version" field if the given value is not nil.
-func (_c *CommitRowCreate) SetNillableGobackVersion(v *string) *CommitRowCreate {
-	if v != nil {
-		_c.SetGobackVersion(*v)
-	}
-	return _c
-}
-
 // SetSet sets the "set" edge to the Set entity.
 func (_c *CommitRowCreate) SetSet(v *Set) *CommitRowCreate {
 	return _c.SetSetID(v.ID)
@@ -520,10 +506,6 @@ func (_c *CommitRowCreate) createSpec() (*CommitRow, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Metadata(); ok {
 		_spec.SetField(commitrow.FieldMetadata, field.TypeJSON, value)
 		_node.Metadata = value
-	}
-	if value, ok := _c.mutation.GobackVersion(); ok {
-		_spec.SetField(commitrow.FieldGobackVersion, field.TypeString, value)
-		_node.GobackVersion = value
 	}
 	if nodes := _c.mutation.SetIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -945,24 +927,6 @@ func (u *CommitRowUpsert) UpdateMetadata() *CommitRowUpsert {
 // ClearMetadata clears the value of the "metadata" field.
 func (u *CommitRowUpsert) ClearMetadata() *CommitRowUpsert {
 	u.SetNull(commitrow.FieldMetadata)
-	return u
-}
-
-// SetGobackVersion sets the "goback_version" field.
-func (u *CommitRowUpsert) SetGobackVersion(v string) *CommitRowUpsert {
-	u.Set(commitrow.FieldGobackVersion, v)
-	return u
-}
-
-// UpdateGobackVersion sets the "goback_version" field to the value that was provided on create.
-func (u *CommitRowUpsert) UpdateGobackVersion() *CommitRowUpsert {
-	u.SetExcluded(commitrow.FieldGobackVersion)
-	return u
-}
-
-// ClearGobackVersion clears the value of the "goback_version" field.
-func (u *CommitRowUpsert) ClearGobackVersion() *CommitRowUpsert {
-	u.SetNull(commitrow.FieldGobackVersion)
 	return u
 }
 
@@ -1421,27 +1385,6 @@ func (u *CommitRowUpsertOne) UpdateMetadata() *CommitRowUpsertOne {
 func (u *CommitRowUpsertOne) ClearMetadata() *CommitRowUpsertOne {
 	return u.Update(func(s *CommitRowUpsert) {
 		s.ClearMetadata()
-	})
-}
-
-// SetGobackVersion sets the "goback_version" field.
-func (u *CommitRowUpsertOne) SetGobackVersion(v string) *CommitRowUpsertOne {
-	return u.Update(func(s *CommitRowUpsert) {
-		s.SetGobackVersion(v)
-	})
-}
-
-// UpdateGobackVersion sets the "goback_version" field to the value that was provided on create.
-func (u *CommitRowUpsertOne) UpdateGobackVersion() *CommitRowUpsertOne {
-	return u.Update(func(s *CommitRowUpsert) {
-		s.UpdateGobackVersion()
-	})
-}
-
-// ClearGobackVersion clears the value of the "goback_version" field.
-func (u *CommitRowUpsertOne) ClearGobackVersion() *CommitRowUpsertOne {
-	return u.Update(func(s *CommitRowUpsert) {
-		s.ClearGobackVersion()
 	})
 }
 
@@ -2066,27 +2009,6 @@ func (u *CommitRowUpsertBulk) UpdateMetadata() *CommitRowUpsertBulk {
 func (u *CommitRowUpsertBulk) ClearMetadata() *CommitRowUpsertBulk {
 	return u.Update(func(s *CommitRowUpsert) {
 		s.ClearMetadata()
-	})
-}
-
-// SetGobackVersion sets the "goback_version" field.
-func (u *CommitRowUpsertBulk) SetGobackVersion(v string) *CommitRowUpsertBulk {
-	return u.Update(func(s *CommitRowUpsert) {
-		s.SetGobackVersion(v)
-	})
-}
-
-// UpdateGobackVersion sets the "goback_version" field to the value that was provided on create.
-func (u *CommitRowUpsertBulk) UpdateGobackVersion() *CommitRowUpsertBulk {
-	return u.Update(func(s *CommitRowUpsert) {
-		s.UpdateGobackVersion()
-	})
-}
-
-// ClearGobackVersion clears the value of the "goback_version" field.
-func (u *CommitRowUpsertBulk) ClearGobackVersion() *CommitRowUpsertBulk {
-	return u.Update(func(s *CommitRowUpsert) {
-		s.ClearGobackVersion()
 	})
 }
 

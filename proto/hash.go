@@ -650,9 +650,7 @@ func canonicalCommit(c *Commit) ([]byte, error) {
 		b = protowire.AppendBytes(b, c.KeyId)
 	}
 
-	b = appendBool(b, 15, c.Incomplete)
-
-	return appendString(b, 16, c.GobackVersion)
+	return appendBool(b, 15, c.Incomplete), nil
 }
 
 func canonicalPin(p *Pin) ([]byte, error) {

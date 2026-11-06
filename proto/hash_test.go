@@ -264,21 +264,3 @@ func TestACommitsKeyIDIsPartOfItsIdentity(t *testing.T) {
 
 	require.Len(t, refs, 4)
 }
-
-func TestACommitsGobackVersionIsPartOfItsIdentity(t *testing.T) {
-	refs := map[string]bool{}
-
-	for _, version := range []string{"", "v1.2.3", "v1.2.4"} {
-		obj := NewObject(&Commit{Timestamp: 1, Tree: refOf("tree"), BackupSet: "s", GobackVersion: version})
-
-		payload, err := obj.Canonical()
-		require.NoError(t, err)
-		decoded, err := NewObjectFromPayload(payload, ObjectType_COMMIT)
-		require.NoError(t, err)
-		require.Equal(t, version, decoded.GetCommit().GobackVersion)
-
-		refs[hex.EncodeToString(obj.Ref().Hash)] = true
-	}
-
-	require.Len(t, refs, 3)
-}

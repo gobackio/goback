@@ -55,5 +55,11 @@ func TestACommitCarriesTheVersionThatWroteIt(t *testing.T) {
 	f := newWalkerFixture(t)
 	f.write("a.txt", []byte("hello"))
 
-	require.Equal(t, "v1.2.3", f.run().Commit.GobackVersion)
+	first := f.run()
+	require.Equal(t, "v1.2.3", first.Commit.Metadata[MetaVersion])
+	require.Equal(t, "test", first.Commit.Metadata["env"], "the walker's own metadata stays")
+	require.True(t, f.run().SameTree, "the version does not stop a run taking the latest commit")
+
+	buildVersion = "v1.2.4"
+	require.False(t, f.run().SameTree, "another version writes its own commit")
 }

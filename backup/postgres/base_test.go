@@ -99,12 +99,13 @@ func TestABaseBackupCommitsItsTarAndWhatItRecords(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, map[string]string{
-		MetaSystemID:     "42",
-		MetaTimeline:     "1",
-		MetaStartLSN:     "0/7000028",
-		MetaStopLSN:      "0/7000120",
-		MetaStartWALFile: "000000010000000000000007",
-		backup.MetaKind:  backup.KindPostgresBase,
+		MetaSystemID:       "42",
+		MetaTimeline:       "1",
+		MetaStartLSN:       "0/7000028",
+		MetaStopLSN:        "0/7000120",
+		MetaStartWALFile:   "000000010000000000000007",
+		backup.MetaKind:    backup.KindPostgresBase,
+		backup.MetaVersion: backup.Version(),
 	}, result.Commit.Metadata)
 
 	tree, err := backup.OpenTree(f.ctx, f.index, result.Commit.Tree, nil, nil)
@@ -126,12 +127,13 @@ func TestABaseBackupWithoutAManifestStopsWhereItsWALSays(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, map[string]string{
-		MetaSystemID:     "42",
-		MetaTimeline:     "1",
-		MetaStartLSN:     "0/3000028",
-		MetaStopLSN:      "0/30000F8",
-		MetaStartWALFile: "000000010000000000000003",
-		backup.MetaKind:  backup.KindPostgresBase,
+		MetaSystemID:       "42",
+		MetaTimeline:       "1",
+		MetaStartLSN:       "0/3000028",
+		MetaStopLSN:        "0/30000F8",
+		MetaStartWALFile:   "000000010000000000000003",
+		backup.MetaKind:    backup.KindPostgresBase,
+		backup.MetaVersion: backup.Version(),
 	}, result.Commit.Metadata)
 }
 
