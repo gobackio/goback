@@ -19,7 +19,7 @@ require (
 	github.com/jackc/pglogrepl v0.0.0-20261003132456-662581bb6bb6
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/joho/godotenv v1.5.1
-	github.com/klauspost/compress v1.20.0
+	github.com/klauspost/compress v1.20.2
 	github.com/moby/moby/api v1.55.0
 	github.com/netresearch/go-cron v0.16.1
 	github.com/pkg/errors v0.9.1
