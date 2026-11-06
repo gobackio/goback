@@ -51,4 +51,8 @@ message Commit {
   // commit with the trees rewritten, or with the flag cleared when it lacks
   // nothing
   bool incomplete = 15;
+
+  // the goback version that wrote the commit, as backup.Version reports it;
+  // empty on a commit written before it was recorded
+  string goback_version = 16;
 }

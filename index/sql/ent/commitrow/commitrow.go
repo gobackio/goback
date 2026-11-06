@@ -58,6 +58,8 @@ const (
 	FieldFileCount = "file_count"
 	// FieldMetadata holds the string denoting the metadata field in the database.
 	FieldMetadata = "metadata"
+	// FieldGobackVersion holds the string denoting the goback_version field in the database.
+	FieldGobackVersion = "goback_version"
 	// EdgeSet holds the string denoting the set edge name in mutations.
 	EdgeSet = "set"
 	// Table holds the table name of the commitrow in the database.
@@ -97,6 +99,7 @@ var Columns = []string{
 	FieldLogicalSize,
 	FieldFileCount,
 	FieldMetadata,
+	FieldGobackVersion,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -222,6 +225,11 @@ func ByLogicalSize(opts ...sql.OrderTermOption) OrderOption {
 // ByFileCount orders the results by the file_count field.
 func ByFileCount(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFileCount, opts...).ToFunc()
+}
+
+// ByGobackVersion orders the results by the goback_version field.
+func ByGobackVersion(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldGobackVersion, opts...).ToFunc()
 }
 
 // BySetField orders the results by set field.

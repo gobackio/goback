@@ -830,3 +830,12 @@ func TestPresenceIsBuiltInFullWhenTheFilterCannotGrowOrItsTreeIsGone(t *testing.
 
 	f.requireInFilter(head, append(append(keptRefs, bigRefs...), nextRefs...)...)
 }
+
+func TestAnIndexKeepsTheVersionThatWroteACommit(t *testing.T) {
+	f := newFixture(t)
+
+	obj := proto.NewObject(&proto.Commit{Timestamp: f.clock.Unix(), Tree: f.tree(f.file("a.txt", "one")).Ref(), BackupSet: "a", AgentId: "node-1", GobackVersion: "v1.2.3"})
+	require.NoError(t, f.x.Put(f.ctx, obj))
+
+	require.Equal(t, "v1.2.3", f.commitRow(obj.Ref()).GobackVersion)
+}

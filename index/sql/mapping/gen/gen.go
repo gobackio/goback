@@ -59,6 +59,7 @@ func (m MapperImpl) Commit(in *ent.CommitRow) *proto.Commit {
 		Metadata:      in.Metadata,
 		KeyId:         mapping.KeyID(in.KeyID),
 		Incomplete:    in.Incomplete,
+		GobackVersion: in.GobackVersion,
 	}
 }
 
@@ -164,10 +165,10 @@ func (m MapperImpl) Record(in *ent.Object) pack.IndexRecord {
 
 	return pack.IndexRecord{
 		Sum:           mapping.Sum(in.Ref),
+		CarriedTime:   in.CarriedTime,
 		Offset:        in.Start,
 		Length:        in.Length,
 		Type:          in.Type,
-		CarriedTime:   in.CarriedTime,
 		CarriedOffset: in.CarriedOffset,
 	}
 }

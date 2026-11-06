@@ -399,6 +399,26 @@ func (_u *CommitRowUpdate) ClearMetadata() *CommitRowUpdate {
 	return _u
 }
 
+// SetGobackVersion sets the "goback_version" field.
+func (_u *CommitRowUpdate) SetGobackVersion(v string) *CommitRowUpdate {
+	_u.mutation.SetGobackVersion(v)
+	return _u
+}
+
+// SetNillableGobackVersion sets the "goback_version" field if the given value is not nil.
+func (_u *CommitRowUpdate) SetNillableGobackVersion(v *string) *CommitRowUpdate {
+	if v != nil {
+		_u.SetGobackVersion(*v)
+	}
+	return _u
+}
+
+// ClearGobackVersion clears the value of the "goback_version" field.
+func (_u *CommitRowUpdate) ClearGobackVersion() *CommitRowUpdate {
+	_u.mutation.ClearGobackVersion()
+	return _u
+}
+
 // SetSet sets the "set" edge to the Set entity.
 func (_u *CommitRowUpdate) SetSet(v *Set) *CommitRowUpdate {
 	return _u.SetSetID(v.ID)
@@ -569,6 +589,12 @@ func (_u *CommitRowUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.MetadataCleared() {
 		_spec.ClearField(commitrow.FieldMetadata, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.GobackVersion(); ok {
+		_spec.SetField(commitrow.FieldGobackVersion, field.TypeString, value)
+	}
+	if _u.mutation.GobackVersionCleared() {
+		_spec.ClearField(commitrow.FieldGobackVersion, field.TypeString)
 	}
 	if _u.mutation.SetCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -989,6 +1015,26 @@ func (_u *CommitRowUpdateOne) ClearMetadata() *CommitRowUpdateOne {
 	return _u
 }
 
+// SetGobackVersion sets the "goback_version" field.
+func (_u *CommitRowUpdateOne) SetGobackVersion(v string) *CommitRowUpdateOne {
+	_u.mutation.SetGobackVersion(v)
+	return _u
+}
+
+// SetNillableGobackVersion sets the "goback_version" field if the given value is not nil.
+func (_u *CommitRowUpdateOne) SetNillableGobackVersion(v *string) *CommitRowUpdateOne {
+	if v != nil {
+		_u.SetGobackVersion(*v)
+	}
+	return _u
+}
+
+// ClearGobackVersion clears the value of the "goback_version" field.
+func (_u *CommitRowUpdateOne) ClearGobackVersion() *CommitRowUpdateOne {
+	_u.mutation.ClearGobackVersion()
+	return _u
+}
+
 // SetSet sets the "set" edge to the Set entity.
 func (_u *CommitRowUpdateOne) SetSet(v *Set) *CommitRowUpdateOne {
 	return _u.SetSetID(v.ID)
@@ -1189,6 +1235,12 @@ func (_u *CommitRowUpdateOne) sqlSave(ctx context.Context) (_node *CommitRow, er
 	}
 	if _u.mutation.MetadataCleared() {
 		_spec.ClearField(commitrow.FieldMetadata, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.GobackVersion(); ok {
+		_spec.SetField(commitrow.FieldGobackVersion, field.TypeString, value)
+	}
+	if _u.mutation.GobackVersionCleared() {
+		_spec.ClearField(commitrow.FieldGobackVersion, field.TypeString)
 	}
 	if _u.mutation.SetCleared() {
 		edge := &sqlgraph.EdgeSpec{
