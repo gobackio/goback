@@ -28,7 +28,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/tink-crypto/tink-go/v2 v2.8.0
 	github.com/urfave/cli v1.22.17
-	github.com/vektra/mockery/v2 v2.53.7
+	github.com/vektra/mockery/v2 v2.53.8
 	go.opentelemetry.io/contrib/exporters/autoexport v0.71.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.71.0
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.71.0
