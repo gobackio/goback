@@ -445,13 +445,7 @@ func loadGCState(storage ArchiveStorage) (*gcState, error) {
 // state, so a process whose clock runs ahead of the storage's purges no
 // earlier than the storage's clock allows.
 func storageNow(storage ArchiveStorage, now time.Time) (time.Time, error) {
-	file, err := storage.Open(gcStateName)
-	if err != nil {
-		return time.Time{}, err
-	}
-	defer file.Close()
-
-	info, err := file.Stat()
+	info, err := Stat(storage, gcStateName)
 	if err != nil {
 		return time.Time{}, err
 	}

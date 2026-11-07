@@ -1532,14 +1532,9 @@ func (ps *PackStorage) markedCommitted(name string) bool {
 
 // stored reports whether the storage holds the file.
 func (ps *PackStorage) stored(name string) bool {
-	file, err := ps.storage.Open(name)
-	if err != nil {
-		return false
-	}
+	_, err := Stat(ps.storage, name)
 
-	_ = file.Close()
-
-	return true
+	return err == nil
 }
 
 // deleteArchiveFiles deletes an archive's files and reports whether its
@@ -2002,6 +1997,31 @@ func OpenListed(storage ArchiveStorage, file ListedFile) (File, error) {
 	}
 
 	return storage.Open(file.Name)
+}
+
+// Stater is implemented by an ArchiveStorage whose Open starts reading the
+// file, so asking only for its size and modification time costs less
+// through Stat, which also has the time as exactly as the storage keeps it.
+type Stater interface {
+	Stat(name string) (fs.FileInfo, error)
+}
+
+// Stat says how big the named file is and when it was stored, through the
+// storage's Stater when it is one and by opening the file otherwise; a
+// missing file is ErrFileNotFound. A wrapping ArchiveStorage implements
+// Stater with it.
+func Stat(storage ArchiveStorage, name string) (fs.FileInfo, error) {
+	if stater, ok := storage.(Stater); ok {
+		return stater.Stat(name)
+	}
+
+	file, err := storage.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return file.Stat()
 }
 
 // ListInfo lists the storage's files with their sizes and modification

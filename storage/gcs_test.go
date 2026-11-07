@@ -180,12 +180,9 @@ func TestAnUploadToCloudStorageTellsWhatItStoredWithoutAskingAgain(t *testing.T)
 	require.Equal(t, want[:], sum)
 	require.Equal(t, int64(5), info.Size())
 
-	opened, err := storage.NewBucketStore(bucket).Open("a.idx")
+	attrs, err := storage.NewBucketStore(bucket).Stat("a.idx")
 	require.NoError(t, err)
-
-	attrs, err := opened.Stat()
-	require.NoError(t, err)
-	require.True(t, attrs.ModTime().Equal(info.ModTime()), "as an Open of the file says")
+	require.True(t, attrs.ModTime().Equal(info.ModTime()), "as a Stat of the file says")
 	require.False(t, info.ModTime().IsZero())
 }
 

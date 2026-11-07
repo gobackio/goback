@@ -242,9 +242,20 @@ func (a *archive) open() (err error) {
 		a.headerChecked.Store(true)
 	}
 
+	listed := a.listed
+	if a.readOnly && listed == nil {
+		// read at offsets, which a stream started by Open would not serve
+		info, err := Stat(a.storage, a.archiveName())
+		if err != nil {
+			return errors.Wrap(err, "Failed opening archive for reading")
+		}
+
+		listed = &ListedFile{Name: a.archiveName(), Size: info.Size(), Modified: info.ModTime()}
+	}
+
 	var readFile File
-	if a.readOnly && a.listed != nil {
-		readFile, err = OpenListed(a.storage, *a.listed)
+	if a.readOnly {
+		readFile, err = OpenListed(a.storage, *listed)
 	} else {
 		readFile, err = a.storage.Open(a.archiveName())
 	}
@@ -371,17 +382,11 @@ func (a *archive) indexCreated() (time.Time, error) {
 		return modified, nil
 	}
 
-	file, err := a.storage.Open(a.indexName())
+	info, err := Stat(a.storage, a.indexName())
 	if notExist(err) {
-		file, err = a.storage.Open(a.archiveName())
+		info, err = Stat(a.storage, a.archiveName())
 	}
 
-	if err != nil {
-		return time.Time{}, err
-	}
-	defer file.Close()
-
-	info, err := file.Stat()
 	if err != nil {
 		return time.Time{}, err
 	}

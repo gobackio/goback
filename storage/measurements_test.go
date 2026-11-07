@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gobackio/goback/storage"
+	"github.com/gobackio/goback/storage/pack"
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -100,6 +101,11 @@ func TestEveryRequestToTheObjectStoreIsCounted(t *testing.T) {
 		buf := make([]byte, 5)
 		_, err = file.Read(buf)
 		require.NoError(t, err)
+		require.NoError(t, file.Close())
+
+		info, err := store.Stat("a.archive")
+		require.NoError(t, err)
+		require.EqualValues(t, 5, info.Size())
 
 		_, err = store.List(".archive")
 		require.NoError(t, err)
@@ -108,8 +114,8 @@ func TestEveryRequestToTheObjectStoreIsCounted(t *testing.T) {
 	})
 
 	require.Equal(t, int64(1), requests["put"])
-	require.Equal(t, int64(1), requests["head"], "opening a file reads its attributes")
-	require.Equal(t, int64(1), requests["get"])
+	require.Equal(t, int64(1), requests["head"])
+	require.Equal(t, int64(1), requests["get"], "opening a file starts the read its reads carry on")
 	require.Equal(t, int64(1), requests["list"])
 	require.Equal(t, int64(1), requests["delete"])
 
@@ -120,9 +126,13 @@ func TestEveryRequestToTheObjectStoreIsCounted(t *testing.T) {
 func TestAFailedRequestIsCountedToo(t *testing.T) {
 	requests, _ := counted(t, "two", func(store *storage.BucketStore) {
 		_, err := store.Open("missing.archive")
-		require.Error(t, err, "the object store charges for a miss")
+		require.ErrorIs(t, err, pack.ErrFileNotFound, "the object store charges for a miss")
+
+		_, err = store.Stat("missing.archive")
+		require.ErrorIs(t, err, pack.ErrFileNotFound)
 	})
 
+	require.Equal(t, int64(1), requests["get"])
 	require.Equal(t, int64(1), requests["head"])
 }
 
@@ -141,7 +151,7 @@ func TestAListingIsCountedByThePage(t *testing.T) {
 }
 
 func TestReadingAWholeFileCountsTheBytesItCarried(t *testing.T) {
-	_, bytes := counted(t, "four", func(store *storage.BucketStore) {
+	requests, bytes := counted(t, "four", func(store *storage.BucketStore) {
 		write(t, store, "b.archive", []byte("0123456789"))
 
 		file, err := store.Open("b.archive")
@@ -154,6 +164,8 @@ func TestReadingAWholeFileCountsTheBytesItCarried(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	require.Equal(t, int64(1), requests["get"])
+	require.Zero(t, requests["head"])
 	require.Equal(t, int64(10), bytes["get"])
 }
 

@@ -39,6 +39,7 @@ var _ os.FileInfo = (*bucketFileInfo)(nil)
 var _ pack.ArchiveStorage = (*BucketStore)(nil)
 var _ pack.InfoLister = (*BucketStore)(nil)
 var _ pack.ListedOpener = (*BucketStore)(nil)
+var _ pack.Stater = (*BucketStore)(nil)
 
 // Read reads on from the file position through one request that stays
 // open while the reads follow each other; a Seek elsewhere starts another.
@@ -155,25 +156,28 @@ func (s *bucketFile) WriteTo(w io.Writer) (int64, error) {
 		return 0, nil
 	}
 
-	s.closeStream()
+	if s.stream == nil {
+		stalls := s.store.stalls()
 
-	stalls := s.store.stalls()
-	defer stalls.end()
-
-	reader, err := s.store.bucket.NewRangeReader(stalls.ctx, s.key, s.offset, s.attrs.Size-s.offset, nil)
-	if err != nil {
+		stream, err := s.store.bucket.NewRangeReader(stalls.ctx, s.key, s.offset, s.attrs.Size-s.offset, nil)
 		s.store.count(context.Background(), OpGet, 0)
 
-		return 0, stalls.explain(err)
+		if err != nil {
+			stalls.end()
+
+			return 0, stalls.explain(err)
+		}
+
+		stalls.disarm()
+		s.stream, s.streamStalls = stream, stalls
 	}
 
-	defer reader.Close()
+	defer s.closeStream()
 
-	stalls.disarm()
-	n, err := io.Copy(w, stalls.reader(reader))
-	err = stalls.explain(err)
+	n, err := io.Copy(w, s.streamStalls.reader(s.stream))
+	err = s.streamStalls.explain(err)
 	s.offset += n
-	s.store.count(context.Background(), OpGet, n)
+	s.store.carried(OpGet, n)
 
 	return n, err
 }
@@ -493,6 +497,37 @@ func (c *BucketStore) openFile(key string) (pack.File, error) {
 		return file, nil
 	}
 
+	stalls := c.stalls()
+
+	stream, err := c.bucket.NewRangeReader(stalls.ctx, key, 0, -1, nil)
+	c.count(context.Background(), OpGet, 0)
+
+	if err != nil {
+		stalls.end()
+
+		if gcerrors.Code(err) == gcerrors.NotFound {
+			return nil, pack.ErrFileNotFound
+		}
+
+		return nil, stalls.explain(err)
+	}
+
+	stalls.disarm()
+
+	return &bucketFile{
+		key:          key,
+		attrs:        &blob.Attributes{Size: stream.Size(), ModTime: stream.ModTime()},
+		store:        c,
+		readOnly:     true,
+		stream:       stream,
+		streamStalls: stalls,
+	}, nil
+}
+
+// Stat implements pack.Stater with one attributes request.
+func (c *BucketStore) Stat(name string) (os.FileInfo, error) {
+	key := c.key(name)
+
 	ctx, cancel := c.request()
 	defer cancel()
 
@@ -503,15 +538,11 @@ func (c *BucketStore) openFile(key string) (pack.File, error) {
 		if gcerrors.Code(err) == gcerrors.NotFound {
 			return nil, pack.ErrFileNotFound
 		}
+
 		return nil, c.timedOut(ctx, err)
 	}
 
-	return &bucketFile{
-		key:      key,
-		attrs:    attrs,
-		store:    c,
-		readOnly: true,
-	}, nil
+	return &bucketFileInfo{attrs: attrs, key: key}, nil
 }
 
 func (c *BucketStore) newWriteFile(key string) (pack.File, error) {
@@ -566,7 +597,10 @@ func ArchiveKey(name string) string {
 	return fmt.Sprintf(blobObjectKey, path.Ext(name), name)
 }
 
-// Open implements pack.ArchiveStorage.
+// Open implements pack.ArchiveStorage with one request, which reads from
+// the start of the file carry on. The file's modification time may be to
+// the second only, as Cloud Storage reports it with a read; Stat has it
+// exactly.
 func (c *BucketStore) Open(name string) (pack.File, error) {
 	return c.openFile(c.key(name))
 }

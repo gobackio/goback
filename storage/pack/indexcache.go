@@ -34,6 +34,7 @@ var (
 	_ Checksummer  = (*indexCache)(nil)
 	_ InfoLister   = (*indexCache)(nil)
 	_ ListedOpener = (*indexCache)(nil)
+	_ Stater       = (*indexCache)(nil)
 )
 
 func (c *indexCache) path(name string) string {
@@ -49,21 +50,35 @@ func (c *indexCache) Open(name string) (File, error) {
 		return file, nil
 	}
 
-	src, err := c.ArchiveStorage.Open(name)
+	kept, err := c.keep(name)
 	if err != nil {
 		return nil, err
 	}
 
-	created, err := c.keep(name, src)
-	if err != nil {
-		return nil, err
-	}
-
-	if !created {
+	if !kept {
 		return c.ArchiveStorage.Open(name)
 	}
 
 	return os.Open(c.path(name))
+}
+
+// Stat implements Stater: a cached index answers from its copy, and one
+// this process wrote is kept by the answer.
+func (c *indexCache) Stat(name string) (fs.FileInfo, error) {
+	if !strings.HasSuffix(name, IndexExt) {
+		return Stat(c.ArchiveStorage, name)
+	}
+
+	if info, err := os.Stat(c.path(name)); err == nil {
+		return info, nil
+	}
+
+	info, err := Stat(c.ArchiveStorage, name)
+	if err == nil && !info.ModTime().IsZero() {
+		c.keepWritten(name, info)
+	}
+
+	return info, err
 }
 
 // written is where the cache holds what this process wrote to name until
@@ -145,15 +160,43 @@ func (t *teeFile) Stored() (fs.FileInfo, []byte, bool) {
 	return storedInfo(t.File)
 }
 
-// keep copies src under the cache and closes it, from what this process
-// wrote to it when that is the whole file. It reports false when the file
-// cannot be kept, as one still being written cannot.
-func (c *indexCache) keep(name string, src File) (bool, error) {
-	defer src.Close()
+// keepWritten keeps what this process wrote to name as the cached file,
+// stamped with when the storage stored it, when it is all the storage
+// holds as info.
+func (c *indexCache) keepWritten(name string, info fs.FileInfo) bool {
+	written := c.written(name)
 
-	info, err := src.Stat()
-	if err != nil || info.ModTime().IsZero() {
+	copied, err := os.Stat(written)
+	if err != nil {
+		return false
+	}
+
+	modified := info.ModTime().Truncate(time.Microsecond)
+	if copied.Size() == info.Size() && os.Chtimes(written, modified, modified) == nil && os.Rename(written, c.path(name)) == nil {
+		return true
+	}
+
+	_ = os.Remove(written)
+
+	return false
+}
+
+// keep copies name under the cache, from what this process wrote to it
+// when that is the whole file. It reports false when the file cannot be
+// kept, as one still being written cannot. The time comes from Stat, as
+// the time of an opened file may be coarser.
+func (c *indexCache) keep(name string) (bool, error) {
+	info, err := Stat(c.ArchiveStorage, name)
+	if err != nil {
+		return false, err
+	}
+
+	if info.ModTime().IsZero() {
 		return false, nil
+	}
+
+	if c.keepWritten(name, info) {
+		return true, nil
 	}
 
 	path := c.path(name)
@@ -163,14 +206,11 @@ func (c *indexCache) keep(name string, src File) (bool, error) {
 
 	modified := info.ModTime().Truncate(time.Microsecond)
 
-	written := c.written(name)
-	if copied, err := os.Stat(written); err == nil && copied.Size() == info.Size() {
-		if err := os.Chtimes(written, modified, modified); err == nil {
-			return true, os.Rename(written, path)
-		}
+	src, err := c.ArchiveStorage.Open(name)
+	if err != nil {
+		return false, err
 	}
-
-	_ = os.Remove(written)
+	defer src.Close()
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
 	if err != nil {

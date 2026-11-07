@@ -137,7 +137,7 @@ func TestABucketRequestThatHangsFailsAfterTheTimeout(t *testing.T) {
 	store := slowStore(&slowBucket{})
 
 	within(t, func() {
-		_, err := store.Open("a.idx")
+		_, err := store.Stat("a.idx")
 		require.Error(t, err)
 	})
 

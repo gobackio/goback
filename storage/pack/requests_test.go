@@ -23,8 +23,8 @@ import (
 )
 
 // requestCounting counts what a bucket under the storage would be sent:
-// an Open is an attributes request, the first read of an opened file and
-// every ranged read a get, a closed writer a put.
+// an Open is a get its first reads carry on, a read after a Seek and every
+// ranged read another, a Stat an attributes request, a closed writer a put.
 type requestCounting struct {
 	*memView
 
@@ -92,13 +92,19 @@ func (c *requestCounting) Open(name string) (File, error) {
 		return file, nil
 	}
 
-	c.count("head", name)
+	c.count("get", name)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return &countedFile{File: file, storage: c, name: name}, nil
+	return &countedFile{File: file, storage: c, name: name, streaming: true}, nil
+}
+
+func (c *requestCounting) Stat(name string) (fs.FileInfo, error) {
+	c.count("head", name)
+
+	return Stat(c.memView, name)
 }
 
 func (c *requestCounting) OpenListed(listed ListedFile) (File, error) {
