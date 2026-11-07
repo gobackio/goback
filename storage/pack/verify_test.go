@@ -2,9 +2,9 @@ package pack
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gobackio/goback/proto"
@@ -109,22 +109,28 @@ func TestCompactionRefusesCorruptSource(t *testing.T) {
 	}
 	require.NoError(t, store.Close())
 
-	names := archiveFiles(t, base)
-	data, err := os.ReadFile(names[0])
+	name := archiveFiles(t, base)[0]
+
+	stored, err := os.Open(strings.TrimSuffix(name, ArchiveSuffix) + IndexExt)
 	require.NoError(t, err)
-	data[archiveHeaderSize+len(data)/2] ^= 0xff
-	require.NoError(t, os.WriteFile(names[0], data, 0644))
+	var index IndexFile
+	_, err = index.ReadFrom(stored)
+	require.NoError(t, stored.Close())
+	require.NoError(t, err)
+	require.NotEmpty(t, index)
+
+	// the last byte of a record is its payload's, which its ref covers
+	data, err := os.ReadFile(name)
+	require.NoError(t, err)
+	data[index[0].Offset+index[0].Length-1] ^= 0xff
+	require.NoError(t, os.WriteFile(name, data, 0644))
 
 	// reopen with a larger archive limit so every small archive is a candidate
 	store = newTestStore(t, base, WithCompaction(CompactionConfig{MinimumCandidates: 0}))
 	defer store.Close()
 
-	// the flipped byte lands in a payload or in a header, depending on the
-	// random object sizes; either way the source is refused
 	_, err = store.Compact(context.Background())
-	if !errors.Is(err, proto.ErrRefMismatch) {
-		require.ErrorContains(t, err, "parsing object header")
-	}
+	require.ErrorIs(t, err, proto.ErrRefMismatch)
 }
 
 func TestScrubDetectsBrokenChain(t *testing.T) {
