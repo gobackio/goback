@@ -17,6 +17,10 @@ import (
 // sets/<set id>.head.
 const HeadExt = ".head"
 
+// headTimesKept bounds how many sets' head times a store remembers;
+// advancing the head of a set it does not remember reads the head first.
+const headTimesKept = 4096
+
 // Head is the latest complete commit of a set the store holds, as kept in
 // the storage beside the archives, so the set's backups are found without
 // any index.
@@ -124,19 +128,34 @@ func (ps *PackStorage) AdvanceHead(object *proto.Object) error {
 		return nil
 	}
 
-	// a head that does not decode is replaced
-	current, ok, err := readHead(ps.storage, commit.GetSetId())
-	if errors.Is(err, errHeadUnreadable) {
-		ps.logger.Warn("replacing a head that does not decode", "set", commit.GetSetId(), "err", err)
-	} else if err != nil {
-		return err
+	newest, known := ps.headTimes.Get(commit.GetSetId())
+	if !known {
+		// a head that does not decode is replaced
+		current, ok, err := readHead(ps.storage, commit.GetSetId())
+		if errors.Is(err, errHeadUnreadable) {
+			ps.logger.Warn("replacing a head that does not decode", "set", commit.GetSetId(), "err", err)
+		} else if err != nil {
+			return err
+		}
+
+		if ok {
+			newest, known = current.ReceivedAtNs, true
+			ps.headTimes.Add(commit.GetSetId(), newest)
+		}
 	}
 
-	if ok && current.ReceivedAtNs >= commit.GetReceivedAtNs() {
+	if known && newest >= commit.GetReceivedAtNs() {
 		return nil
 	}
 
-	return ps.writeHead(object)
+	if err := ps.writeHead(object); err != nil {
+		ps.headTimes.Remove(commit.GetSetId())
+		return err
+	}
+
+	ps.headTimes.Add(commit.GetSetId(), commit.GetReceivedAtNs())
+
+	return nil
 }
 
 // moveHead points the set of replacement at it where the set's head names
@@ -155,6 +174,8 @@ func (ps *PackStorage) moveHead(old *proto.Ref, replacement *proto.Object) error
 	if err != nil || !ok || !bytes.Equal(current.Commit, old.Hash) {
 		return err
 	}
+
+	ps.headTimes.Remove(commit.GetSetId())
 
 	return ps.writeHead(replacement)
 }

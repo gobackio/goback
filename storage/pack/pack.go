@@ -22,6 +22,7 @@ import (
 	"github.com/gobackio/goback/proto"
 	"github.com/gobackio/goback/telemetry/laps"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -102,7 +103,13 @@ func NewPackStorage(options ...PackOption) (*PackStorage, error) {
 		markers = routedMarkers{bucket: bucket, other: opts.markers}
 	}
 
+	headTimes, err := lru.New[uint64, int64](headTimesKept)
+	if err != nil {
+		return nil, err
+	}
+
 	return &PackStorage{
+		headTimes:        headTimes,
 		markers:          markers,
 		bucketMarkers:    bucket,
 		claims:           claims,
@@ -159,6 +166,9 @@ type PackStorage struct {
 	// headMtx holds a set's head between reading and writing it, a set
 	// taking the lock its id falls on
 	headMtx [16]sync.Mutex
+	// headTimes is when the commit a set's head names was received, for
+	// the sets whose head this process read or wrote last
+	headTimes *lru.Cache[uint64, int64]
 
 	// sealSeen is the newest generation a listing of the seals found; a
 	// session begins at it, which is never newer than the newest seal
