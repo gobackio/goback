@@ -306,3 +306,13 @@ func ref(dialect string, b byte) string {
 
 	return fmt.Sprintf("x'%s%02x'", strings.Repeat("00", 31), b)
 }
+
+func TestApplyRefusesADatabaseANewerBuildMigrated(t *testing.T) {
+	ctx := context.Background()
+	db := memory(t)
+
+	require.NoError(t, Apply(ctx, db, SQLite))
+
+	err := applyDir(ctx, db, SQLite, upTo(t, SQLite, "20261027133407"), revisionsTable, "", false)
+	require.ErrorIs(t, err, ErrNewerSchema)
+}

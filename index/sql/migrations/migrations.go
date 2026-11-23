@@ -281,6 +281,10 @@ func apply(ctx context.Context, q querier, dialect string, dir migrate.Dir, tabl
 		return err
 	}
 
+	if err := refuseNewer(ctx, rrw, dir); err != nil {
+		return err
+	}
+
 	ex, err := migrate.NewExecutor(drv, dir, rrw, migrate.WithOperatorVersion("goback"), migrate.WithAllowDirty(allowDirty))
 	if err != nil {
 		return err
@@ -292,6 +296,35 @@ func apply(ctx context.Context, q querier, dialect string, dir migrate.Dir, tabl
 	}
 
 	return err
+}
+
+// ErrNewerSchema is returned by Apply and ApplyDir for a database that a
+// newer build migrated: it holds a migration the directory does not have.
+var ErrNewerSchema = errors.New("the database was migrated by a newer build")
+
+func refuseNewer(ctx context.Context, rrw migrate.RevisionReadWriter, dir migrate.Dir) error {
+	revs, err := rrw.ReadRevisions(ctx)
+	if err != nil {
+		return err
+	}
+
+	files, err := dir.Files()
+	if err != nil {
+		return err
+	}
+
+	known := make(map[string]bool, len(files))
+	for _, f := range files {
+		known[f.Version()] = true
+	}
+
+	for _, rev := range revs {
+		if !known[rev.Version] {
+			return fmt.Errorf("%w: it holds migration %s", ErrNewerSchema, rev.Version)
+		}
+	}
+
+	return nil
 }
 
 // Diff writes into dir the migration named name that takes the schema dir
