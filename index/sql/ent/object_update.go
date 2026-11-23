@@ -28,20 +28,14 @@ func (_u *ObjectUpdate) Where(ps ...predicate.Object) *ObjectUpdate {
 	return _u
 }
 
-// SetRef sets the "ref" field.
-func (_u *ObjectUpdate) SetRef(v []byte) *ObjectUpdate {
-	_u.mutation.SetRef(v)
-	return _u
-}
-
 // SetArchiveID sets the "archive_id" field.
-func (_u *ObjectUpdate) SetArchiveID(v string) *ObjectUpdate {
+func (_u *ObjectUpdate) SetArchiveID(v int) *ObjectUpdate {
 	_u.mutation.SetArchiveID(v)
 	return _u
 }
 
 // SetNillableArchiveID sets the "archive_id" field if the given value is not nil.
-func (_u *ObjectUpdate) SetNillableArchiveID(v *string) *ObjectUpdate {
+func (_u *ObjectUpdate) SetNillableArchiveID(v *int) *ObjectUpdate {
 	if v != nil {
 		_u.SetArchiveID(*v)
 	}
@@ -179,6 +173,12 @@ func (_u *ObjectUpdate) SetNillableIncomplete(v *bool) *ObjectUpdate {
 	return _u
 }
 
+// SetRef sets the "ref" field.
+func (_u *ObjectUpdate) SetRef(v []byte) *ObjectUpdate {
+	_u.mutation.SetRef(v)
+	return _u
+}
+
 // SetArchive sets the "archive" edge to the Archive entity.
 func (_u *ObjectUpdate) SetArchive(v *Archive) *ObjectUpdate {
 	return _u.SetArchiveID(v.ID)
@@ -242,9 +242,6 @@ func (_u *ObjectUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			}
 		}
 	}
-	if value, ok := _u.mutation.Ref(); ok {
-		_spec.SetField(object.FieldRef, field.TypeBytes, value)
-	}
 	if value, ok := _u.mutation.Start(); ok {
 		_spec.SetField(object.FieldStart, field.TypeUint32, value)
 	}
@@ -284,6 +281,9 @@ func (_u *ObjectUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Incomplete(); ok {
 		_spec.SetField(object.FieldIncomplete, field.TypeBool, value)
 	}
+	if value, ok := _u.mutation.Ref(); ok {
+		_spec.SetField(object.FieldRef, field.TypeBytes, value)
+	}
 	if _u.mutation.ArchiveCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
@@ -292,7 +292,7 @@ func (_u *ObjectUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Columns: []string{object.ArchiveColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -305,7 +305,7 @@ func (_u *ObjectUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Columns: []string{object.ArchiveColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		for _, k := range nodes {
@@ -333,20 +333,14 @@ type ObjectUpdateOne struct {
 	mutation *ObjectMutation
 }
 
-// SetRef sets the "ref" field.
-func (_u *ObjectUpdateOne) SetRef(v []byte) *ObjectUpdateOne {
-	_u.mutation.SetRef(v)
-	return _u
-}
-
 // SetArchiveID sets the "archive_id" field.
-func (_u *ObjectUpdateOne) SetArchiveID(v string) *ObjectUpdateOne {
+func (_u *ObjectUpdateOne) SetArchiveID(v int) *ObjectUpdateOne {
 	_u.mutation.SetArchiveID(v)
 	return _u
 }
 
 // SetNillableArchiveID sets the "archive_id" field if the given value is not nil.
-func (_u *ObjectUpdateOne) SetNillableArchiveID(v *string) *ObjectUpdateOne {
+func (_u *ObjectUpdateOne) SetNillableArchiveID(v *int) *ObjectUpdateOne {
 	if v != nil {
 		_u.SetArchiveID(*v)
 	}
@@ -484,6 +478,12 @@ func (_u *ObjectUpdateOne) SetNillableIncomplete(v *bool) *ObjectUpdateOne {
 	return _u
 }
 
+// SetRef sets the "ref" field.
+func (_u *ObjectUpdateOne) SetRef(v []byte) *ObjectUpdateOne {
+	_u.mutation.SetRef(v)
+	return _u
+}
+
 // SetArchive sets the "archive" edge to the Archive entity.
 func (_u *ObjectUpdateOne) SetArchive(v *Archive) *ObjectUpdateOne {
 	return _u.SetArchiveID(v.ID)
@@ -577,9 +577,6 @@ func (_u *ObjectUpdateOne) sqlSave(ctx context.Context) (_node *Object, err erro
 			}
 		}
 	}
-	if value, ok := _u.mutation.Ref(); ok {
-		_spec.SetField(object.FieldRef, field.TypeBytes, value)
-	}
 	if value, ok := _u.mutation.Start(); ok {
 		_spec.SetField(object.FieldStart, field.TypeUint32, value)
 	}
@@ -619,6 +616,9 @@ func (_u *ObjectUpdateOne) sqlSave(ctx context.Context) (_node *Object, err erro
 	if value, ok := _u.mutation.Incomplete(); ok {
 		_spec.SetField(object.FieldIncomplete, field.TypeBool, value)
 	}
+	if value, ok := _u.mutation.Ref(); ok {
+		_spec.SetField(object.FieldRef, field.TypeBytes, value)
+	}
 	if _u.mutation.ArchiveCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
@@ -627,7 +627,7 @@ func (_u *ObjectUpdateOne) sqlSave(ctx context.Context) (_node *Object, err erro
 			Columns: []string{object.ArchiveColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -640,7 +640,7 @@ func (_u *ObjectUpdateOne) sqlSave(ctx context.Context) (_node *Object, err erro
 			Columns: []string{object.ArchiveColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		for _, k := range nodes {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"entgo.io/ent"
+	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/schema"
 	"entgo.io/ent/schema/edge"
@@ -22,7 +23,7 @@ type Archive struct {
 // Fields of Archive.
 func (Archive) Fields() []ent.Field {
 	return []ent.Field{
-		field.String("id"),
+		field.String("name").Unique().Immutable(),
 		field.String("session_id").Optional().Nillable(),
 		field.Int("state").Default(0),
 		// opened_at is when an open archive was claimed, by the index's
@@ -56,8 +57,7 @@ type Object struct {
 // Fields of Object.
 func (Object) Fields() []ent.Field {
 	return []ent.Field{
-		field.Bytes("ref"),
-		field.String("archive_id"),
+		field.Int("archive_id"),
 		field.Uint32("start"),
 		field.Uint32("length"),
 		field.Uint32("type"),
@@ -68,6 +68,7 @@ func (Object) Fields() []ent.Field {
 		// incomplete is set on a copy that reaches content a commit marked
 		// lost
 		field.Bool("incomplete").Default(false),
+		field.Bytes("ref"),
 	}
 }
 
@@ -81,8 +82,10 @@ func (Object) Edges() []ent.Edge {
 // Indexes of Object.
 func (Object) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("ref", "archive_id").Unique(),
-		index.Fields("archive_id"),
+		index.Fields("archive_id", "ref").Unique().StorageKey("objects_archive_ref"),
+		// lookups by ref only ever ask for equality, which a hash index
+		// answers in about half a B-tree's space
+		index.Fields("ref").Annotations(entsql.IndexTypes(map[string]string{dialect.Postgres: "HASH"})).StorageKey("objects_ref"),
 		index.Fields("ref").Annotations(entsql.IndexWhere(fmt.Sprintf("type = %d", proto.ObjectType_TOMBSTONE))).StorageKey("objects_tombstones"),
 		index.Fields("ref").Annotations(entsql.IndexWhere(fmt.Sprintf("type = %d", proto.ObjectType_COMMIT))).StorageKey("objects_commits"),
 	}

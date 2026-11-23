@@ -66,7 +66,7 @@ func init() {
 	objectFields := schema.Object{}.Fields()
 	_ = objectFields
 	// objectDescIncomplete is the schema descriptor for incomplete field.
-	objectDescIncomplete := objectFields[7].Descriptor()
+	objectDescIncomplete := objectFields[6].Descriptor()
 	// object.DefaultIncomplete holds the default value on creation for the incomplete field.
 	object.DefaultIncomplete = objectDescIncomplete.Default.(bool)
 	sessionmarkerFields := schema.SessionMarker{}.Fields()

@@ -68,14 +68,14 @@ func (_c *SessionCreate) SetID(v string) *SessionCreate {
 }
 
 // AddArchiveIDs adds the "archives" edge to the Archive entity by IDs.
-func (_c *SessionCreate) AddArchiveIDs(ids ...string) *SessionCreate {
+func (_c *SessionCreate) AddArchiveIDs(ids ...int) *SessionCreate {
 	_c.mutation.AddArchiveIDs(ids...)
 	return _c
 }
 
 // AddArchives adds the "archives" edges to the Archive entity.
 func (_c *SessionCreate) AddArchives(v ...*Archive) *SessionCreate {
-	ids := make([]string, len(v))
+	ids := make([]int, len(v))
 	for i := range v {
 		ids[i] = v[i].ID
 	}
@@ -201,7 +201,7 @@ func (_c *SessionCreate) createSpec() (*Session, *sqlgraph.CreateSpec) {
 			Columns: []string{session.ArchivesColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		for _, k := range nodes {

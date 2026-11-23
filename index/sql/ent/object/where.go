@@ -53,13 +53,8 @@ func IDLTE(id int) predicate.Object {
 	return predicate.Object(sql.FieldLTE(FieldID, id))
 }
 
-// Ref applies equality check predicate on the "ref" field. It's identical to RefEQ.
-func Ref(v []byte) predicate.Object {
-	return predicate.Object(sql.FieldEQ(FieldRef, v))
-}
-
 // ArchiveID applies equality check predicate on the "archive_id" field. It's identical to ArchiveIDEQ.
-func ArchiveID(v string) predicate.Object {
+func ArchiveID(v int) predicate.Object {
 	return predicate.Object(sql.FieldEQ(FieldArchiveID, v))
 }
 
@@ -93,109 +88,29 @@ func Incomplete(v bool) predicate.Object {
 	return predicate.Object(sql.FieldEQ(FieldIncomplete, v))
 }
 
-// RefEQ applies the EQ predicate on the "ref" field.
-func RefEQ(v []byte) predicate.Object {
+// Ref applies equality check predicate on the "ref" field. It's identical to RefEQ.
+func Ref(v []byte) predicate.Object {
 	return predicate.Object(sql.FieldEQ(FieldRef, v))
 }
 
-// RefNEQ applies the NEQ predicate on the "ref" field.
-func RefNEQ(v []byte) predicate.Object {
-	return predicate.Object(sql.FieldNEQ(FieldRef, v))
-}
-
-// RefIn applies the In predicate on the "ref" field.
-func RefIn(vs ...[]byte) predicate.Object {
-	return predicate.Object(sql.FieldIn(FieldRef, vs...))
-}
-
-// RefNotIn applies the NotIn predicate on the "ref" field.
-func RefNotIn(vs ...[]byte) predicate.Object {
-	return predicate.Object(sql.FieldNotIn(FieldRef, vs...))
-}
-
-// RefGT applies the GT predicate on the "ref" field.
-func RefGT(v []byte) predicate.Object {
-	return predicate.Object(sql.FieldGT(FieldRef, v))
-}
-
-// RefGTE applies the GTE predicate on the "ref" field.
-func RefGTE(v []byte) predicate.Object {
-	return predicate.Object(sql.FieldGTE(FieldRef, v))
-}
-
-// RefLT applies the LT predicate on the "ref" field.
-func RefLT(v []byte) predicate.Object {
-	return predicate.Object(sql.FieldLT(FieldRef, v))
-}
-
-// RefLTE applies the LTE predicate on the "ref" field.
-func RefLTE(v []byte) predicate.Object {
-	return predicate.Object(sql.FieldLTE(FieldRef, v))
-}
-
 // ArchiveIDEQ applies the EQ predicate on the "archive_id" field.
-func ArchiveIDEQ(v string) predicate.Object {
+func ArchiveIDEQ(v int) predicate.Object {
 	return predicate.Object(sql.FieldEQ(FieldArchiveID, v))
 }
 
 // ArchiveIDNEQ applies the NEQ predicate on the "archive_id" field.
-func ArchiveIDNEQ(v string) predicate.Object {
+func ArchiveIDNEQ(v int) predicate.Object {
 	return predicate.Object(sql.FieldNEQ(FieldArchiveID, v))
 }
 
 // ArchiveIDIn applies the In predicate on the "archive_id" field.
-func ArchiveIDIn(vs ...string) predicate.Object {
+func ArchiveIDIn(vs ...int) predicate.Object {
 	return predicate.Object(sql.FieldIn(FieldArchiveID, vs...))
 }
 
 // ArchiveIDNotIn applies the NotIn predicate on the "archive_id" field.
-func ArchiveIDNotIn(vs ...string) predicate.Object {
+func ArchiveIDNotIn(vs ...int) predicate.Object {
 	return predicate.Object(sql.FieldNotIn(FieldArchiveID, vs...))
-}
-
-// ArchiveIDGT applies the GT predicate on the "archive_id" field.
-func ArchiveIDGT(v string) predicate.Object {
-	return predicate.Object(sql.FieldGT(FieldArchiveID, v))
-}
-
-// ArchiveIDGTE applies the GTE predicate on the "archive_id" field.
-func ArchiveIDGTE(v string) predicate.Object {
-	return predicate.Object(sql.FieldGTE(FieldArchiveID, v))
-}
-
-// ArchiveIDLT applies the LT predicate on the "archive_id" field.
-func ArchiveIDLT(v string) predicate.Object {
-	return predicate.Object(sql.FieldLT(FieldArchiveID, v))
-}
-
-// ArchiveIDLTE applies the LTE predicate on the "archive_id" field.
-func ArchiveIDLTE(v string) predicate.Object {
-	return predicate.Object(sql.FieldLTE(FieldArchiveID, v))
-}
-
-// ArchiveIDContains applies the Contains predicate on the "archive_id" field.
-func ArchiveIDContains(v string) predicate.Object {
-	return predicate.Object(sql.FieldContains(FieldArchiveID, v))
-}
-
-// ArchiveIDHasPrefix applies the HasPrefix predicate on the "archive_id" field.
-func ArchiveIDHasPrefix(v string) predicate.Object {
-	return predicate.Object(sql.FieldHasPrefix(FieldArchiveID, v))
-}
-
-// ArchiveIDHasSuffix applies the HasSuffix predicate on the "archive_id" field.
-func ArchiveIDHasSuffix(v string) predicate.Object {
-	return predicate.Object(sql.FieldHasSuffix(FieldArchiveID, v))
-}
-
-// ArchiveIDEqualFold applies the EqualFold predicate on the "archive_id" field.
-func ArchiveIDEqualFold(v string) predicate.Object {
-	return predicate.Object(sql.FieldEqualFold(FieldArchiveID, v))
-}
-
-// ArchiveIDContainsFold applies the ContainsFold predicate on the "archive_id" field.
-func ArchiveIDContainsFold(v string) predicate.Object {
-	return predicate.Object(sql.FieldContainsFold(FieldArchiveID, v))
 }
 
 // StartEQ applies the EQ predicate on the "start" field.
@@ -426,6 +341,46 @@ func IncompleteEQ(v bool) predicate.Object {
 // IncompleteNEQ applies the NEQ predicate on the "incomplete" field.
 func IncompleteNEQ(v bool) predicate.Object {
 	return predicate.Object(sql.FieldNEQ(FieldIncomplete, v))
+}
+
+// RefEQ applies the EQ predicate on the "ref" field.
+func RefEQ(v []byte) predicate.Object {
+	return predicate.Object(sql.FieldEQ(FieldRef, v))
+}
+
+// RefNEQ applies the NEQ predicate on the "ref" field.
+func RefNEQ(v []byte) predicate.Object {
+	return predicate.Object(sql.FieldNEQ(FieldRef, v))
+}
+
+// RefIn applies the In predicate on the "ref" field.
+func RefIn(vs ...[]byte) predicate.Object {
+	return predicate.Object(sql.FieldIn(FieldRef, vs...))
+}
+
+// RefNotIn applies the NotIn predicate on the "ref" field.
+func RefNotIn(vs ...[]byte) predicate.Object {
+	return predicate.Object(sql.FieldNotIn(FieldRef, vs...))
+}
+
+// RefGT applies the GT predicate on the "ref" field.
+func RefGT(v []byte) predicate.Object {
+	return predicate.Object(sql.FieldGT(FieldRef, v))
+}
+
+// RefGTE applies the GTE predicate on the "ref" field.
+func RefGTE(v []byte) predicate.Object {
+	return predicate.Object(sql.FieldGTE(FieldRef, v))
+}
+
+// RefLT applies the LT predicate on the "ref" field.
+func RefLT(v []byte) predicate.Object {
+	return predicate.Object(sql.FieldLT(FieldRef, v))
+}
+
+// RefLTE applies the LTE predicate on the "ref" field.
+func RefLTE(v []byte) predicate.Object {
+	return predicate.Object(sql.FieldLTE(FieldRef, v))
 }
 
 // HasArchive applies the HasEdge predicate on the "archive" edge.

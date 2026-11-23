@@ -12,6 +12,8 @@ const (
 	Label = "archive"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldName holds the string denoting the name field in the database.
+	FieldName = "name"
 	// FieldSessionID holds the string denoting the session_id field in the database.
 	FieldSessionID = "session_id"
 	// FieldState holds the string denoting the state field in the database.
@@ -45,6 +47,7 @@ const (
 // Columns holds all SQL columns for archive fields.
 var Columns = []string{
 	FieldID,
+	FieldName,
 	FieldSessionID,
 	FieldState,
 	FieldOpenedAt,
@@ -72,6 +75,11 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByName orders the results by the name field.
+func ByName(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldName, opts...).ToFunc()
 }
 
 // BySessionID orders the results by the session_id field.

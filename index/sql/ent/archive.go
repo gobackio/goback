@@ -17,7 +17,9 @@ import (
 type Archive struct {
 	config `json:"-"`
 	// ID of the ent.
-	ID string `json:"id,omitempty"`
+	ID int `json:"id,omitempty"`
+	// Name holds the value of the "name" field.
+	Name string `json:"name,omitempty"`
 	// SessionID holds the value of the "session_id" field.
 	SessionID *string `json:"session_id,omitempty"`
 	// State holds the value of the "state" field.
@@ -68,9 +70,9 @@ func (*Archive) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case archive.FieldState:
+		case archive.FieldID, archive.FieldState:
 			values[i] = new(sql.NullInt64)
-		case archive.FieldID, archive.FieldSessionID:
+		case archive.FieldName, archive.FieldSessionID:
 			values[i] = new(sql.NullString)
 		case archive.FieldOpenedAt, archive.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -90,10 +92,16 @@ func (_m *Archive) assignValues(columns []string, values []any) error {
 	for i := range columns {
 		switch columns[i] {
 		case archive.FieldID:
+			value, ok := values[i].(*sql.NullInt64)
+			if !ok {
+				return fmt.Errorf("unexpected type %T for field id", value)
+			}
+			_m.ID = int(value.Int64)
+		case archive.FieldName:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field id", values[i])
+				return fmt.Errorf("unexpected type %T for field name", values[i])
 			} else if value.Valid {
-				_m.ID = value.String
+				_m.Name = value.String
 			}
 		case archive.FieldSessionID:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -168,6 +176,9 @@ func (_m *Archive) String() string {
 	var builder strings.Builder
 	builder.WriteString("Archive(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("name=")
+	builder.WriteString(_m.Name)
+	builder.WriteString(", ")
 	if v := _m.SessionID; v != nil {
 		builder.WriteString("session_id=")
 		builder.WriteString(*v)

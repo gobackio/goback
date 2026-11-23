@@ -11,7 +11,8 @@ import (
 var (
 	// ArchivesColumns holds the columns for the "archives" table.
 	ArchivesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString},
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "name", Type: field.TypeString, Unique: true},
 		{Name: "state", Type: field.TypeInt, Default: 0},
 		{Name: "opened_at", Type: field.TypeTime, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime, Nullable: true},
@@ -25,7 +26,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "archives_sessions_archives",
-				Columns:    []*schema.Column{ArchivesColumns[4]},
+				Columns:    []*schema.Column{ArchivesColumns[5]},
 				RefColumns: []*schema.Column{SessionsColumns[0]},
 				OnDelete:   schema.Cascade,
 			},
@@ -34,7 +35,7 @@ var (
 			{
 				Name:    "archives_session",
 				Unique:  false,
-				Columns: []*schema.Column{ArchivesColumns[4]},
+				Columns: []*schema.Column{ArchivesColumns[5]},
 				Annotation: &entsql.IndexAnnotation{
 					Where: "session_id IS NOT NULL",
 				},
@@ -244,14 +245,14 @@ var (
 	// ObjectsColumns holds the columns for the "objects" table.
 	ObjectsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
-		{Name: "ref", Type: field.TypeBytes},
 		{Name: "start", Type: field.TypeUint32},
 		{Name: "length", Type: field.TypeUint32},
 		{Name: "type", Type: field.TypeUint32},
 		{Name: "carried_time", Type: field.TypeInt64, Nullable: true},
 		{Name: "carried_offset", Type: field.TypeUint32, Nullable: true},
 		{Name: "incomplete", Type: field.TypeBool, Default: false},
-		{Name: "archive_id", Type: field.TypeString},
+		{Name: "ref", Type: field.TypeBytes},
+		{Name: "archive_id", Type: field.TypeInt},
 	}
 	// ObjectsTable holds the schema information for the "objects" table.
 	ObjectsTable = &schema.Table{
@@ -268,19 +269,24 @@ var (
 		},
 		Indexes: []*schema.Index{
 			{
-				Name:    "object_ref_archive_id",
+				Name:    "objects_archive_ref",
 				Unique:  true,
-				Columns: []*schema.Column{ObjectsColumns[1], ObjectsColumns[8]},
+				Columns: []*schema.Column{ObjectsColumns[8], ObjectsColumns[7]},
 			},
 			{
-				Name:    "object_archive_id",
+				Name:    "objects_ref",
 				Unique:  false,
-				Columns: []*schema.Column{ObjectsColumns[8]},
+				Columns: []*schema.Column{ObjectsColumns[7]},
+				Annotation: &entsql.IndexAnnotation{
+					Types: map[string]string{
+						"postgres": "HASH",
+					},
+				},
 			},
 			{
 				Name:    "objects_tombstones",
 				Unique:  false,
-				Columns: []*schema.Column{ObjectsColumns[1]},
+				Columns: []*schema.Column{ObjectsColumns[7]},
 				Annotation: &entsql.IndexAnnotation{
 					Where: "type = 5",
 				},
@@ -288,7 +294,7 @@ var (
 			{
 				Name:    "objects_commits",
 				Unique:  false,
-				Columns: []*schema.Column{ObjectsColumns[1]},
+				Columns: []*schema.Column{ObjectsColumns[7]},
 				Annotation: &entsql.IndexAnnotation{
 					Where: "type = 1",
 				},

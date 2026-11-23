@@ -191,7 +191,7 @@ func (_u *ArchiveUpdate) ExecX(ctx context.Context) {
 }
 
 func (_u *ArchiveUpdate) sqlSave(ctx context.Context) (_node int, err error) {
-	_spec := sqlgraph.NewUpdateSpec(archive.Table, archive.Columns, sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString))
+	_spec := sqlgraph.NewUpdateSpec(archive.Table, archive.Columns, sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt))
 	if ps := _u.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
@@ -485,7 +485,7 @@ func (_u *ArchiveUpdateOne) ExecX(ctx context.Context) {
 }
 
 func (_u *ArchiveUpdateOne) sqlSave(ctx context.Context) (_node *Archive, err error) {
-	_spec := sqlgraph.NewUpdateSpec(archive.Table, archive.Columns, sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString))
+	_spec := sqlgraph.NewUpdateSpec(archive.Table, archive.Columns, sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt))
 	id, ok := _u.mutation.ID()
 	if !ok {
 		return nil, &ValidationError{Name: "id", err: errors.New(`ent: missing "Archive.id" for update`)}

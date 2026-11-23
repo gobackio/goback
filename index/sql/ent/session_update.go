@@ -111,14 +111,14 @@ func (_u *SessionUpdate) ClearInitialRetention() *SessionUpdate {
 }
 
 // AddArchiveIDs adds the "archives" edge to the Archive entity by IDs.
-func (_u *SessionUpdate) AddArchiveIDs(ids ...string) *SessionUpdate {
+func (_u *SessionUpdate) AddArchiveIDs(ids ...int) *SessionUpdate {
 	_u.mutation.AddArchiveIDs(ids...)
 	return _u
 }
 
 // AddArchives adds the "archives" edges to the Archive entity.
 func (_u *SessionUpdate) AddArchives(v ...*Archive) *SessionUpdate {
-	ids := make([]string, len(v))
+	ids := make([]int, len(v))
 	for i := range v {
 		ids[i] = v[i].ID
 	}
@@ -137,14 +137,14 @@ func (_u *SessionUpdate) ClearArchives() *SessionUpdate {
 }
 
 // RemoveArchiveIDs removes the "archives" edge to Archive entities by IDs.
-func (_u *SessionUpdate) RemoveArchiveIDs(ids ...string) *SessionUpdate {
+func (_u *SessionUpdate) RemoveArchiveIDs(ids ...int) *SessionUpdate {
 	_u.mutation.RemoveArchiveIDs(ids...)
 	return _u
 }
 
 // RemoveArchives removes "archives" edges to Archive entities.
 func (_u *SessionUpdate) RemoveArchives(v ...*Archive) *SessionUpdate {
-	ids := make([]string, len(v))
+	ids := make([]int, len(v))
 	for i := range v {
 		ids[i] = v[i].ID
 	}
@@ -219,7 +219,7 @@ func (_u *SessionUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Columns: []string{session.ArchivesColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -232,7 +232,7 @@ func (_u *SessionUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Columns: []string{session.ArchivesColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		for _, k := range nodes {
@@ -248,7 +248,7 @@ func (_u *SessionUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Columns: []string{session.ArchivesColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		for _, k := range nodes {
@@ -357,14 +357,14 @@ func (_u *SessionUpdateOne) ClearInitialRetention() *SessionUpdateOne {
 }
 
 // AddArchiveIDs adds the "archives" edge to the Archive entity by IDs.
-func (_u *SessionUpdateOne) AddArchiveIDs(ids ...string) *SessionUpdateOne {
+func (_u *SessionUpdateOne) AddArchiveIDs(ids ...int) *SessionUpdateOne {
 	_u.mutation.AddArchiveIDs(ids...)
 	return _u
 }
 
 // AddArchives adds the "archives" edges to the Archive entity.
 func (_u *SessionUpdateOne) AddArchives(v ...*Archive) *SessionUpdateOne {
-	ids := make([]string, len(v))
+	ids := make([]int, len(v))
 	for i := range v {
 		ids[i] = v[i].ID
 	}
@@ -383,14 +383,14 @@ func (_u *SessionUpdateOne) ClearArchives() *SessionUpdateOne {
 }
 
 // RemoveArchiveIDs removes the "archives" edge to Archive entities by IDs.
-func (_u *SessionUpdateOne) RemoveArchiveIDs(ids ...string) *SessionUpdateOne {
+func (_u *SessionUpdateOne) RemoveArchiveIDs(ids ...int) *SessionUpdateOne {
 	_u.mutation.RemoveArchiveIDs(ids...)
 	return _u
 }
 
 // RemoveArchives removes "archives" edges to Archive entities.
 func (_u *SessionUpdateOne) RemoveArchives(v ...*Archive) *SessionUpdateOne {
-	ids := make([]string, len(v))
+	ids := make([]int, len(v))
 	for i := range v {
 		ids[i] = v[i].ID
 	}
@@ -495,7 +495,7 @@ func (_u *SessionUpdateOne) sqlSave(ctx context.Context) (_node *Session, err er
 			Columns: []string{session.ArchivesColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -508,7 +508,7 @@ func (_u *SessionUpdateOne) sqlSave(ctx context.Context) (_node *Session, err er
 			Columns: []string{session.ArchivesColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		for _, k := range nodes {
@@ -524,7 +524,7 @@ func (_u *SessionUpdateOne) sqlSave(ctx context.Context) (_node *Session, err er
 			Columns: []string{session.ArchivesColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		for _, k := range nodes {

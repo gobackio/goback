@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"time"
 
-	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
@@ -23,6 +22,12 @@ type ArchiveCreate struct {
 	mutation *ArchiveMutation
 	hooks    []Hook
 	conflict []sql.ConflictOption
+}
+
+// SetName sets the "name" field.
+func (_c *ArchiveCreate) SetName(v string) *ArchiveCreate {
+	_c.mutation.SetName(v)
+	return _c
 }
 
 // SetSessionID sets the "session_id" field.
@@ -78,12 +83,6 @@ func (_c *ArchiveCreate) SetNillableCreatedAt(v *time.Time) *ArchiveCreate {
 	if v != nil {
 		_c.SetCreatedAt(*v)
 	}
-	return _c
-}
-
-// SetID sets the "id" field.
-func (_c *ArchiveCreate) SetID(v string) *ArchiveCreate {
-	_c.mutation.SetID(v)
 	return _c
 }
 
@@ -150,6 +149,9 @@ func (_c *ArchiveCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *ArchiveCreate) check() error {
+	if _, ok := _c.mutation.Name(); !ok {
+		return &ValidationError{Name: "name", err: errors.New(`ent: missing required field "Archive.name"`)}
+	}
 	if _, ok := _c.mutation.State(); !ok {
 		return &ValidationError{Name: "state", err: errors.New(`ent: missing required field "Archive.state"`)}
 	}
@@ -167,13 +169,8 @@ func (_c *ArchiveCreate) sqlSave(ctx context.Context) (*Archive, error) {
 		}
 		return nil, err
 	}
-	if _spec.ID.Value != nil {
-		if id, ok := _spec.ID.Value.(string); ok {
-			_node.ID = id
-		} else {
-			return nil, fmt.Errorf("unexpected Archive.ID type: %T", _spec.ID.Value)
-		}
-	}
+	id := _spec.ID.Value.(int64)
+	_node.ID = int(id)
 	_c.mutation.id = &_node.ID
 	_c.mutation.done = true
 	return _node, nil
@@ -182,12 +179,12 @@ func (_c *ArchiveCreate) sqlSave(ctx context.Context) (*Archive, error) {
 func (_c *ArchiveCreate) createSpec() (*Archive, *sqlgraph.CreateSpec) {
 	var (
 		_node = &Archive{config: _c.config}
-		_spec = sqlgraph.NewCreateSpec(archive.Table, sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString))
+		_spec = sqlgraph.NewCreateSpec(archive.Table, sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt))
 	)
 	_spec.OnConflict = _c.conflict
-	if id, ok := _c.mutation.ID(); ok {
-		_node.ID = id
-		_spec.ID.Value = id
+	if value, ok := _c.mutation.Name(); ok {
+		_spec.SetField(archive.FieldName, field.TypeString, value)
+		_node.Name = value
 	}
 	if value, ok := _c.mutation.State(); ok {
 		_spec.SetField(archive.FieldState, field.TypeInt, value)
@@ -241,7 +238,7 @@ func (_c *ArchiveCreate) createSpec() (*Archive, *sqlgraph.CreateSpec) {
 // of the `INSERT` statement. For example:
 //
 //	client.Archive.Create().
-//		SetSessionID(v).
+//		SetName(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -250,7 +247,7 @@ func (_c *ArchiveCreate) createSpec() (*Archive, *sqlgraph.CreateSpec) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.ArchiveUpsert) {
-//			SetSessionID(v+v).
+//			SetName(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *ArchiveCreate) OnConflict(opts ...sql.ConflictOption) *ArchiveUpsertOne {
@@ -358,22 +355,19 @@ func (u *ArchiveUpsert) ClearCreatedAt() *ArchiveUpsert {
 	return u
 }
 
-// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
 //	client.Archive.Create().
 //		OnConflict(
 //			sql.ResolveWithNewValues(),
-//			sql.ResolveWith(func(u *sql.UpdateSet) {
-//				u.SetIgnore(archive.FieldID)
-//			}),
 //		).
 //		Exec(ctx)
 func (u *ArchiveUpsertOne) UpdateNewValues() *ArchiveUpsertOne {
 	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
 	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
-		if _, exists := u.create.mutation.ID(); exists {
-			s.SetIgnore(archive.FieldID)
+		if _, exists := u.create.mutation.Name(); exists {
+			s.SetIgnore(archive.FieldName)
 		}
 	}))
 	return u
@@ -506,12 +500,7 @@ func (u *ArchiveUpsertOne) ExecX(ctx context.Context) {
 }
 
 // Exec executes the UPSERT query and returns the inserted/updated ID.
-func (u *ArchiveUpsertOne) ID(ctx context.Context) (id string, err error) {
-	if u.create.driver.Dialect() == dialect.MySQL {
-		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
-		// fields from the database since MySQL does not support the RETURNING clause.
-		return id, errors.New("ent: ArchiveUpsertOne.ID is not supported by MySQL driver. Use ArchiveUpsertOne.Exec instead")
-	}
+func (u *ArchiveUpsertOne) ID(ctx context.Context) (id int, err error) {
 	node, err := u.create.Save(ctx)
 	if err != nil {
 		return id, err
@@ -520,7 +509,7 @@ func (u *ArchiveUpsertOne) ID(ctx context.Context) (id string, err error) {
 }
 
 // IDX is like ID, but panics if an error occurs.
-func (u *ArchiveUpsertOne) IDX(ctx context.Context) string {
+func (u *ArchiveUpsertOne) IDX(ctx context.Context) int {
 	id, err := u.ID(ctx)
 	if err != nil {
 		panic(err)
@@ -575,6 +564,10 @@ func (_c *ArchiveCreateBulk) Save(ctx context.Context) ([]*Archive, error) {
 					return nil, err
 				}
 				mutation.id = &nodes[i].ID
+				if specs[i].ID.Value != nil {
+					id := specs[i].ID.Value.(int64)
+					nodes[i].ID = int(id)
+				}
 				mutation.done = true
 				return nodes[i], nil
 			})
@@ -626,7 +619,7 @@ func (_c *ArchiveCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.ArchiveUpsert) {
-//			SetSessionID(v+v).
+//			SetName(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *ArchiveCreateBulk) OnConflict(opts ...sql.ConflictOption) *ArchiveUpsertBulk {
@@ -661,17 +654,14 @@ type ArchiveUpsertBulk struct {
 //	client.Archive.Create().
 //		OnConflict(
 //			sql.ResolveWithNewValues(),
-//			sql.ResolveWith(func(u *sql.UpdateSet) {
-//				u.SetIgnore(archive.FieldID)
-//			}),
 //		).
 //		Exec(ctx)
 func (u *ArchiveUpsertBulk) UpdateNewValues() *ArchiveUpsertBulk {
 	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
 	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
 		for _, b := range u.create.builders {
-			if _, exists := b.mutation.ID(); exists {
-				s.SetIgnore(archive.FieldID)
+			if _, exists := b.mutation.Name(); exists {
+				s.SetIgnore(archive.FieldName)
 			}
 		}
 	}))

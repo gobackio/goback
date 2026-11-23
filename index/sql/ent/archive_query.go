@@ -133,8 +133,8 @@ func (_q *ArchiveQuery) FirstX(ctx context.Context) *Archive {
 
 // FirstID returns the first Archive ID from the query.
 // Returns a *NotFoundError when no Archive ID was found.
-func (_q *ArchiveQuery) FirstID(ctx context.Context) (id string, err error) {
-	var ids []string
+func (_q *ArchiveQuery) FirstID(ctx context.Context) (id int, err error) {
+	var ids []int
 	if ids, err = _q.Limit(1).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryFirstID)); err != nil {
 		return
 	}
@@ -146,7 +146,7 @@ func (_q *ArchiveQuery) FirstID(ctx context.Context) (id string, err error) {
 }
 
 // FirstIDX is like FirstID, but panics if an error occurs.
-func (_q *ArchiveQuery) FirstIDX(ctx context.Context) string {
+func (_q *ArchiveQuery) FirstIDX(ctx context.Context) int {
 	id, err := _q.FirstID(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
@@ -184,8 +184,8 @@ func (_q *ArchiveQuery) OnlyX(ctx context.Context) *Archive {
 // OnlyID is like Only, but returns the only Archive ID in the query.
 // Returns a *NotSingularError when more than one Archive ID is found.
 // Returns a *NotFoundError when no entities are found.
-func (_q *ArchiveQuery) OnlyID(ctx context.Context) (id string, err error) {
-	var ids []string
+func (_q *ArchiveQuery) OnlyID(ctx context.Context) (id int, err error) {
+	var ids []int
 	if ids, err = _q.Limit(2).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryOnlyID)); err != nil {
 		return
 	}
@@ -201,7 +201,7 @@ func (_q *ArchiveQuery) OnlyID(ctx context.Context) (id string, err error) {
 }
 
 // OnlyIDX is like OnlyID, but panics if an error occurs.
-func (_q *ArchiveQuery) OnlyIDX(ctx context.Context) string {
+func (_q *ArchiveQuery) OnlyIDX(ctx context.Context) int {
 	id, err := _q.OnlyID(ctx)
 	if err != nil {
 		panic(err)
@@ -229,7 +229,7 @@ func (_q *ArchiveQuery) AllX(ctx context.Context) []*Archive {
 }
 
 // IDs executes the query and returns a list of Archive IDs.
-func (_q *ArchiveQuery) IDs(ctx context.Context) (ids []string, err error) {
+func (_q *ArchiveQuery) IDs(ctx context.Context) (ids []int, err error) {
 	if _q.ctx.Unique == nil && _q.path != nil {
 		_q.Unique(true)
 	}
@@ -241,7 +241,7 @@ func (_q *ArchiveQuery) IDs(ctx context.Context) (ids []string, err error) {
 }
 
 // IDsX is like IDs, but panics if an error occurs.
-func (_q *ArchiveQuery) IDsX(ctx context.Context) []string {
+func (_q *ArchiveQuery) IDsX(ctx context.Context) []int {
 	ids, err := _q.IDs(ctx)
 	if err != nil {
 		panic(err)
@@ -337,12 +337,12 @@ func (_q *ArchiveQuery) WithObjects(opts ...func(*ObjectQuery)) *ArchiveQuery {
 // Example:
 //
 //	var v []struct {
-//		SessionID string `json:"session_id,omitempty"`
+//		Name string `json:"name,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.Archive.Query().
-//		GroupBy(archive.FieldSessionID).
+//		GroupBy(archive.FieldName).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *ArchiveQuery) GroupBy(field string, fields ...string) *ArchiveGroupBy {
@@ -360,11 +360,11 @@ func (_q *ArchiveQuery) GroupBy(field string, fields ...string) *ArchiveGroupBy 
 // Example:
 //
 //	var v []struct {
-//		SessionID string `json:"session_id,omitempty"`
+//		Name string `json:"name,omitempty"`
 //	}
 //
 //	client.Archive.Query().
-//		Select(archive.FieldSessionID).
+//		Select(archive.FieldName).
 //		Scan(ctx, &v)
 func (_q *ArchiveQuery) Select(fields ...string) *ArchiveSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)
@@ -485,7 +485,7 @@ func (_q *ArchiveQuery) loadSession(ctx context.Context, query *SessionQuery, no
 }
 func (_q *ArchiveQuery) loadObjects(ctx context.Context, query *ObjectQuery, nodes []*Archive, init func(*Archive), assign func(*Archive, *Object)) error {
 	fks := make([]driver.Value, 0, len(nodes))
-	nodeids := make(map[string]*Archive)
+	nodeids := make(map[int]*Archive)
 	for i := range nodes {
 		fks = append(fks, nodes[i].ID)
 		nodeids[nodes[i].ID] = nodes[i]
@@ -527,7 +527,7 @@ func (_q *ArchiveQuery) sqlCount(ctx context.Context) (int, error) {
 }
 
 func (_q *ArchiveQuery) querySpec() *sqlgraph.QuerySpec {
-	_spec := sqlgraph.NewQuerySpec(archive.Table, archive.Columns, sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString))
+	_spec := sqlgraph.NewQuerySpec(archive.Table, archive.Columns, sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt))
 	_spec.From = _q.sql
 	if unique := _q.ctx.Unique; unique != nil {
 		_spec.Unique = *unique

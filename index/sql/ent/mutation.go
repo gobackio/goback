@@ -62,7 +62,8 @@ type ArchiveMutation struct {
 	config
 	op             Op
 	typ            string
-	id             *string
+	id             *int
+	name           *string
 	state          *int
 	addstate       *int
 	opened_at      *time.Time
@@ -98,7 +99,7 @@ func newArchiveMutation(c config, op Op, opts ...archiveOption) *ArchiveMutation
 }
 
 // withArchiveID sets the ID field of the mutation.
-func withArchiveID(id string) archiveOption {
+func withArchiveID(id int) archiveOption {
 	return func(m *ArchiveMutation) {
 		var (
 			err   error
@@ -148,15 +149,9 @@ func (m ArchiveMutation) Tx() (*Tx, error) {
 	return tx, nil
 }
 
-// SetID sets the value of the id field. Note that this
-// operation is only accepted on creation of Archive entities.
-func (m *ArchiveMutation) SetID(id string) {
-	m.id = &id
-}
-
 // ID returns the ID value in the mutation. Note that the ID is only available
 // if it was provided to the builder or after it was returned from the database.
-func (m *ArchiveMutation) ID() (id string, exists bool) {
+func (m *ArchiveMutation) ID() (id int, exists bool) {
 	if m.id == nil {
 		return
 	}
@@ -167,12 +162,12 @@ func (m *ArchiveMutation) ID() (id string, exists bool) {
 // That means, if the mutation is applied within a transaction with an isolation level such
 // as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
 // or updated by the mutation.
-func (m *ArchiveMutation) IDs(ctx context.Context) ([]string, error) {
+func (m *ArchiveMutation) IDs(ctx context.Context) ([]int, error) {
 	switch {
 	case m.op.Is(OpUpdateOne | OpDeleteOne):
 		id, exists := m.ID()
 		if exists {
-			return []string{id}, nil
+			return []int{id}, nil
 		}
 		fallthrough
 	case m.op.Is(OpUpdate | OpDelete):
@@ -180,6 +175,42 @@ func (m *ArchiveMutation) IDs(ctx context.Context) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
 	}
+}
+
+// SetName sets the "name" field.
+func (m *ArchiveMutation) SetName(s string) {
+	m.name = &s
+}
+
+// Name returns the value of the "name" field in the mutation.
+func (m *ArchiveMutation) Name() (r string, exists bool) {
+	v := m.name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldName returns the old "name" field's value of the Archive entity.
+// If the Archive object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ArchiveMutation) OldName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldName: %w", err)
+	}
+	return oldValue.Name, nil
+}
+
+// ResetName resets all changes to the "name" field.
+func (m *ArchiveMutation) ResetName() {
+	m.name = nil
 }
 
 // SetSessionID sets the "session_id" field.
@@ -500,7 +531,10 @@ func (m *ArchiveMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ArchiveMutation) Fields() []string {
-	fields := make([]string, 0, 4)
+	fields := make([]string, 0, 5)
+	if m.name != nil {
+		fields = append(fields, archive.FieldName)
+	}
 	if m.session != nil {
 		fields = append(fields, archive.FieldSessionID)
 	}
@@ -521,6 +555,8 @@ func (m *ArchiveMutation) Fields() []string {
 // schema.
 func (m *ArchiveMutation) Field(name string) (ent.Value, bool) {
 	switch name {
+	case archive.FieldName:
+		return m.Name()
 	case archive.FieldSessionID:
 		return m.SessionID()
 	case archive.FieldState:
@@ -538,6 +574,8 @@ func (m *ArchiveMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *ArchiveMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
+	case archive.FieldName:
+		return m.OldName(ctx)
 	case archive.FieldSessionID:
 		return m.OldSessionID(ctx)
 	case archive.FieldState:
@@ -555,6 +593,13 @@ func (m *ArchiveMutation) OldField(ctx context.Context, name string) (ent.Value,
 // type.
 func (m *ArchiveMutation) SetField(name string, value ent.Value) error {
 	switch name {
+	case archive.FieldName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetName(v)
+		return nil
 	case archive.FieldSessionID:
 		v, ok := value.(string)
 		if !ok {
@@ -668,6 +713,9 @@ func (m *ArchiveMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *ArchiveMutation) ResetField(name string) error {
 	switch name {
+	case archive.FieldName:
+		m.ResetName()
+		return nil
 	case archive.FieldSessionID:
 		m.ResetSessionID()
 		return nil
@@ -4857,7 +4905,6 @@ type ObjectMutation struct {
 	op                Op
 	typ               string
 	id                *int
-	ref               *[]byte
 	start             *uint32
 	addstart          *int32
 	length            *uint32
@@ -4869,8 +4916,9 @@ type ObjectMutation struct {
 	carried_offset    *uint32
 	addcarried_offset *int32
 	incomplete        *bool
+	ref               *[]byte
 	clearedFields     map[string]struct{}
-	archive           *string
+	archive           *int
 	clearedarchive    bool
 	done              bool
 	oldValue          func(context.Context) (*Object, error)
@@ -4975,49 +5023,13 @@ func (m *ObjectMutation) IDs(ctx context.Context) ([]int, error) {
 	}
 }
 
-// SetRef sets the "ref" field.
-func (m *ObjectMutation) SetRef(b []byte) {
-	m.ref = &b
-}
-
-// Ref returns the value of the "ref" field in the mutation.
-func (m *ObjectMutation) Ref() (r []byte, exists bool) {
-	v := m.ref
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRef returns the old "ref" field's value of the Object entity.
-// If the Object object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ObjectMutation) OldRef(ctx context.Context) (v []byte, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRef is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRef requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRef: %w", err)
-	}
-	return oldValue.Ref, nil
-}
-
-// ResetRef resets all changes to the "ref" field.
-func (m *ObjectMutation) ResetRef() {
-	m.ref = nil
-}
-
 // SetArchiveID sets the "archive_id" field.
-func (m *ObjectMutation) SetArchiveID(s string) {
-	m.archive = &s
+func (m *ObjectMutation) SetArchiveID(i int) {
+	m.archive = &i
 }
 
 // ArchiveID returns the value of the "archive_id" field in the mutation.
-func (m *ObjectMutation) ArchiveID() (r string, exists bool) {
+func (m *ObjectMutation) ArchiveID() (r int, exists bool) {
 	v := m.archive
 	if v == nil {
 		return
@@ -5028,7 +5040,7 @@ func (m *ObjectMutation) ArchiveID() (r string, exists bool) {
 // OldArchiveID returns the old "archive_id" field's value of the Object entity.
 // If the Object object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ObjectMutation) OldArchiveID(ctx context.Context) (v string, err error) {
+func (m *ObjectMutation) OldArchiveID(ctx context.Context) (v int, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldArchiveID is only allowed on UpdateOne operations")
 	}
@@ -5391,6 +5403,42 @@ func (m *ObjectMutation) ResetIncomplete() {
 	m.incomplete = nil
 }
 
+// SetRef sets the "ref" field.
+func (m *ObjectMutation) SetRef(b []byte) {
+	m.ref = &b
+}
+
+// Ref returns the value of the "ref" field in the mutation.
+func (m *ObjectMutation) Ref() (r []byte, exists bool) {
+	v := m.ref
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRef returns the old "ref" field's value of the Object entity.
+// If the Object object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ObjectMutation) OldRef(ctx context.Context) (v []byte, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRef is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRef requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRef: %w", err)
+	}
+	return oldValue.Ref, nil
+}
+
+// ResetRef resets all changes to the "ref" field.
+func (m *ObjectMutation) ResetRef() {
+	m.ref = nil
+}
+
 // ClearArchive clears the "archive" edge to the Archive entity.
 func (m *ObjectMutation) ClearArchive() {
 	m.clearedarchive = true
@@ -5405,7 +5453,7 @@ func (m *ObjectMutation) ArchiveCleared() bool {
 // ArchiveIDs returns the "archive" edge IDs in the mutation.
 // Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
 // ArchiveID instead. It exists only for internal usage by the builders.
-func (m *ObjectMutation) ArchiveIDs() (ids []string) {
+func (m *ObjectMutation) ArchiveIDs() (ids []int) {
 	if id := m.archive; id != nil {
 		ids = append(ids, *id)
 	}
@@ -5453,9 +5501,6 @@ func (m *ObjectMutation) Type() string {
 // AddedFields().
 func (m *ObjectMutation) Fields() []string {
 	fields := make([]string, 0, 8)
-	if m.ref != nil {
-		fields = append(fields, object.FieldRef)
-	}
 	if m.archive != nil {
 		fields = append(fields, object.FieldArchiveID)
 	}
@@ -5477,6 +5522,9 @@ func (m *ObjectMutation) Fields() []string {
 	if m.incomplete != nil {
 		fields = append(fields, object.FieldIncomplete)
 	}
+	if m.ref != nil {
+		fields = append(fields, object.FieldRef)
+	}
 	return fields
 }
 
@@ -5485,8 +5533,6 @@ func (m *ObjectMutation) Fields() []string {
 // schema.
 func (m *ObjectMutation) Field(name string) (ent.Value, bool) {
 	switch name {
-	case object.FieldRef:
-		return m.Ref()
 	case object.FieldArchiveID:
 		return m.ArchiveID()
 	case object.FieldStart:
@@ -5501,6 +5547,8 @@ func (m *ObjectMutation) Field(name string) (ent.Value, bool) {
 		return m.CarriedOffset()
 	case object.FieldIncomplete:
 		return m.Incomplete()
+	case object.FieldRef:
+		return m.Ref()
 	}
 	return nil, false
 }
@@ -5510,8 +5558,6 @@ func (m *ObjectMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *ObjectMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
-	case object.FieldRef:
-		return m.OldRef(ctx)
 	case object.FieldArchiveID:
 		return m.OldArchiveID(ctx)
 	case object.FieldStart:
@@ -5526,6 +5572,8 @@ func (m *ObjectMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldCarriedOffset(ctx)
 	case object.FieldIncomplete:
 		return m.OldIncomplete(ctx)
+	case object.FieldRef:
+		return m.OldRef(ctx)
 	}
 	return nil, fmt.Errorf("unknown Object field %s", name)
 }
@@ -5535,15 +5583,8 @@ func (m *ObjectMutation) OldField(ctx context.Context, name string) (ent.Value, 
 // type.
 func (m *ObjectMutation) SetField(name string, value ent.Value) error {
 	switch name {
-	case object.FieldRef:
-		v, ok := value.([]byte)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRef(v)
-		return nil
 	case object.FieldArchiveID:
-		v, ok := value.(string)
+		v, ok := value.(int)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
@@ -5590,6 +5631,13 @@ func (m *ObjectMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetIncomplete(v)
+		return nil
+	case object.FieldRef:
+		v, ok := value.([]byte)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRef(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Object field %s", name)
@@ -5718,9 +5766,6 @@ func (m *ObjectMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *ObjectMutation) ResetField(name string) error {
 	switch name {
-	case object.FieldRef:
-		m.ResetRef()
-		return nil
 	case object.FieldArchiveID:
 		m.ResetArchiveID()
 		return nil
@@ -5741,6 +5786,9 @@ func (m *ObjectMutation) ResetField(name string) error {
 		return nil
 	case object.FieldIncomplete:
 		m.ResetIncomplete()
+		return nil
+	case object.FieldRef:
+		m.ResetRef()
 		return nil
 	}
 	return fmt.Errorf("unknown Object field %s", name)
@@ -7672,8 +7720,8 @@ type SessionMutation struct {
 	restore_ref       *[]byte
 	initial_retention **retention.Policy
 	clearedFields     map[string]struct{}
-	archives          map[string]struct{}
-	removedarchives   map[string]struct{}
+	archives          map[int]struct{}
+	removedarchives   map[int]struct{}
 	clearedarchives   bool
 	done              bool
 	oldValue          func(context.Context) (*Session, error)
@@ -8027,9 +8075,9 @@ func (m *SessionMutation) ResetInitialRetention() {
 }
 
 // AddArchiveIDs adds the "archives" edge to the Archive entity by ids.
-func (m *SessionMutation) AddArchiveIDs(ids ...string) {
+func (m *SessionMutation) AddArchiveIDs(ids ...int) {
 	if m.archives == nil {
-		m.archives = make(map[string]struct{})
+		m.archives = make(map[int]struct{})
 	}
 	for i := range ids {
 		m.archives[ids[i]] = struct{}{}
@@ -8047,9 +8095,9 @@ func (m *SessionMutation) ArchivesCleared() bool {
 }
 
 // RemoveArchiveIDs removes the "archives" edge to the Archive entity by IDs.
-func (m *SessionMutation) RemoveArchiveIDs(ids ...string) {
+func (m *SessionMutation) RemoveArchiveIDs(ids ...int) {
 	if m.removedarchives == nil {
-		m.removedarchives = make(map[string]struct{})
+		m.removedarchives = make(map[int]struct{})
 	}
 	for i := range ids {
 		delete(m.archives, ids[i])
@@ -8058,7 +8106,7 @@ func (m *SessionMutation) RemoveArchiveIDs(ids ...string) {
 }
 
 // RemovedArchives returns the removed IDs of the "archives" edge to the Archive entity.
-func (m *SessionMutation) RemovedArchivesIDs() (ids []string) {
+func (m *SessionMutation) RemovedArchivesIDs() (ids []int) {
 	for id := range m.removedarchives {
 		ids = append(ids, id)
 	}
@@ -8066,7 +8114,7 @@ func (m *SessionMutation) RemovedArchivesIDs() (ids []string) {
 }
 
 // ArchivesIDs returns the "archives" edge IDs in the mutation.
-func (m *SessionMutation) ArchivesIDs() (ids []string) {
+func (m *SessionMutation) ArchivesIDs() (ids []int) {
 	for id := range m.archives {
 		ids = append(ids, id)
 	}

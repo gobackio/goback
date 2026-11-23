@@ -300,12 +300,12 @@ func (_q *ObjectQuery) WithArchive(opts ...func(*ArchiveQuery)) *ObjectQuery {
 // Example:
 //
 //	var v []struct {
-//		Ref []byte `json:"ref,omitempty"`
+//		ArchiveID int `json:"archive_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.Object.Query().
-//		GroupBy(object.FieldRef).
+//		GroupBy(object.FieldArchiveID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *ObjectQuery) GroupBy(field string, fields ...string) *ObjectGroupBy {
@@ -323,11 +323,11 @@ func (_q *ObjectQuery) GroupBy(field string, fields ...string) *ObjectGroupBy {
 // Example:
 //
 //	var v []struct {
-//		Ref []byte `json:"ref,omitempty"`
+//		ArchiveID int `json:"archive_id,omitempty"`
 //	}
 //
 //	client.Object.Query().
-//		Select(object.FieldRef).
+//		Select(object.FieldArchiveID).
 //		Scan(ctx, &v)
 func (_q *ObjectQuery) Select(fields ...string) *ObjectSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)
@@ -407,8 +407,8 @@ func (_q *ObjectQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Objec
 }
 
 func (_q *ObjectQuery) loadArchive(ctx context.Context, query *ArchiveQuery, nodes []*Object, init func(*Object), assign func(*Object, *Archive)) error {
-	ids := make([]string, 0, len(nodes))
-	nodeids := make(map[string][]*Object)
+	ids := make([]int, 0, len(nodes))
+	nodeids := make(map[int][]*Object)
 	for i := range nodes {
 		fk := nodes[i].ArchiveID
 		if _, ok := nodeids[fk]; !ok {

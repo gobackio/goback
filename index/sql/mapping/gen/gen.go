@@ -28,7 +28,7 @@ func (m MapperImpl) Archive(in *ent.Archive) pack.ArchiveInfo {
 	}
 
 	return pack.ArchiveInfo{
-		Name:    in.ID,
+		Name:    in.Name,
 		Session: tmp0,
 		State:   pack.ArchiveState(in.State),
 		Created: tmp1,
@@ -132,16 +132,20 @@ func (m MapperImpl) FilePath(in *ent.File) backup.FilePath {
 	}
 }
 
-func (m MapperImpl) Location(in *ent.Object) pack.IndexLocation {
+func (m MapperImpl) Location(in *ent.Object) (pack.IndexLocation, error) {
 	if in == nil {
-		return pack.IndexLocation{}
+		return pack.IndexLocation{}, nil
+	}
+	tmp0, err := in.Edges.ArchiveOrErr()
+	if err != nil {
+		return pack.IndexLocation{}, err
 	}
 
 	return pack.IndexLocation{
-		Archive:    in.ArchiveID,
+		Archive:    tmp0.Name,
 		Record:     m.Record(in),
 		Incomplete: in.Incomplete,
-	}
+	}, nil
 }
 
 func (m MapperImpl) Pin(in *ent.Pin) *proto.PinInfo {
@@ -164,10 +168,10 @@ func (m MapperImpl) Record(in *ent.Object) pack.IndexRecord {
 
 	return pack.IndexRecord{
 		Sum:           mapping.Sum(in.Ref),
+		CarriedTime:   in.CarriedTime,
 		Offset:        in.Start,
 		Length:        in.Length,
 		Type:          in.Type,
-		CarriedTime:   in.CarriedTime,
 		CarriedOffset: in.CarriedOffset,
 	}
 }

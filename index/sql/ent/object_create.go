@@ -22,14 +22,8 @@ type ObjectCreate struct {
 	conflict []sql.ConflictOption
 }
 
-// SetRef sets the "ref" field.
-func (_c *ObjectCreate) SetRef(v []byte) *ObjectCreate {
-	_c.mutation.SetRef(v)
-	return _c
-}
-
 // SetArchiveID sets the "archive_id" field.
-func (_c *ObjectCreate) SetArchiveID(v string) *ObjectCreate {
+func (_c *ObjectCreate) SetArchiveID(v int) *ObjectCreate {
 	_c.mutation.SetArchiveID(v)
 	return _c
 }
@@ -94,6 +88,12 @@ func (_c *ObjectCreate) SetNillableIncomplete(v *bool) *ObjectCreate {
 	return _c
 }
 
+// SetRef sets the "ref" field.
+func (_c *ObjectCreate) SetRef(v []byte) *ObjectCreate {
+	_c.mutation.SetRef(v)
+	return _c
+}
+
 // SetArchive sets the "archive" edge to the Archive entity.
 func (_c *ObjectCreate) SetArchive(v *Archive) *ObjectCreate {
 	return _c.SetArchiveID(v.ID)
@@ -142,9 +142,6 @@ func (_c *ObjectCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *ObjectCreate) check() error {
-	if _, ok := _c.mutation.Ref(); !ok {
-		return &ValidationError{Name: "ref", err: errors.New(`ent: missing required field "Object.ref"`)}
-	}
 	if _, ok := _c.mutation.ArchiveID(); !ok {
 		return &ValidationError{Name: "archive_id", err: errors.New(`ent: missing required field "Object.archive_id"`)}
 	}
@@ -159,6 +156,9 @@ func (_c *ObjectCreate) check() error {
 	}
 	if _, ok := _c.mutation.Incomplete(); !ok {
 		return &ValidationError{Name: "incomplete", err: errors.New(`ent: missing required field "Object.incomplete"`)}
+	}
+	if _, ok := _c.mutation.Ref(); !ok {
+		return &ValidationError{Name: "ref", err: errors.New(`ent: missing required field "Object.ref"`)}
 	}
 	if len(_c.mutation.ArchiveIDs()) == 0 {
 		return &ValidationError{Name: "archive", err: errors.New(`ent: missing required edge "Object.archive"`)}
@@ -190,10 +190,6 @@ func (_c *ObjectCreate) createSpec() (*Object, *sqlgraph.CreateSpec) {
 		_spec = sqlgraph.NewCreateSpec(object.Table, sqlgraph.NewFieldSpec(object.FieldID, field.TypeInt))
 	)
 	_spec.OnConflict = _c.conflict
-	if value, ok := _c.mutation.Ref(); ok {
-		_spec.SetField(object.FieldRef, field.TypeBytes, value)
-		_node.Ref = value
-	}
 	if value, ok := _c.mutation.Start(); ok {
 		_spec.SetField(object.FieldStart, field.TypeUint32, value)
 		_node.Start = value
@@ -218,6 +214,10 @@ func (_c *ObjectCreate) createSpec() (*Object, *sqlgraph.CreateSpec) {
 		_spec.SetField(object.FieldIncomplete, field.TypeBool, value)
 		_node.Incomplete = value
 	}
+	if value, ok := _c.mutation.Ref(); ok {
+		_spec.SetField(object.FieldRef, field.TypeBytes, value)
+		_node.Ref = value
+	}
 	if nodes := _c.mutation.ArchiveIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
@@ -226,7 +226,7 @@ func (_c *ObjectCreate) createSpec() (*Object, *sqlgraph.CreateSpec) {
 			Columns: []string{object.ArchiveColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString),
+				IDSpec: sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt),
 			},
 		}
 		for _, k := range nodes {
@@ -242,7 +242,7 @@ func (_c *ObjectCreate) createSpec() (*Object, *sqlgraph.CreateSpec) {
 // of the `INSERT` statement. For example:
 //
 //	client.Object.Create().
-//		SetRef(v).
+//		SetArchiveID(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -251,7 +251,7 @@ func (_c *ObjectCreate) createSpec() (*Object, *sqlgraph.CreateSpec) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.ObjectUpsert) {
-//			SetRef(v+v).
+//			SetArchiveID(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *ObjectCreate) OnConflict(opts ...sql.ConflictOption) *ObjectUpsertOne {
@@ -287,20 +287,8 @@ type (
 	}
 )
 
-// SetRef sets the "ref" field.
-func (u *ObjectUpsert) SetRef(v []byte) *ObjectUpsert {
-	u.Set(object.FieldRef, v)
-	return u
-}
-
-// UpdateRef sets the "ref" field to the value that was provided on create.
-func (u *ObjectUpsert) UpdateRef() *ObjectUpsert {
-	u.SetExcluded(object.FieldRef)
-	return u
-}
-
 // SetArchiveID sets the "archive_id" field.
-func (u *ObjectUpsert) SetArchiveID(v string) *ObjectUpsert {
+func (u *ObjectUpsert) SetArchiveID(v int) *ObjectUpsert {
 	u.Set(object.FieldArchiveID, v)
 	return u
 }
@@ -425,6 +413,18 @@ func (u *ObjectUpsert) UpdateIncomplete() *ObjectUpsert {
 	return u
 }
 
+// SetRef sets the "ref" field.
+func (u *ObjectUpsert) SetRef(v []byte) *ObjectUpsert {
+	u.Set(object.FieldRef, v)
+	return u
+}
+
+// UpdateRef sets the "ref" field to the value that was provided on create.
+func (u *ObjectUpsert) UpdateRef() *ObjectUpsert {
+	u.SetExcluded(object.FieldRef)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -465,22 +465,8 @@ func (u *ObjectUpsertOne) Update(set func(*ObjectUpsert)) *ObjectUpsertOne {
 	return u
 }
 
-// SetRef sets the "ref" field.
-func (u *ObjectUpsertOne) SetRef(v []byte) *ObjectUpsertOne {
-	return u.Update(func(s *ObjectUpsert) {
-		s.SetRef(v)
-	})
-}
-
-// UpdateRef sets the "ref" field to the value that was provided on create.
-func (u *ObjectUpsertOne) UpdateRef() *ObjectUpsertOne {
-	return u.Update(func(s *ObjectUpsert) {
-		s.UpdateRef()
-	})
-}
-
 // SetArchiveID sets the "archive_id" field.
-func (u *ObjectUpsertOne) SetArchiveID(v string) *ObjectUpsertOne {
+func (u *ObjectUpsertOne) SetArchiveID(v int) *ObjectUpsertOne {
 	return u.Update(func(s *ObjectUpsert) {
 		s.SetArchiveID(v)
 	})
@@ -626,6 +612,20 @@ func (u *ObjectUpsertOne) UpdateIncomplete() *ObjectUpsertOne {
 	})
 }
 
+// SetRef sets the "ref" field.
+func (u *ObjectUpsertOne) SetRef(v []byte) *ObjectUpsertOne {
+	return u.Update(func(s *ObjectUpsert) {
+		s.SetRef(v)
+	})
+}
+
+// UpdateRef sets the "ref" field to the value that was provided on create.
+func (u *ObjectUpsertOne) UpdateRef() *ObjectUpsertOne {
+	return u.Update(func(s *ObjectUpsert) {
+		s.UpdateRef()
+	})
+}
+
 // Exec executes the query.
 func (u *ObjectUpsertOne) Exec(ctx context.Context) error {
 	if len(u.create.conflict) == 0 {
@@ -761,7 +761,7 @@ func (_c *ObjectCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.ObjectUpsert) {
-//			SetRef(v+v).
+//			SetArchiveID(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *ObjectCreateBulk) OnConflict(opts ...sql.ConflictOption) *ObjectUpsertBulk {
@@ -830,22 +830,8 @@ func (u *ObjectUpsertBulk) Update(set func(*ObjectUpsert)) *ObjectUpsertBulk {
 	return u
 }
 
-// SetRef sets the "ref" field.
-func (u *ObjectUpsertBulk) SetRef(v []byte) *ObjectUpsertBulk {
-	return u.Update(func(s *ObjectUpsert) {
-		s.SetRef(v)
-	})
-}
-
-// UpdateRef sets the "ref" field to the value that was provided on create.
-func (u *ObjectUpsertBulk) UpdateRef() *ObjectUpsertBulk {
-	return u.Update(func(s *ObjectUpsert) {
-		s.UpdateRef()
-	})
-}
-
 // SetArchiveID sets the "archive_id" field.
-func (u *ObjectUpsertBulk) SetArchiveID(v string) *ObjectUpsertBulk {
+func (u *ObjectUpsertBulk) SetArchiveID(v int) *ObjectUpsertBulk {
 	return u.Update(func(s *ObjectUpsert) {
 		s.SetArchiveID(v)
 	})
@@ -988,6 +974,20 @@ func (u *ObjectUpsertBulk) SetIncomplete(v bool) *ObjectUpsertBulk {
 func (u *ObjectUpsertBulk) UpdateIncomplete() *ObjectUpsertBulk {
 	return u.Update(func(s *ObjectUpsert) {
 		s.UpdateIncomplete()
+	})
+}
+
+// SetRef sets the "ref" field.
+func (u *ObjectUpsertBulk) SetRef(v []byte) *ObjectUpsertBulk {
+	return u.Update(func(s *ObjectUpsert) {
+		s.SetRef(v)
+	})
+}
+
+// UpdateRef sets the "ref" field to the value that was provided on create.
+func (u *ObjectUpsertBulk) UpdateRef() *ObjectUpsertBulk {
+	return u.Update(func(s *ObjectUpsert) {
+		s.UpdateRef()
 	})
 }
 

@@ -27,12 +27,13 @@ func (x *Index) LocateObject(ref *proto.Ref, scope pack.Scope, exclude ...string
 	ctx := context.Background()
 	defer recordLookup(ctx, "object", time.Now())
 
-	where := []predicate.Object{object.Ref(ref.Hash), object.HasArchiveWith(visibleTo(scope))}
+	visible := []predicate.Archive{visibleTo(scope)}
 	if len(exclude) > 0 {
-		where = append(where, object.ArchiveIDNotIn(exclude...))
+		visible = append(visible, archive.NameNotIn(exclude...))
 	}
 
-	row, err := x.client.Object.Query().Where(where...).Order(ent.Asc(object.FieldID)).First(ctx)
+	row, err := x.client.Object.Query().Where(object.Ref(ref.Hash), object.HasArchiveWith(visible...)).
+		WithArchive(withName).Order(ent.Asc(object.FieldID)).First(ctx)
 	if ent.IsNotFound(err) {
 		return pack.IndexLocation{}, pack.ErrRecordNotFound
 	}
@@ -41,7 +42,7 @@ func (x *Index) LocateObject(ref *proto.Ref, scope pack.Scope, exclude ...string
 		return pack.IndexLocation{}, err
 	}
 
-	return m.Location(row), nil
+	return m.Location(row)
 }
 
 // LocateCopies implements pack.ArchiveIndex.
@@ -74,6 +75,7 @@ func (x *Index) locateCopies(ctx context.Context, refs []*proto.Ref, scope pack.
 
 		rows, err := x.client.Object.Query().
 			Where(append(where, object.RefIn(hashes...), object.HasArchiveWith(visibleTo(scope)))...).
+			WithArchive(withName).
 			Order(ent.Asc(object.FieldID)).
 			All(ctx)
 		if err != nil {
@@ -81,12 +83,20 @@ func (x *Index) locateCopies(ctx context.Context, refs []*proto.Ref, scope pack.
 		}
 
 		for _, row := range rows {
-			copies[string(row.Ref)] = append(copies[string(row.Ref)], m.Location(row))
+			loc, err := m.Location(row)
+			if err != nil {
+				return nil, err
+			}
+
+			copies[string(row.Ref)] = append(copies[string(row.Ref)], loc)
 		}
 	}
 
 	return copies, nil
 }
+
+// withName loads the name of an object's archive alone.
+func withName(q *ent.ArchiveQuery) { q.Select(archive.FieldName) }
 
 // visibleTo selects the committed archives plus the pending archives of
 // the scope's session.
@@ -105,7 +115,7 @@ func recordLookup(ctx context.Context, lookup string, started time.Time) {
 
 // LookupArchive implements pack.ArchiveIndex.
 func (x *Index) LookupArchive(name string) (pack.ArchiveInfo, bool, error) {
-	row, err := x.client.Archive.Get(context.Background(), name)
+	row, err := x.client.Archive.Query().Where(archive.Name(name)).Only(context.Background())
 	if ent.IsNotFound(err) {
 		return pack.ArchiveInfo{}, false, nil
 	}
@@ -136,7 +146,7 @@ func (x *Index) IndexArchive(info pack.ArchiveInfo, index pack.IndexFile) error 
 			}
 		}
 
-		exists, err := tx.Archive.Query().Where(archive.ID(info.Name)).Exist(ctx)
+		exists, err := tx.Archive.Query().Where(archive.Name(info.Name)).Exist(ctx)
 		if err != nil {
 			return err
 		}
@@ -146,27 +156,27 @@ func (x *Index) IndexArchive(info pack.ArchiveInfo, index pack.IndexFile) error 
 				return nil
 			}
 
-			return tx.Archive.Update().Where(archive.ID(info.Name), archive.CreatedAtIsNil()).SetCreatedAt(info.Created).Exec(ctx)
+			return tx.Archive.Update().Where(archive.Name(info.Name), archive.CreatedAtIsNil()).SetCreatedAt(info.Created).Exec(ctx)
 		}
 
-		err = tx.Archive.Create().SetID(info.Name).SetNillableSessionID(nilIfZero(info.Session)).SetState(int(info.State)).
-			SetNillableCreatedAt(nilIfZeroTime(info.Created)).Exec(ctx)
+		row, err := tx.Archive.Create().SetName(info.Name).SetNillableSessionID(nilIfZero(info.Session)).SetState(int(info.State)).
+			SetNillableCreatedAt(nilIfZeroTime(info.Created)).Save(ctx)
 		if err != nil {
 			return err
 		}
 
-		return insertObjects(ctx, tx, info.Name, index)
+		return insertObjects(ctx, tx, row.ID, index)
 	})
 }
 
 // insertObjects adds the object rows of an archive, in batches.
-func insertObjects(ctx context.Context, tx *ent.Tx, name string, records []pack.IndexRecord) error {
+func insertObjects(ctx context.Context, tx *ent.Tx, key int, records []pack.IndexRecord) error {
 	for len(records) > 0 {
 		stop := min(len(records), objectBatch)
 
 		builders := make([]*ent.ObjectCreate, stop)
 		for i, record := range records[:stop] {
-			builders[i] = tx.Object.Create().SetRef(record.Sum[:]).SetArchiveID(name).SetStart(record.Offset).SetLength(record.Length).SetType(record.Type)
+			builders[i] = tx.Object.Create().SetRef(record.Sum[:]).SetArchiveID(key).SetStart(record.Offset).SetLength(record.Length).SetType(record.Type)
 			if record.CarriedTime != 0 {
 				builders[i].SetCarriedTime(record.CarriedTime).SetCarriedOffset(record.CarriedOffset)
 			}
@@ -192,7 +202,7 @@ func (x *Index) DeleteArchives(names []string) error {
 		for start := 0; start < len(names); start += objectBatch {
 			// an archive's object rows live only as long as its row, so
 			// those of an archive the index no longer knows are gone already
-			batch, err := tx.Archive.Query().Where(archive.IDIn(names[start:min(start+objectBatch, len(names))]...)).IDs(ctx)
+			batch, err := tx.Archive.Query().Where(archive.NameIn(names[start:min(start+objectBatch, len(names))]...)).IDs(ctx)
 			if err != nil {
 				return err
 			}
@@ -267,7 +277,8 @@ func (x *Index) EndSession(id string) ([]string, error) {
 	var dropped []string
 
 	err := x.tx(ctx, func(tx *ent.Tx) error {
-		pending, err := tx.Archive.Query().Where(archive.SessionID(id), archive.StateNEQ(int(pack.ArchiveCommitted))).IDs(ctx)
+		pending, err := tx.Archive.Query().Where(archive.SessionID(id), archive.StateNEQ(int(pack.ArchiveCommitted))).
+			Select(archive.FieldName).Strings(ctx)
 		if err != nil {
 			return err
 		}
@@ -333,7 +344,8 @@ func refHashes(refs []*proto.Ref) [][]byte {
 
 // PendingArchives implements pack.SessionIndex.
 func (x *Index) PendingArchives(id string) ([]string, error) {
-	return x.client.Archive.Query().Where(archive.SessionID(id), archive.State(int(pack.ArchivePending))).IDs(context.Background())
+	return x.client.Archive.Query().Where(archive.SessionID(id), archive.State(int(pack.ArchivePending))).
+		Select(archive.FieldName).Strings(context.Background())
 }
 
 // CommitSession implements pack.SessionIndex: the session must still be
@@ -426,7 +438,7 @@ func (x *Index) OpenArchive(name, id string) error {
 			return backup.ErrNoSession
 		}
 
-		return tx.Archive.Create().SetID(name).SetSessionID(id).SetState(int(pack.ArchiveOpen)).SetOpenedAt(now).Exec(ctx)
+		return tx.Archive.Create().SetName(name).SetSessionID(id).SetState(int(pack.ArchiveOpen)).SetOpenedAt(now).Exec(ctx)
 	})
 }
 
@@ -437,21 +449,21 @@ func (x *Index) AddObjects(name string, records []pack.IndexRecord) error {
 	ctx := context.Background()
 
 	return x.tx(ctx, func(tx *ent.Tx) error {
-		query := tx.Archive.Query().Where(archive.ID(name), archive.State(int(pack.ArchiveOpen)))
+		query := tx.Archive.Query().Where(archive.Name(name), archive.State(int(pack.ArchiveOpen)))
 		if x.locking {
 			query = query.ForUpdate()
 		}
 
-		open, err := query.Exist(ctx)
+		key, err := query.OnlyID(ctx)
+		if ent.IsNotFound(err) {
+			return claimGone(ctx, tx.Archive, name)
+		}
+
 		if err != nil {
 			return err
 		}
 
-		if !open {
-			return claimGone(ctx, tx.Archive, name)
-		}
-
-		return insertObjects(ctx, tx, name, records)
+		return insertObjects(ctx, tx, key, records)
 	})
 }
 
@@ -465,7 +477,7 @@ func (x *Index) FinalizeArchive(name string, within time.Duration, created time.
 	}
 
 	n, err := x.client.Archive.Update().
-		Where(archive.ID(name), archive.State(int(pack.ArchiveOpen)), archive.OpenedAtGT(now.Add(-within))).
+		Where(archive.Name(name), archive.State(int(pack.ArchiveOpen)), archive.OpenedAtGT(now.Add(-within))).
 		SetState(int(pack.ArchivePending)).ClearOpenedAt().SetCreatedAt(created).Save(ctx)
 	if err != nil {
 		return err
@@ -481,7 +493,7 @@ func (x *Index) FinalizeArchive(name string, within time.Duration, created time.
 // claimGone is why the archive name is not open: its claim lapsed, or its
 // session ended and took the row with it.
 func claimGone(ctx context.Context, archives *ent.ArchiveClient, name string) error {
-	known, err := archives.Query().Where(archive.ID(name)).Exist(ctx)
+	known, err := archives.Query().Where(archive.Name(name)).Exist(ctx)
 	if err != nil {
 		return err
 	}
@@ -540,7 +552,7 @@ func (x *Index) Claims(id string) ([]pack.Claim, error) {
 
 	claims := make([]pack.Claim, len(rows))
 	for i, row := range rows {
-		claims[i] = pack.Claim{Archive: row.ID}
+		claims[i] = pack.Claim{Archive: row.Name}
 		if row.OpenedAt != nil {
 			claims[i].Age = now.Sub(*row.OpenedAt)
 		}
@@ -559,7 +571,7 @@ func (x *Index) Abandon(name string, within time.Duration) (bool, error) {
 	}
 
 	n, err := x.client.Archive.Update().
-		Where(archive.ID(name), archive.State(int(pack.ArchiveOpen)), archive.OpenedAtLTE(now.Add(-within))).
+		Where(archive.Name(name), archive.State(int(pack.ArchiveOpen)), archive.OpenedAtLTE(now.Add(-within))).
 		SetState(int(pack.ArchiveLost)).Save(ctx)
 
 	return n > 0, err

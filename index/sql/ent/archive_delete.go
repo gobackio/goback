@@ -40,7 +40,7 @@ func (_d *ArchiveDelete) ExecX(ctx context.Context) int {
 }
 
 func (_d *ArchiveDelete) sqlExec(ctx context.Context) (int, error) {
-	_spec := sqlgraph.NewDeleteSpec(archive.Table, sqlgraph.NewFieldSpec(archive.FieldID, field.TypeString))
+	_spec := sqlgraph.NewDeleteSpec(archive.Table, sqlgraph.NewFieldSpec(archive.FieldID, field.TypeInt))
 	if ps := _d.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {

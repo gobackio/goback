@@ -11,58 +11,53 @@ import (
 )
 
 // ID filters vertices based on their ID field.
-func ID(id string) predicate.Archive {
+func ID(id int) predicate.Archive {
 	return predicate.Archive(sql.FieldEQ(FieldID, id))
 }
 
 // IDEQ applies the EQ predicate on the ID field.
-func IDEQ(id string) predicate.Archive {
+func IDEQ(id int) predicate.Archive {
 	return predicate.Archive(sql.FieldEQ(FieldID, id))
 }
 
 // IDNEQ applies the NEQ predicate on the ID field.
-func IDNEQ(id string) predicate.Archive {
+func IDNEQ(id int) predicate.Archive {
 	return predicate.Archive(sql.FieldNEQ(FieldID, id))
 }
 
 // IDIn applies the In predicate on the ID field.
-func IDIn(ids ...string) predicate.Archive {
+func IDIn(ids ...int) predicate.Archive {
 	return predicate.Archive(sql.FieldIn(FieldID, ids...))
 }
 
 // IDNotIn applies the NotIn predicate on the ID field.
-func IDNotIn(ids ...string) predicate.Archive {
+func IDNotIn(ids ...int) predicate.Archive {
 	return predicate.Archive(sql.FieldNotIn(FieldID, ids...))
 }
 
 // IDGT applies the GT predicate on the ID field.
-func IDGT(id string) predicate.Archive {
+func IDGT(id int) predicate.Archive {
 	return predicate.Archive(sql.FieldGT(FieldID, id))
 }
 
 // IDGTE applies the GTE predicate on the ID field.
-func IDGTE(id string) predicate.Archive {
+func IDGTE(id int) predicate.Archive {
 	return predicate.Archive(sql.FieldGTE(FieldID, id))
 }
 
 // IDLT applies the LT predicate on the ID field.
-func IDLT(id string) predicate.Archive {
+func IDLT(id int) predicate.Archive {
 	return predicate.Archive(sql.FieldLT(FieldID, id))
 }
 
 // IDLTE applies the LTE predicate on the ID field.
-func IDLTE(id string) predicate.Archive {
+func IDLTE(id int) predicate.Archive {
 	return predicate.Archive(sql.FieldLTE(FieldID, id))
 }
 
-// IDEqualFold applies the EqualFold predicate on the ID field.
-func IDEqualFold(id string) predicate.Archive {
-	return predicate.Archive(sql.FieldEqualFold(FieldID, id))
-}
-
-// IDContainsFold applies the ContainsFold predicate on the ID field.
-func IDContainsFold(id string) predicate.Archive {
-	return predicate.Archive(sql.FieldContainsFold(FieldID, id))
+// Name applies equality check predicate on the "name" field. It's identical to NameEQ.
+func Name(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldEQ(FieldName, v))
 }
 
 // SessionID applies equality check predicate on the "session_id" field. It's identical to SessionIDEQ.
@@ -83,6 +78,71 @@ func OpenedAt(v time.Time) predicate.Archive {
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.Archive {
 	return predicate.Archive(sql.FieldEQ(FieldCreatedAt, v))
+}
+
+// NameEQ applies the EQ predicate on the "name" field.
+func NameEQ(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldEQ(FieldName, v))
+}
+
+// NameNEQ applies the NEQ predicate on the "name" field.
+func NameNEQ(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldNEQ(FieldName, v))
+}
+
+// NameIn applies the In predicate on the "name" field.
+func NameIn(vs ...string) predicate.Archive {
+	return predicate.Archive(sql.FieldIn(FieldName, vs...))
+}
+
+// NameNotIn applies the NotIn predicate on the "name" field.
+func NameNotIn(vs ...string) predicate.Archive {
+	return predicate.Archive(sql.FieldNotIn(FieldName, vs...))
+}
+
+// NameGT applies the GT predicate on the "name" field.
+func NameGT(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldGT(FieldName, v))
+}
+
+// NameGTE applies the GTE predicate on the "name" field.
+func NameGTE(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldGTE(FieldName, v))
+}
+
+// NameLT applies the LT predicate on the "name" field.
+func NameLT(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldLT(FieldName, v))
+}
+
+// NameLTE applies the LTE predicate on the "name" field.
+func NameLTE(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldLTE(FieldName, v))
+}
+
+// NameContains applies the Contains predicate on the "name" field.
+func NameContains(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldContains(FieldName, v))
+}
+
+// NameHasPrefix applies the HasPrefix predicate on the "name" field.
+func NameHasPrefix(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldHasPrefix(FieldName, v))
+}
+
+// NameHasSuffix applies the HasSuffix predicate on the "name" field.
+func NameHasSuffix(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldHasSuffix(FieldName, v))
+}
+
+// NameEqualFold applies the EqualFold predicate on the "name" field.
+func NameEqualFold(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldEqualFold(FieldName, v))
+}
+
+// NameContainsFold applies the ContainsFold predicate on the "name" field.
+func NameContainsFold(v string) predicate.Archive {
+	return predicate.Archive(sql.FieldContainsFold(FieldName, v))
 }
 
 // SessionIDEQ applies the EQ predicate on the "session_id" field.

@@ -392,7 +392,7 @@ func (c *ArchiveClient) UpdateOne(_m *Archive) *ArchiveUpdateOne {
 }
 
 // UpdateOneID returns an update builder for the given id.
-func (c *ArchiveClient) UpdateOneID(id string) *ArchiveUpdateOne {
+func (c *ArchiveClient) UpdateOneID(id int) *ArchiveUpdateOne {
 	mutation := newArchiveMutation(c.config, OpUpdateOne, withArchiveID(id))
 	return &ArchiveUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
@@ -409,7 +409,7 @@ func (c *ArchiveClient) DeleteOne(_m *Archive) *ArchiveDeleteOne {
 }
 
 // DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ArchiveClient) DeleteOneID(id string) *ArchiveDeleteOne {
+func (c *ArchiveClient) DeleteOneID(id int) *ArchiveDeleteOne {
 	builder := c.Delete().Where(archive.ID(id))
 	builder.mutation.id = &id
 	builder.mutation.op = OpDeleteOne
@@ -426,12 +426,12 @@ func (c *ArchiveClient) Query() *ArchiveQuery {
 }
 
 // Get returns a Archive entity by its id.
-func (c *ArchiveClient) Get(ctx context.Context, id string) (*Archive, error) {
+func (c *ArchiveClient) Get(ctx context.Context, id int) (*Archive, error) {
 	return c.Query().Where(archive.ID(id)).Only(ctx)
 }
 
 // GetX is like Get, but panics if an error occurs.
-func (c *ArchiveClient) GetX(ctx context.Context, id string) *Archive {
+func (c *ArchiveClient) GetX(ctx context.Context, id int) *Archive {
 	obj, err := c.Get(ctx, id)
 	if err != nil {
 		panic(err)

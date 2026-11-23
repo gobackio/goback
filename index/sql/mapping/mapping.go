@@ -66,14 +66,13 @@ type Mapper interface {
 	// field:Set from:"BackupSet"
 	SessionBegin(in *ent.SessionMarker) pack.SessionBegin
 
-	// field:Name from:"ID"
 	// field:Session from:"SessionID"
 	// field:Created from:"CreatedAt"
 	Archive(in *ent.Archive) pack.ArchiveInfo
 
-	// field:Archive from:"ArchiveID"
+	// field:Archive from:"Edges.Archive.Name"
 	// field:Record from:"."
-	Location(in *ent.Object) pack.IndexLocation
+	Location(in *ent.Object) (pack.IndexLocation, error)
 
 	// field:Sum from:"Ref" using:"Sum"
 	// field:Offset from:"Start"

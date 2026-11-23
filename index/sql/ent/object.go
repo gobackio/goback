@@ -17,10 +17,8 @@ type Object struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
-	// Ref holds the value of the "ref" field.
-	Ref []byte `json:"ref,omitempty"`
 	// ArchiveID holds the value of the "archive_id" field.
-	ArchiveID string `json:"archive_id,omitempty"`
+	ArchiveID int `json:"archive_id,omitempty"`
 	// Start holds the value of the "start" field.
 	Start uint32 `json:"start,omitempty"`
 	// Length holds the value of the "length" field.
@@ -33,6 +31,8 @@ type Object struct {
 	CarriedOffset uint32 `json:"carried_offset,omitempty"`
 	// Incomplete holds the value of the "incomplete" field.
 	Incomplete bool `json:"incomplete,omitempty"`
+	// Ref holds the value of the "ref" field.
+	Ref []byte `json:"ref,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ObjectQuery when eager-loading is set.
 	Edges        ObjectEdges `json:"edges"`
@@ -68,10 +68,8 @@ func (*Object) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case object.FieldIncomplete:
 			values[i] = new(sql.NullBool)
-		case object.FieldID, object.FieldStart, object.FieldLength, object.FieldType, object.FieldCarriedTime, object.FieldCarriedOffset:
+		case object.FieldID, object.FieldArchiveID, object.FieldStart, object.FieldLength, object.FieldType, object.FieldCarriedTime, object.FieldCarriedOffset:
 			values[i] = new(sql.NullInt64)
-		case object.FieldArchiveID:
-			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
 		}
@@ -93,17 +91,11 @@ func (_m *Object) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
-		case object.FieldRef:
-			if value, ok := values[i].(*[]byte); !ok {
-				return fmt.Errorf("unexpected type %T for field ref", values[i])
-			} else if value != nil {
-				_m.Ref = *value
-			}
 		case object.FieldArchiveID:
-			if value, ok := values[i].(*sql.NullString); !ok {
+			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field archive_id", values[i])
 			} else if value.Valid {
-				_m.ArchiveID = value.String
+				_m.ArchiveID = int(value.Int64)
 			}
 		case object.FieldStart:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -140,6 +132,12 @@ func (_m *Object) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field incomplete", values[i])
 			} else if value.Valid {
 				_m.Incomplete = value.Bool
+			}
+		case object.FieldRef:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field ref", values[i])
+			} else if value != nil {
+				_m.Ref = *value
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
@@ -182,11 +180,8 @@ func (_m *Object) String() string {
 	var builder strings.Builder
 	builder.WriteString("Object(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
-	builder.WriteString("ref=")
-	builder.WriteString(fmt.Sprintf("%v", _m.Ref))
-	builder.WriteString(", ")
 	builder.WriteString("archive_id=")
-	builder.WriteString(_m.ArchiveID)
+	builder.WriteString(fmt.Sprintf("%v", _m.ArchiveID))
 	builder.WriteString(", ")
 	builder.WriteString("start=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Start))
@@ -205,6 +200,9 @@ func (_m *Object) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("incomplete=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Incomplete))
+	builder.WriteString(", ")
+	builder.WriteString("ref=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Ref))
 	builder.WriteByte(')')
 	return builder.String()
 }

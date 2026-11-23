@@ -12,8 +12,6 @@ const (
 	Label = "object"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
-	// FieldRef holds the string denoting the ref field in the database.
-	FieldRef = "ref"
 	// FieldArchiveID holds the string denoting the archive_id field in the database.
 	FieldArchiveID = "archive_id"
 	// FieldStart holds the string denoting the start field in the database.
@@ -28,6 +26,8 @@ const (
 	FieldCarriedOffset = "carried_offset"
 	// FieldIncomplete holds the string denoting the incomplete field in the database.
 	FieldIncomplete = "incomplete"
+	// FieldRef holds the string denoting the ref field in the database.
+	FieldRef = "ref"
 	// EdgeArchive holds the string denoting the archive edge name in mutations.
 	EdgeArchive = "archive"
 	// Table holds the table name of the object in the database.
@@ -44,7 +44,6 @@ const (
 // Columns holds all SQL columns for object fields.
 var Columns = []string{
 	FieldID,
-	FieldRef,
 	FieldArchiveID,
 	FieldStart,
 	FieldLength,
@@ -52,6 +51,7 @@ var Columns = []string{
 	FieldCarriedTime,
 	FieldCarriedOffset,
 	FieldIncomplete,
+	FieldRef,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
