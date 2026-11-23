@@ -33,6 +33,9 @@ var (
 	rewriteArchives = mustInstrument(meter.Int64Counter("goback.storage.pack.rewrite.archives", metric.WithDescription("archives a sweep or compaction rewrote")))
 	rewriteCopied   = mustInstrument(meter.Int64Counter("goback.storage.pack.rewrite.copied_bytes", metric.WithDescription("bytes a sweep or compaction carried into new archives"), metric.WithUnit("By")))
 	rewriteDuration = mustInstrument(meter.Float64Histogram("goback.storage.pack.rewrite.archive_duration", metric.WithDescription("duration of rewriting one archive"), metric.WithUnit("s")))
+
+	hasAsked = mustInstrument(meter.Int64Counter("goback.storage.pack.has.asked", metric.WithDescription("refs the store was asked whether it holds")))
+	hasHeld  = mustInstrument(meter.Int64Counter("goback.storage.pack.has.held", metric.WithDescription("refs asked about that the store holds")))
 )
 
 func mustInstrument[T any](instrument T, err error) T {

@@ -242,6 +242,25 @@ var _ backup.HasAller = (*PackStorage)(nil)
 // of their tombstones, one of their copies and one of the session's open
 // archives.
 func (ps *PackStorage) HasAll(ctx context.Context, refs []*proto.Ref) ([]bool, error) {
+	has, err := ps.hasAll(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
+
+	held := 0
+	for _, h := range has {
+		if h {
+			held++
+		}
+	}
+
+	hasAsked.Add(ctx, int64(len(refs)))
+	hasHeld.Add(ctx, int64(held))
+
+	return has, nil
+}
+
+func (ps *PackStorage) hasAll(ctx context.Context, refs []*proto.Ref) ([]bool, error) {
 	scope := ScopeOf(ctx)
 
 	tombs := make([]*proto.Ref, 0, 2*len(refs))
