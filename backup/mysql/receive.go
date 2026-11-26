@@ -376,6 +376,10 @@ func (run *receiveRun) start(ctx context.Context) error {
 	run.from, run.fromPos = from, pos
 	run.retry = len(spooled) > 0 || open != ""
 
+	if run.retry {
+		run.oldest = run.spooledSince(spooled)
+	}
+
 	// a run that only catches up commits nothing the newest commit holds
 	if r.UntilCaughtUp && len(spooled) == 0 && held != nil && held.chain == run.chain && open == run.committed && end == run.commitPos {
 		run.retry = false
@@ -1114,6 +1118,20 @@ func (run *receiveRun) report() {
 	}
 
 	r.Report(st)
+}
+
+// spooledSince is when the oldest of the spooled binlogs was last written,
+// the latest its first byte arrived; now when none was.
+func (run *receiveRun) spooledSince(names []string) time.Time {
+	oldest := run.r.now()
+
+	for _, name := range names {
+		if info, err := os.Stat(run.r.Spool.path(name)); err == nil && info.ModTime().Before(oldest) {
+			oldest = info.ModTime()
+		}
+	}
+
+	return oldest
 }
 
 func (run *receiveRun) spoolBytes() int64 {
