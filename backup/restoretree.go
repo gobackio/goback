@@ -82,7 +82,7 @@ type RestoredFile struct {
 // on the local disk writes nothing outside dir through a symlink, not even
 // one swapped in while it runs.
 func (r *Restorer) RestoreTree(ctx context.Context, commit *proto.Commit, dir string, opts TreeOptions) error {
-	if err := r.check(); err != nil {
+	if err := r.check(ctx); err != nil {
 		return err
 	}
 

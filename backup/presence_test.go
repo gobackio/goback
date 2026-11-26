@@ -240,7 +240,7 @@ func TestWalkerPresenceRereadsFileChangedUnderConfirmation(t *testing.T) {
 	result := f.run()
 	parts := f.requireComplete(result.Ref, "a.bin")
 
-	expected, err := HashFile(path, nil)
+	expected, err := HashFile(path, nil, 0)
 	require.NoError(t, err)
 
 	obj, err := f.store.Get(context.Background(), result.Ref)

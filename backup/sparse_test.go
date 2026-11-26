@@ -208,7 +208,7 @@ func TestASparseFileIsStoredWithItsHolesAndRestoredSparse(t *testing.T) {
 	require.Len(t, found, 2)
 	require.EqualValues(t, layout.size, found[1].Offset+found[1].Length)
 
-	hashed, err := HashFile(path, nil)
+	hashed, err := HashFile(path, nil, 0)
 	require.NoError(t, err)
 	require.True(t, hashed.Equal(node.Ref))
 

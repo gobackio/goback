@@ -21,6 +21,7 @@ import (
 	"github.com/gobackio/goback/backup/presence"
 	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/backup/schedule"
+	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
 	adminpb "github.com/gobackio/goback/proto/admin"
@@ -86,6 +87,11 @@ var downloadWindows = []grpc.DialOption{
 	grpc.WithInitialWindowSize(16 << 20),
 	grpc.WithInitialConnWindowSize(64 << 20),
 }
+
+// MaxRequestBytes is the largest request a store server must take: a put
+// of the largest chunk any chunk profile cuts, with room to spare. A
+// server passes it to grpc.MaxRecvMsgSize.
+const MaxRequestBytes = 16 << 20
 
 // replies lets a client take answers of up to 256 MiB, such as a commit's
 // that names hundreds of thousands of refs the store lacks.
@@ -1068,6 +1074,26 @@ func (r *Client) PutEscrowedKey(ctx context.Context, key backup.EscrowedKey) err
 	return err
 }
 
+// StorePolicy implements backup.PolicySource through the server's Admin
+// service: nil while the operator never set a policy, or for a server
+// that keeps none and serves no Admin service.
+func (r *Client) StorePolicy(ctx context.Context) (*storekey.Policy, error) {
+	resp, err := r.admin.GetStorePolicy(r.outgoing(ctx), &adminpb.GetStorePolicyRequest{})
+	if status.Code(err) == codes.Unimplemented {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Version == 0 {
+		return nil, nil
+	}
+
+	return m.FromAdminPolicy(resp), nil
+}
+
 // Delete is not offered by the server; retention deletes commits and sets.
 func (r *Client) Delete(context.Context, *proto.Ref) error { return backup.ErrNotImplemented }
 
@@ -1079,7 +1105,7 @@ func (r *Client) Walk(context.Context, bool, proto.ObjectType, backup.ObjectRece
 // BeginCommit implements backup.CommitGate; a refusal is ErrCommitDenied
 // with the server's reason.
 func (r *Client) BeginCommit(ctx context.Context, set string) (*backup.CommitGrant, error) {
-	resp, err := r.store.BeginCommit(r.outgoing(ctx), &proto.BeginCommitRequest{BackupSet: set})
+	resp, err := r.store.BeginCommit(r.outgoing(ctx), &proto.BeginCommitRequest{BackupSet: set, FollowsChunkSize: true})
 	if err != nil {
 		return nil, err
 	}
@@ -1348,6 +1374,18 @@ type Server struct {
 
 // BeginCommit implements proto.StoreServer.
 func (r *Server) BeginCommit(ctx context.Context, request *proto.BeginCommitRequest) (*proto.BeginCommitResponse, error) {
+	if !request.FollowsChunkSize {
+		policy, err := r.store.policy(ctx)
+		if err != nil {
+			return nil, ToStatus(err)
+		}
+
+		if policy.ChunkSize != 0 {
+			reason := fmt.Sprintf("the store cuts chunks of %d bytes, which this agent cannot; upgrade it", policy.ChunkSize)
+			return &proto.BeginCommitResponse{Allowed: false, Reason: reason}, nil
+		}
+	}
+
 	grant, err := r.store.BeginCommit(ctx, request.BackupSet)
 	if errors.Is(err, backup.ErrCommitDenied) {
 		return &proto.BeginCommitResponse{Allowed: false, Reason: err.Error()}, nil

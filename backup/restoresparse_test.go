@@ -29,7 +29,7 @@ func withZeroes(size int) []byte {
 func putSparse(t *testing.T, store ObjectStore, key *storekey.Key, data []byte, hole int64) (*proto.Ref, []byte) {
 	t.Helper()
 
-	writer := newFileWriter(context.Background(), store, key, 2*int64(len(data))+hole)
+	writer := newFileWriter(context.Background(), store, key, 0, 2*int64(len(data))+hole)
 	_, err := writer.Write(data)
 	require.NoError(t, err)
 	writer.hole(hole)

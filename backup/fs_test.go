@@ -361,7 +361,7 @@ func TestHashFileFSMatchesTheStoredRef(t *testing.T) {
 	*now = at.Add(time.Minute)
 	result := f.run()
 
-	ref, err := HashFileFS(context.Background(), fsys, "/big.bin", nil)
+	ref, err := HashFileFS(context.Background(), fsys, "/big.bin", nil, 0)
 	require.NoError(t, err)
 	require.True(t, ref.Equal(f.tree(result.Commit.Tree)["big.bin"].Ref))
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gobackio/goback/backup/blobcache"
+	"github.com/gobackio/goback/backup/chunker"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
 
@@ -267,7 +268,9 @@ type Restorer struct {
 	accounts accounts
 	once     sync.Once
 	owners   *owners
-	ownerErr error
+	checkErr error
+	// profile is the store's chunk profile, which rechunking cuts with
+	profile chunker.Profile
 	// parts locates every part the restore can copy rather than fetch
 	parts   *SeedMap
 	staging staging
@@ -379,21 +382,24 @@ func (r *Restorer) confine(dir string) (release func(), err error) {
 
 // check refuses, before anything is written, what the tree restored into
 // cannot honour.
-func (r *Restorer) check() error {
+func (r *Restorer) check(ctx context.Context) error {
 	if _, ok := r.fs().(RandomWriteFS); r.Verify && !ok {
 		return errors.Errorf("verifying needs a tree that is read back, which %T is not", r.fs())
 	}
 
 	r.once.Do(func() {
-		r.owners, r.ownerErr = r.resolveOwners()
+		r.owners, r.checkErr = r.resolveOwners()
+		if r.checkErr == nil {
+			r.profile, r.checkErr = StoreProfile(ctx, r.Store)
+		}
 
 		r.parts = r.Seeds
 		if r.parts == nil {
-			r.parts = NewSeedMap(r.Key)
+			r.parts = NewSeedMap(r.Key, r.profile)
 		}
 	})
 
-	return r.ownerErr
+	return r.checkErr
 }
 
 func (r *Restorer) workers() int {
@@ -446,7 +452,7 @@ func (r *Restorer) RestoreFile(ctx context.Context, path string, stat *proto.Fil
 
 // restoreFile is RestoreFile leaving the staging directory in place.
 func (r *Restorer) restoreFile(ctx context.Context, path string, stat *proto.FileInfo, ref *proto.Ref) (Outcome, error) {
-	if err := r.check(); err != nil {
+	if err := r.check(ctx); err != nil {
 		return 0, err
 	}
 
@@ -892,7 +898,7 @@ func (r *Restorer) rechunked(path string, hasFile bool, matched []bool) *SeedMap
 		return nil
 	}
 
-	local := NewSeedMap(r.Key)
+	local := NewSeedMap(r.Key, r.profile)
 	if err := local.Add(path); err != nil {
 		return nil
 	}

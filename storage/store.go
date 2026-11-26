@@ -1009,20 +1009,29 @@ func (s *Store) ReadDir(ctx context.Context, set string, dir string, notAfter ti
 	return lister.ReadDir(ctx, set, dir, notAfter)
 }
 
-// presenceScope is the store policy's scope; a store without a policy
-// has the default policy's.
-func (s *Store) presenceScope(ctx context.Context) (backup.PresenceScope, error) {
+// policy is the store's policy; a store without one has the default.
+func (s *Store) policy(ctx context.Context) (storekey.Policy, error) {
 	policy := storekey.DefaultPolicy()
 
 	if source, ok := s.Index.(backup.PolicySource); ok {
 		stored, err := source.StorePolicy(ctx)
 		if err != nil {
-			return backup.PresenceOff, err
+			return policy, err
 		}
 
 		if stored != nil {
 			policy = *stored
 		}
+	}
+
+	return policy, nil
+}
+
+// presenceScope is the store policy's scope.
+func (s *Store) presenceScope(ctx context.Context) (backup.PresenceScope, error) {
+	policy, err := s.policy(ctx)
+	if err != nil {
+		return backup.PresenceOff, err
 	}
 
 	return backup.ParsePresenceScope(policy.PresenceScope)

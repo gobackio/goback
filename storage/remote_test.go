@@ -565,6 +565,29 @@ func TestRemoteBeginCommit(t *testing.T) {
 	require.Equal(t, &policy, grant.Policy, "the store policy travels with the grant")
 }
 
+func TestAStoreWithAChunkSizeRefusesAnAgentThatDoesNotCutWithIt(t *testing.T) {
+	index := newMemIndex()
+	policy := storekey.DefaultPolicy()
+	policy.Version, policy.ChunkSize = 2, 1<<20
+	index.policy = &policy
+
+	client := startServerWith(t, gated{index}, nil)("node-1")
+	ctx := context.Background()
+
+	grant, err := client.BeginCommit(ctx, "world")
+	require.NoError(t, err)
+	require.Equal(t, uint32(1<<20), grant.Policy.ChunkSize)
+
+	old, err := client.store.BeginCommit(client.outgoing(ctx), &proto.BeginCommitRequest{BackupSet: "world"})
+	require.NoError(t, err)
+	require.False(t, old.Allowed)
+
+	policy.ChunkSize = 0
+	old, err = client.store.BeginCommit(client.outgoing(ctx), &proto.BeginCommitRequest{BackupSet: "world"})
+	require.NoError(t, err)
+	require.True(t, old.Allowed, "a store cutting the default admits every agent")
+}
+
 func TestClientDialsTLS(t *testing.T) {
 	index := newMemIndex()
 	serverTLS, _ := testTLS(t)

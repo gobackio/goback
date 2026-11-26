@@ -227,6 +227,10 @@ const PlaceholderSet = "legacy"
 // ErrIndexed refuses to index a commit the index already has a row for.
 var ErrIndexed = errors.New("commit is already indexed")
 
+// ErrChunkSizeFixed refuses a new chunk size for a store that holds a
+// commit, whose files are cut with the one it has.
+var ErrChunkSizeFixed = errors.New("the chunk size changes only while the store holds no commit")
+
 // IndexedSet is what indexing a list of commits did, or on a dry run
 // would do, with those of one set.
 type IndexedSet struct {

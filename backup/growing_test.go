@@ -88,7 +88,7 @@ func (f *growingFixture) restored(result *WalkResult, name string) []byte {
 func (f *growingFixture) fullRead(size int) *proto.Ref {
 	f.t.Helper()
 
-	ref, err := PutFile(context.Background(), newMemStore(), f.walker.Key, int64(size), bytes.NewReader(f.content[:size]))
+	ref, err := PutFile(context.Background(), newMemStore(), f.walker.Key, 0, int64(size), bytes.NewReader(f.content[:size]))
 	require.NoError(f.t, err)
 
 	return ref
@@ -147,9 +147,9 @@ func TestAppendingKeepsEveryPartButTheLastAndCutsAsAFullRead(t *testing.T) {
 func TestChunkBoundariesBeforeTheLastDoNotMoveOnAppend(t *testing.T) {
 	f := newGrowingFixture(t, 4<<20)
 
-	for _, size := range []int{chunker.MaxSize + 1, 1 << 20, 2<<20 + 7, 4 << 20} {
-		whole := chunker.Split(f.content)
-		prefix := chunker.Split(f.content[:size])
+	for _, size := range []int{chunker.Profile(0).Max() + 1, 1 << 20, 2<<20 + 7, 4 << 20} {
+		whole := chunker.Profile(0).Split(f.content)
+		prefix := chunker.Profile(0).Split(f.content[:size])
 
 		for i := 0; i < len(prefix)-1; i++ {
 			require.Equal(t, whole[i], prefix[i], "chunk %d of the first %d bytes", i, size)

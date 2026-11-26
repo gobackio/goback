@@ -22,7 +22,7 @@ func TestASeedFileThatCannotBeReadIsPassedOver(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "readable"), data, 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "locked"), data, 0o000))
 
-	seeds := NewSeedMap(nil)
+	seeds := NewSeedMap(nil, 0)
 	require.NoError(t, seeds.AddSeed(dir, SeedFull))
 	require.NotZero(t, seeds.Len())
 }
@@ -33,7 +33,7 @@ func TestASeedSwappedForAFIFOIsNotWaitedOn(t *testing.T) {
 	seed := filepath.Join(dir, "a")
 	require.NoError(t, os.WriteFile(seed, data, 0o644))
 
-	seeds := NewSeedMap(nil)
+	seeds := NewSeedMap(nil, 0)
 	require.NoError(t, seeds.AddSeed(dir, SeedGuess))
 
 	require.NoError(t, os.Remove(seed))

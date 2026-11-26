@@ -14,7 +14,7 @@ import (
 // it restored; a path the set never held at notAfter fails with
 // ErrNotFound.
 func (r *Restorer) RestorePath(ctx context.Context, idx Index, set, path string, notAfter time.Time, dest string) (*proto.TreeNode, Outcome, error) {
-	if err := r.check(); err != nil {
+	if err := r.check(ctx); err != nil {
 		return nil, 0, err
 	}
 

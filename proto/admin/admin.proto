@@ -88,6 +88,8 @@ message StorePolicy {
     string presence_scope = 6;
     // when the operator confirmed the store key is saved
     google.protobuf.Timestamp key_acknowledged_at = 8;
+    // the target chunk size agents cut with, 0 for the default
+    uint32 chunk_size = 9;
 }
 
 message GetStorePolicyRequest {}
@@ -98,6 +100,9 @@ message SetStorePolicyRequest {
     string presence_scope = 5;
     // the operator confirms the store key is saved
     bool acknowledge_key = 7;
+    // the target chunk size, a power of two from 64 KiB to 1 MiB, 0 for the
+    // default; it changes only while the store holds no commit
+    uint32 chunk_size = 8;
 }
 
 // RetentionBracket keeps the last commit of each of count UTC calendar

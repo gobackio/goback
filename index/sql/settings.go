@@ -61,6 +61,10 @@ func (x *Index) SetStorePolicy(ctx context.Context, policy storekey.Policy, ackn
 			return nil, err
 		}
 
+		if err := chunkSizeChange(ctx, tx, s, policy); err != nil {
+			return nil, err
+		}
+
 		policy.Version = s.PolicyVersion + 1
 
 		encoded, err := json.Marshal(policy)
@@ -85,6 +89,32 @@ func (x *Index) SetStorePolicy(ctx context.Context, policy storekey.Policy, ackn
 	}
 
 	return index.StorePolicy{Policy: policy, KeyAcknowledgedAt: acknowledged}, nil
+}
+
+// chunkSizeChange refuses a policy whose chunk size differs from the
+// stored one while the store holds a commit.
+func chunkSizeChange(ctx context.Context, tx *ent.Tx, s *ent.Settings, policy storekey.Policy) error {
+	var stored storekey.Policy
+	if s.Policy != nil {
+		if err := json.Unmarshal([]byte(*s.Policy), &stored); err != nil {
+			return fmt.Errorf("store policy: %w", err)
+		}
+	}
+
+	if stored.ChunkSize == policy.ChunkSize {
+		return nil
+	}
+
+	held, err := tx.CommitRow.Query().Exist(ctx)
+	if err != nil {
+		return err
+	}
+
+	if held {
+		return fmt.Errorf("%w: it cuts chunks of %d bytes", index.ErrChunkSizeFixed, stored.ChunkSize)
+	}
+
+	return nil
 }
 
 // StorePolicy implements backup.PolicySource: nil until an operator set a

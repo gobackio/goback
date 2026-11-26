@@ -95,7 +95,7 @@ func putServedFiles(t *testing.T, s *splitStore, key *storekey.Key) []servedFile
 	}
 
 	several := random(3 << 20)
-	ref, err := backup.PutFile(sctx, client, key, int64(len(several.data)), bytes.NewReader(several.data))
+	ref, err := backup.PutFile(sctx, client, key, 0, int64(len(several.data)), bytes.NewReader(several.data))
 	require.NoError(t, err)
 
 	files := []servedFile{{name: "several", ref: ref, pieces: []piece{several}}}

@@ -2228,10 +2228,13 @@ func (x *LatestCommitResponse) GetRef() *Ref {
 // BeginCommitRequest asks, before a backup run moves bytes, whether the
 // caller may commit to the set.
 type BeginCommitRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	BackupSet     string                 `protobuf:"bytes,1,opt,name=backup_set,json=backupSet,proto3" json:"backup_set,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	BackupSet string                 `protobuf:"bytes,1,opt,name=backup_set,json=backupSet,proto3" json:"backup_set,omitempty"`
+	// the agent cuts with the chunk size the response's policy names; a
+	// store whose policy names one refuses an agent that does not
+	FollowsChunkSize bool `protobuf:"varint,3,opt,name=follows_chunk_size,json=followsChunkSize,proto3" json:"follows_chunk_size,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *BeginCommitRequest) Reset() {
@@ -2269,6 +2272,13 @@ func (x *BeginCommitRequest) GetBackupSet() string {
 		return x.BackupSet
 	}
 	return ""
+}
+
+func (x *BeginCommitRequest) GetFollowsChunkSize() bool {
+	if x != nil {
+		return x.FollowsChunkSize
+	}
+	return false
 }
 
 type BeginCommitResponse struct {
@@ -2364,12 +2374,13 @@ func (x *BeginCommitResponse) GetEverySeconds() int64 {
 }
 
 // StorePolicy is a store's write policy: the encryption mode of new
-// writes and the presence scope.
+// writes, the presence scope and the target chunk size, 0 for the default.
 type StorePolicy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Version       uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
 	Mode          string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`
 	PresenceScope string                 `protobuf:"bytes,6,opt,name=presence_scope,json=presenceScope,proto3" json:"presence_scope,omitempty"`
+	ChunkSize     uint32                 `protobuf:"varint,8,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2423,6 +2434,13 @@ func (x *StorePolicy) GetPresenceScope() string {
 		return x.PresenceScope
 	}
 	return ""
+}
+
+func (x *StorePolicy) GetChunkSize() uint32 {
+	if x != nil {
+		return x.ChunkSize
+	}
+	return 0
 }
 
 type BeginSessionRequest struct {
@@ -4576,21 +4594,24 @@ const file_api_proto_rawDesc = "" +
 	"backup_set\x18\x01 \x01(\tR\tbackupSet\"4\n" +
 	"\x14LatestCommitResponse\x12\x1c\n" +
 	"\x03ref\x18\x01 \x01(\v2\n" +
-	".proto.RefR\x03ref\"9\n" +
+	".proto.RefR\x03ref\"g\n" +
 	"\x12BeginCommitRequest\x12\x1d\n" +
 	"\n" +
-	"backup_set\x18\x01 \x01(\tR\tbackupSetJ\x04\b\x02\x10\x03\"\xdb\x01\n" +
+	"backup_set\x18\x01 \x01(\tR\tbackupSet\x12,\n" +
+	"\x12follows_chunk_size\x18\x03 \x01(\bR\x10followsChunkSizeJ\x04\b\x02\x10\x03\"\xdb\x01\n" +
 	"\x13BeginCommitResponse\x12\x18\n" +
 	"\aallowed\x18\x02 \x01(\bR\aallowed\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12*\n" +
 	"\x06policy\x18\x04 \x01(\v2\x12.proto.StorePolicyR\x06policy\x12\x16\n" +
 	"\x06rescan\x18\x05 \x01(\bR\x06rescan\x12#\n" +
 	"\rdamaged_paths\x18\x06 \x03(\tR\fdamagedPaths\x12#\n" +
-	"\revery_seconds\x18\a \x01(\x03R\feverySecondsJ\x04\b\x01\x10\x02\"z\n" +
+	"\revery_seconds\x18\a \x01(\x03R\feverySecondsJ\x04\b\x01\x10\x02\"\x99\x01\n" +
 	"\vStorePolicy\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12%\n" +
-	"\x0epresence_scope\x18\x06 \x01(\tR\rpresenceScopeJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\a\x10\b\"\x9f\x01\n" +
+	"\x0epresence_scope\x18\x06 \x01(\tR\rpresenceScope\x12\x1d\n" +
+	"\n" +
+	"chunk_size\x18\b \x01(\rR\tchunkSizeJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\a\x10\b\"\x9f\x01\n" +
 	"\x13BeginSessionRequest\x12\x1d\n" +
 	"\n" +
 	"backup_set\x18\x01 \x01(\tR\tbackupSet\x12$\n" +

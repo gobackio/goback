@@ -398,8 +398,10 @@ type StorePolicy struct {
 	PresenceScope string `protobuf:"bytes,6,opt,name=presence_scope,json=presenceScope,proto3" json:"presence_scope,omitempty"`
 	// when the operator confirmed the store key is saved
 	KeyAcknowledgedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=key_acknowledged_at,json=keyAcknowledgedAt,proto3" json:"key_acknowledged_at,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// the target chunk size agents cut with, 0 for the default
+	ChunkSize     uint32 `protobuf:"varint,9,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *StorePolicy) Reset() {
@@ -460,6 +462,13 @@ func (x *StorePolicy) GetKeyAcknowledgedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *StorePolicy) GetChunkSize() uint32 {
+	if x != nil {
+		return x.ChunkSize
+	}
+	return 0
+}
+
 type GetStorePolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -502,8 +511,11 @@ type SetStorePolicyRequest struct {
 	PresenceScope string                 `protobuf:"bytes,5,opt,name=presence_scope,json=presenceScope,proto3" json:"presence_scope,omitempty"`
 	// the operator confirms the store key is saved
 	AcknowledgeKey bool `protobuf:"varint,7,opt,name=acknowledge_key,json=acknowledgeKey,proto3" json:"acknowledge_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// the target chunk size, a power of two from 64 KiB to 1 MiB, 0 for the
+	// default; it changes only while the store holds no commit
+	ChunkSize     uint32 `protobuf:"varint,8,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SetStorePolicyRequest) Reset() {
@@ -555,6 +567,13 @@ func (x *SetStorePolicyRequest) GetAcknowledgeKey() bool {
 		return x.AcknowledgeKey
 	}
 	return false
+}
+
+func (x *SetStorePolicyRequest) GetChunkSize() uint32 {
+	if x != nil {
+		return x.ChunkSize
+	}
+	return 0
 }
 
 // RetentionBracket keeps the last commit of each of count UTC calendar
@@ -1148,17 +1167,21 @@ const file_admin_admin_proto_rawDesc = "" +
 	"\x11DeleteSetResponse\"(\n" +
 	"\x12UndeleteSetRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"\x15\n" +
-	"\x13UndeleteSetResponse\"\xc6\x01\n" +
+	"\x13UndeleteSetResponse\"\xe5\x01\n" +
 	"\vStorePolicy\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12%\n" +
 	"\x0epresence_scope\x18\x06 \x01(\tR\rpresenceScope\x12J\n" +
-	"\x13key_acknowledged_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\x11keyAcknowledgedAtJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\a\x10\b\"\x17\n" +
-	"\x15GetStorePolicyRequest\"\x93\x01\n" +
+	"\x13key_acknowledged_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\x11keyAcknowledgedAt\x12\x1d\n" +
+	"\n" +
+	"chunk_size\x18\t \x01(\rR\tchunkSizeJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\a\x10\b\"\x17\n" +
+	"\x15GetStorePolicyRequest\"\xb2\x01\n" +
 	"\x15SetStorePolicyRequest\x12\x12\n" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\x12%\n" +
 	"\x0epresence_scope\x18\x05 \x01(\tR\rpresenceScope\x12'\n" +
-	"\x0facknowledge_key\x18\a \x01(\bR\x0eacknowledgeKeyJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x06\x10\a\"F\n" +
+	"\x0facknowledge_key\x18\a \x01(\bR\x0eacknowledgeKey\x12\x1d\n" +
+	"\n" +
+	"chunk_size\x18\b \x01(\rR\tchunkSizeJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x06\x10\a\"F\n" +
 	"\x10RetentionBracket\x12\x16\n" +
 	"\x06period\x18\x01 \x01(\tR\x06period\x12\x14\n" +
 	"\x05count\x18\x03 \x01(\x05R\x05countJ\x04\b\x02\x10\x03\"\x84\x01\n" +

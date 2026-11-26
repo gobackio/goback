@@ -28,7 +28,7 @@ func TestAnS3StoreKeepsItsArchivesInTheIndexAndCachesUnderTheCacheDir(t *testing
 
 	content := bytes.Repeat([]byte("goback"), 1<<16)
 
-	ref, err := backup.PutFile(ctx, repo.Store, nil, int64(len(content)), bytes.NewReader(content))
+	ref, err := backup.PutFile(ctx, repo.Store, nil, 0, int64(len(content)), bytes.NewReader(content))
 	require.NoError(t, err)
 
 	reader, err := backup.NewBackupReader(repo.Store).ReadFile(ctx, ref)
@@ -56,7 +56,7 @@ func TestStoresAtTwoPathsOfOneBucketKeepApart(t *testing.T) {
 	web1, err := Open(ctx, Settings{Index: t.TempDir(), Storage: at("web1")})
 	require.NoError(t, err)
 
-	ref, err := backup.PutFile(ctx, web1.Store, nil, int64(len(content)), bytes.NewReader(content))
+	ref, err := backup.PutFile(ctx, web1.Store, nil, 0, int64(len(content)), bytes.NewReader(content))
 	require.NoError(t, err)
 	require.NoError(t, web1.Close())
 

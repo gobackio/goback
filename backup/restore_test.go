@@ -46,7 +46,7 @@ func randomData(size int, seed int64) []byte {
 func putFile(t *testing.T, store ObjectStore, key *storekey.Key, data []byte) *proto.Ref {
 	t.Helper()
 
-	writer := newFileWriter(context.Background(), store, key, int64(len(data)))
+	writer := newFileWriter(context.Background(), store, key, 0, int64(len(data)))
 	_, err := writer.Write(data)
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
@@ -366,7 +366,7 @@ func TestRestoreFileFromSeeds(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Dir(seed), 0o755))
 			require.NoError(t, os.WriteFile(seed, data, 0o644))
 
-			seeds := NewSeedMap(key)
+			seeds := NewSeedMap(key, 0)
 			require.NoError(t, seeds.Add(filepath.Join(base, "other-server")))
 			require.Equal(t, fileParts(t, store, ref), seeds.Len(), "the seed is cut like the backup was")
 

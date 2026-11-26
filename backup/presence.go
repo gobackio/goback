@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/gobackio/goback/backup/chunker"
 	"github.com/gobackio/goback/backup/presence"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
@@ -87,6 +88,36 @@ type PresenceIndex interface {
 type PolicySource interface {
 	// StorePolicy returns the store's policy, or nil.
 	StorePolicy(ctx context.Context) (*storekey.Policy, error)
+}
+
+// StoreProfile returns the chunk profile store's policy names, the default
+// for a store that keeps no policy.
+func StoreProfile(ctx context.Context, store ObjectStore) (chunker.Profile, error) {
+	source, ok := unwrapStore(store).(PolicySource)
+	if !ok {
+		return 0, nil
+	}
+
+	policy, err := source.StorePolicy(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	return policyProfile(policy)
+}
+
+// policyProfile is the chunk profile policy names, the default for none.
+func policyProfile(policy *storekey.Policy) (chunker.Profile, error) {
+	if policy == nil {
+		return 0, nil
+	}
+
+	profile, err := chunker.NewProfile(policy.ChunkSize)
+	if err != nil {
+		return 0, fmt.Errorf("store policy v%d: %w", policy.Version, err)
+	}
+
+	return profile, nil
 }
 
 // HasAller is implemented by stores that answer Has for many refs at once.

@@ -139,7 +139,7 @@ func TestAGuessFindsAMovedAndARenamedSeed(t *testing.T) {
 		require.NoError(t, os.WriteFile(full, content, 0o644))
 	}
 
-	seeds := NewSeedMap(nil)
+	seeds := NewSeedMap(nil, 0)
 	require.NoError(t, seeds.AddSeed(seed, SeedGuess))
 	require.Zero(t, seeds.Len(), "a guess reads nothing before the restore asks")
 

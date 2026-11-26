@@ -141,6 +141,7 @@ func (r *Repo) Serve(ctx context.Context, listener net.Listener, opts ServeOptio
 	srv := grpc.NewServer(
 		grpc.Creds(creds),
 		grpc.MaxConcurrentStreams(serveStreams),
+		grpc.MaxRecvMsgSize(storage.MaxRequestBytes),
 		grpc.KeepaliveParams(serveKeepalive),
 		grpc.StatsHandler(otelgrpc.NewServerHandler(otelgrpc.WithPublicEndpoint())),
 		grpc.ChainUnaryInterceptor(recoverUnary(logger), health.Unary(auth.Unary(keys), gateUnary, remote.UnaryInterceptor())),

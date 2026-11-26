@@ -57,6 +57,7 @@ func (m MapperImpl) Policy(in index.StorePolicy) *admin.StorePolicy {
 		Mode:              string(in.Policy.Mode),
 		PresenceScope:     in.Policy.PresenceScope,
 		KeyAcknowledgedAt: tmp0,
+		ChunkSize:         in.Policy.ChunkSize,
 	}
 }
 
@@ -95,6 +96,7 @@ func (m MapperImpl) WritePolicy(in *admin.SetStorePolicyRequest) storekey.Policy
 	return storekey.Policy{
 		Mode:          storekey.Mode(in.Mode),
 		PresenceScope: in.PresenceScope,
+		ChunkSize:     in.ChunkSize,
 	}
 }
 

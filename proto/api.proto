@@ -300,6 +300,9 @@ message LatestCommitResponse {
 message BeginCommitRequest {
     string backup_set = 1;
     reserved 2;
+    // the agent cuts with the chunk size the response's policy names; a
+    // store whose policy names one refuses an agent that does not
+    bool follows_chunk_size = 3;
 }
 
 message BeginCommitResponse {
@@ -321,12 +324,13 @@ message BeginCommitResponse {
 }
 
 // StorePolicy is a store's write policy: the encryption mode of new
-// writes and the presence scope.
+// writes, the presence scope and the target chunk size, 0 for the default.
 message StorePolicy {
     uint32 version = 1;
     string mode = 2;
     reserved 3, 4, 5, 7;
     string presence_scope = 6;
+    uint32 chunk_size = 8;
 }
 
 message BeginSessionRequest {

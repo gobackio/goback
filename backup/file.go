@@ -18,40 +18,44 @@ import (
 
 	"github.com/pkg/errors"
 	"go4.org/syncutil"
+	"golang.org/x/sync/semaphore"
 )
 
 const (
-	maxBlobSize = chunker.MaxSize
-
 	// SplitFileSize is the smallest content size whose file object may be
 	// split into sub-file objects.
-	SplitFileSize = 4096 * chunker.MinSize
+	SplitFileSize = 4096 * chunker.SmallestChunk
 
-	inFlightChunks = 80
+	// inFlightBytes bounds the chunk bytes one file uploads at once
+	inFlightBytes = 20 << 20
 
-	// readWindow bounds the parts a streaming read holds in memory
-	readWindow = 32
+	// readWindow bounds the parts a streaming read holds in memory, and
+	// readWindowBytes their bytes, letting at least one through
+	readWindow      = 32
+	readWindowBytes = 8 << 20
 )
 
-// newFileWriter cuts a file of the given size into blobs. With a key the
-// blobs and any inline content are sealed under it.
-func newFileWriter(ctx context.Context, store ObjectStore, key *storekey.Key, size int64) *fileWriter {
+// newFileWriter cuts a file of the given size into blobs with profile. With
+// a key the blobs and any inline content are sealed under it.
+func newFileWriter(ctx context.Context, store ObjectStore, key *storekey.Key, profile chunker.Profile, size int64) *fileWriter {
 	return &fileWriter{
 		store:            store,
 		key:              key,
 		size:             size,
+		chunker:          chunker.FastCDC{Profile: profile},
 		parts:            make([]*proto.FilePart, 0),
 		assumed:          make(map[string]*proto.FilePart),
 		storageErr:       new(atomic.Pointer[error]),
-		storageSemaphore: syncutil.NewGate(inFlightChunks),
+		storageSemaphore: semaphore.NewWeighted(inFlightBytes),
 		ctx:              ctx,
 	}
 }
 
-// PutFile stores size bytes of content as a file, cut and sealed under key
-// as a backup would, and returns the ref a tree node should carry.
-func PutFile(ctx context.Context, store ObjectStore, key *storekey.Key, size int64, content io.Reader) (*proto.Ref, error) {
-	writer := newFileWriter(ctx, store, key, size)
+// PutFile stores size bytes of content as a file, cut with profile and
+// sealed under key as a backup would, and returns the ref a tree node
+// should carry.
+func PutFile(ctx context.Context, store ObjectStore, key *storekey.Key, profile chunker.Profile, size int64, content io.Reader) (*proto.Ref, error) {
+	writer := newFileWriter(ctx, store, key, profile, size)
 
 	if _, err := io.Copy(writer, content); err != nil {
 		return nil, err
@@ -68,14 +72,14 @@ type fileWriter struct {
 	store            ObjectStore
 	key              *storekey.Key
 	size             int64
-	buf              [maxBlobSize]byte
+	buf              []byte
 	blobSize         int
 	offset           int64
 	chunker          chunker.FastCDC
 	parts            []*proto.FilePart
 	storageErr       *atomic.Pointer[error]
 	storageGroup     syncutil.Group
-	storageSemaphore *syncutil.Gate
+	storageSemaphore *semaphore.Weighted
 	ref              *proto.Ref
 	ctx              context.Context
 
@@ -339,11 +343,17 @@ func (bfw *fileWriter) upload(ref *proto.Ref, blob *proto.Object, length int) {
 		return
 	}
 
-	bfw.storageSemaphore.Start()
+	if err := bfw.storageSemaphore.Acquire(bfw.ctx, int64(length)); err != nil {
+		bfw.sent.finish(ref, err)
+		bfw.storageErr.CompareAndSwap(nil, &err)
+
+		return
+	}
+
 	atomic.AddInt32(&bfw.pending, 1)
 
 	bfw.storageGroup.Go(func() error {
-		defer bfw.storageSemaphore.Done()
+		defer bfw.storageSemaphore.Release(int64(length))
 		defer atomic.AddInt32(&bfw.pending, -1)
 
 		var err error
@@ -508,7 +518,10 @@ func (bfw *fileWriter) Write(p []byte) (int, error) {
 	written := len(p)
 
 	for len(p) > 0 {
-		// a cut is forced at maxBlobSize, so there is always room
+		bfw.grow(len(p))
+
+		// a cut is forced at the profile's largest chunk, so there is always
+		// room
 		n := copy(bfw.buf[bfw.blobSize:], p)
 		p = p[n:]
 
@@ -530,6 +543,19 @@ func (bfw *fileWriter) Write(p []byte) (int, error) {
 	}
 
 	return written, nil
+}
+
+// grow makes room for n more bytes in the buffer, up to the profile's
+// largest chunk, so a small file holds no more than it needs.
+func (bfw *fileWriter) grow(n int) {
+	largest := bfw.chunker.Profile.Max()
+	if len(bfw.buf) == largest || bfw.blobSize+n <= len(bfw.buf) {
+		return
+	}
+
+	grown := make([]byte, min(largest, max(2*len(bfw.buf), bfw.blobSize+n)))
+	copy(grown, bfw.buf[:bfw.blobSize])
+	bfw.buf = grown
 }
 
 func (bfw *fileWriter) object(file *proto.File) *proto.Object {
@@ -601,7 +627,7 @@ func (bfw *fileWriter) Close() (err error) {
 // that cut those parts would, and returns the ref a tree node should
 // carry. parts must not be empty; an empty file is stored with PutFile.
 func PutParts(ctx context.Context, store ObjectStore, key *storekey.Key, parts []*proto.FilePart) (*proto.Ref, error) {
-	writer := newFileWriter(ctx, store, key, 0)
+	writer := newFileWriter(ctx, store, key, 0, 0)
 	writer.parts = parts
 
 	if err := writer.putParts(); err != nil {
@@ -673,7 +699,7 @@ func (bfw *fileWriter) putParts() error {
 var (
 	splitMin uint64 = 256
 	splitAvg uint64 = 1024
-	splitMax uint64 = SplitFileSize / chunker.MinSize
+	splitMax uint64 = SplitFileSize / chunker.SmallestChunk
 )
 
 // rebased copies parts with their offsets moved by delta. The leaves of a
@@ -1266,7 +1292,7 @@ func (bfr *fileReader) WriteTo(writer io.Writer) (int64, error) {
 		err  error
 	}
 
-	ahead := newPrefetch(bfr.ctx, first, len(fileParts), func(ctx context.Context, i int) fetched {
+	ahead := newPrefetch(bfr.ctx, first, len(fileParts), func(i int) int64 { return partBytes(fileParts[i]) }, func(ctx context.Context, i int) fetched {
 		blob, err := bfr.getPart(ctx, i, fileParts[i])
 		return fetched{blob, err}
 	})

@@ -75,7 +75,7 @@ func (bt *backupTree) Tree(ctx context.Context, info os.FileInfo, writer func(Tr
 }
 
 func (bt *backupTree) File(ctx context.Context, info os.FileInfo, writer func(io.Writer) error) error {
-	fWriter := newFileWriter(ctx, bt.store, nil, info.Size())
+	fWriter := newFileWriter(ctx, bt.store, nil, 0, info.Size())
 	node := &proto.TreeNode{
 		Stat: proto.GetFileInfo(info),
 	}

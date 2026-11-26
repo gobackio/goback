@@ -281,7 +281,7 @@ func newSizedFixture(tb testing.TB, sizes []int64, content func(data []byte, i i
 		data := make([]byte, size)
 		content(data, i)
 
-		ref, err := backup.PutFile(context.Background(), store, key, size, &readerOf{data: data})
+		ref, err := backup.PutFile(context.Background(), store, key, 0, size, &readerOf{data: data})
 		require.NoError(tb, err)
 
 		f.files = append(f.files, ref)
@@ -402,7 +402,11 @@ func serveShaped(tb testing.TB, f *restoreFixture, l link, located bool) (*Clien
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) { return dial(ctx, "tcp", addr, &seen.served) }),
 		grpc.WithStatsHandler(received),
 		grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-			seen.calls.Add(1)
+			// reading the store's policy is not a read of what is restored
+			if method != adminpb.Admin_GetStorePolicy_FullMethodName {
+				seen.calls.Add(1)
+			}
+
 			return invoker(ctx, method, req, reply, cc, opts...)
 		}),
 		grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {

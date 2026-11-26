@@ -3,6 +3,7 @@ package goback
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"log/slog"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"github.com/gobackio/goback/admin"
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/chunker"
 	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
@@ -320,6 +322,33 @@ func TestTheBackupKeyBacksUpReadsAndPinsAndDeletesNothing(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, operator.Unpin(ctx, pins[0].GetRef()))
 	require.NoError(t, operator.DeleteSet(ctx, "world", false))
+}
+
+func TestAStoresChunkSizeReachesItsAgentsAndTakesALargestChunk(t *testing.T) {
+	ctx := context.Background()
+	addr := servedWithKeys(t, "admin")
+	_, admin := clientWith(t, addr, "admin")
+
+	_, err := admin.SetStorePolicy(ctx, &adminpb.SetStorePolicyRequest{Mode: "none", PresenceScope: "store", ChunkSize: 3 << 18})
+	require.Equal(t, codes.InvalidArgument, status.Code(err), "a chunk size is a power of two")
+
+	_, err = admin.SetStorePolicy(ctx, &adminpb.SetStorePolicyRequest{Mode: "none", PresenceScope: "store", ChunkSize: chunker.MaxTarget})
+	require.NoError(t, err)
+
+	agent, _ := clientWith(t, addr, "backup")
+	profile, err := backup.StoreProfile(ctx, agent)
+	require.NoError(t, err)
+	require.Equal(t, chunker.MaxTarget, profile.Target())
+
+	sctx, err := agent.BeginSession(ctx, &backup.Session{Set: "world"})
+	require.NoError(t, err)
+
+	data := make([]byte, chunker.LargestChunk)
+	_, err = rand.Read(data)
+	require.NoError(t, err)
+
+	largest := proto.NewObject(&proto.Blob{Data: data})
+	require.NoError(t, agent.PutObjects(sctx, []*proto.Object{largest}))
 }
 
 // escrowedCopy is key escrowed under passphrase.

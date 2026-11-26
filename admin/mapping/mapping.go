@@ -23,6 +23,7 @@ type Mapper interface {
 	// field:EntropyEstimator from:"Policy.EntropyEstimator"
 	// field:EntropyThreshold from:"Policy.EntropyThreshold"
 	// field:PresenceScope from:"Policy.PresenceScope"
+	// field:ChunkSize from:"Policy.ChunkSize"
 	Policy(in index.StorePolicy) *pb.StorePolicy
 
 	// field:Version from:"-"

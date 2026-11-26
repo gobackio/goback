@@ -9,6 +9,7 @@ import (
 	storekey "github.com/gobackio/goback/backup/storekey"
 	index "github.com/gobackio/goback/index"
 	proto "github.com/gobackio/goback/proto"
+	admin "github.com/gobackio/goback/proto/admin"
 	mapping "github.com/gobackio/goback/storage/mapping"
 )
 
@@ -22,6 +23,19 @@ func (m MapperImpl) Effective(in retention.Policy) *proto.RetentionPolicy {
 		KeepLast:   int32(in.KeepLast),
 		KeepWithin: mapping.Seconds(in.KeepWithin),
 		Brackets:   tmp0,
+	}
+}
+
+func (m MapperImpl) FromAdminPolicy(in *admin.StorePolicy) *storekey.Policy {
+	if in == nil {
+		return nil
+	}
+
+	return &storekey.Policy{
+		Version:       in.Version,
+		Mode:          storekey.Mode(in.Mode),
+		PresenceScope: in.PresenceScope,
+		ChunkSize:     in.ChunkSize,
 	}
 }
 
@@ -118,6 +132,7 @@ func (m MapperImpl) FromStorePolicy(in *proto.StorePolicy) *storekey.Policy {
 		Version:       in.Version,
 		Mode:          storekey.Mode(in.Mode),
 		PresenceScope: in.PresenceScope,
+		ChunkSize:     in.ChunkSize,
 	}
 }
 
@@ -214,6 +229,7 @@ func (m MapperImpl) StorePolicy(in *storekey.Policy) *proto.StorePolicy {
 		Version:       in.Version,
 		Mode:          string(in.Mode),
 		PresenceScope: in.PresenceScope,
+		ChunkSize:     in.ChunkSize,
 	}
 }
 

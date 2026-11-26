@@ -172,7 +172,12 @@ func Restorer(c *cli.Context, repo *goback.Repo) *backup.Restorer {
 			}
 		}
 
-		restorer.Seeds = backup.NewSeedMap(key)
+		profile, err := backup.StoreProfile(Context(c), repo.Store)
+		if err != nil {
+			Fatal(err)
+		}
+
+		restorer.Seeds = backup.NewSeedMap(key, profile)
 		for _, seed := range seeds {
 			if err := restorer.Seeds.AddSeed(seed, mode); err != nil {
 				Fatalf("indexing seed %s: %v", seed, err)

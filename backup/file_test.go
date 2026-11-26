@@ -9,10 +9,14 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gobackio/goback/backup/chunker"
 	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
 )
+
+// maxBlobSize is the largest chunk of the default profile.
+const maxBlobSize = 4 * chunker.DefaultTarget
 
 // memStore is the smallest ObjectStore that honours the ErrNotFound contract.
 func testRef(seed string) *proto.Ref {
@@ -76,7 +80,7 @@ func writeTestFile(t *testing.T, store ObjectStore, size int) ([]byte, *proto.Fi
 	_, err := rand.New(rand.NewSource(int64(size))).Read(data)
 	require.NoError(t, err)
 
-	writer := newFileWriter(context.Background(), store, nil, 0)
+	writer := newFileWriter(context.Background(), store, nil, 0, 0)
 	_, err = writer.Write(data)
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())

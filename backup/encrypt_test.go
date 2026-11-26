@@ -153,7 +153,7 @@ func TestWalkerWithKeySealsNamesAndContents(t *testing.T) {
 	require.EqualValues(t, 1, third.Read)
 	require.Equal(t, contents, readAll(t, NewBackupReader(f.store).WithKey(key), third.Commit.Tree))
 
-	ref, err := HashFile(filepath.Join(f.root, "sub", "b.bin"), key)
+	ref, err := HashFile(filepath.Join(f.root, "sub", "b.bin"), key, 0)
 	require.NoError(t, err)
 	require.True(t, ref.Equal(proto.NewObject(fileObject(t, f.store, key, third.Commit.Tree, "sub/b.bin")).Ref()))
 }
@@ -208,7 +208,7 @@ func TestFilesPutOutsideAWalkReadBack(t *testing.T) {
 
 	var nodes []*proto.TreeNode
 	for name, data := range contents {
-		ref, err := PutFile(ctx, store, key, int64(len(data)), bytes.NewReader(data))
+		ref, err := PutFile(ctx, store, key, 0, int64(len(data)), bytes.NewReader(data))
 		require.NoError(t, err)
 
 		nodes = append(nodes, &proto.TreeNode{Stat: &proto.FileInfo{Name: []byte(name), Size: int64(len(data))}, Ref: ref})
@@ -228,7 +228,7 @@ func TestAFileStoredOverItsPartsIsTheFileItsWriterStored(t *testing.T) {
 	for _, key := range []*storekey.Key{nil, newKey(t)} {
 		store := newMemStore()
 
-		ref, err := PutFile(ctx, store, key, int64(len(data)), bytes.NewReader(data))
+		ref, err := PutFile(ctx, store, key, 0, int64(len(data)), bytes.NewReader(data))
 		require.NoError(t, err)
 
 		obj, err := store.Get(ctx, ref)

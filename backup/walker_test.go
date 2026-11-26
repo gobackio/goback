@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/backup/chunker"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
 
@@ -441,6 +442,33 @@ func TestWalkerAdoptsTheStorePolicyFromTheGrant(t *testing.T) {
 	result = f.run()
 	require.EqualValues(t, 3, result.Commit.PolicyVersion, "a policy without encryption is still the policy written under")
 	require.Same(t, key, f.walker.Key, "the run leaves the caller's key in place")
+}
+
+func TestWalkerCutsWithTheStoresChunkSize(t *testing.T) {
+	f := newWalkerFixture(t)
+	data := f.random(6 << 20)
+	f.write("big.bin", data)
+
+	profile, err := chunker.NewProfile(1 << 20)
+	require.NoError(t, err)
+	f.index.policy = &storekey.Policy{Version: 2, Mode: storekey.ModeNone, PresenceScope: "store", ChunkSize: 1 << 20}
+
+	result := f.run()
+
+	obj, err := f.store.Get(context.Background(), f.tree(result.Commit.Tree)["big.bin"].Ref)
+	require.NoError(t, err)
+	parts, err := FileParts(context.Background(), f.store, obj.GetFile())
+	require.NoError(t, err)
+
+	var lengths []int
+	for _, part := range parts {
+		lengths = append(lengths, int(part.Length))
+	}
+	require.Equal(t, profile.Split(data), lengths)
+
+	hashed, err := HashFile(filepath.Join(f.root, "big.bin"), nil, profile)
+	require.NoError(t, err)
+	require.True(t, hashed.Equal(f.tree(result.Commit.Tree)["big.bin"].Ref), "hashing cuts as the backup did")
 }
 
 func TestWalkerWithAKeySealsUnderAPolicyThatDoesNotEncrypt(t *testing.T) {
@@ -1014,7 +1042,7 @@ func TestHashFileMatchesStoredRef(t *testing.T) {
 	result := f.run()
 	root := f.tree(result.Commit.Tree)
 
-	ref, err := HashFile(filepath.Join(f.root, "big.bin"), nil)
+	ref, err := HashFile(filepath.Join(f.root, "big.bin"), nil, 0)
 	require.NoError(t, err)
 	require.True(t, ref.Equal(root["big.bin"].Ref))
 }

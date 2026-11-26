@@ -191,7 +191,7 @@ func (w *Walker) placeholder(ctx context.Context, path, rel string, stat *proto.
 // putShared stores sd, a security descriptor or an extended attribute
 // value, unless this run stored it already or the base commit holds it.
 func (w *Walker) putShared(ctx context.Context, sd []byte) (*proto.Ref, error) {
-	ref, err := PutFile(ctx, discardStore{}, w.Key, int64(len(sd)), bytes.NewReader(sd))
+	ref, err := PutFile(ctx, discardStore{}, w.Key, w.profile, int64(len(sd)), bytes.NewReader(sd))
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +225,7 @@ func (w *Walker) putContent(ctx context.Context, size int64, content io.Reader) 
 }
 
 func (w *Walker) contentWriter(ctx context.Context, size int64) *fileWriter {
-	writer := newFileWriter(ctx, w.Objects, w.Key, size)
+	writer := newFileWriter(ctx, w.Objects, w.Key, w.profile, size)
 	writer.sent = w.sent
 	writer.cache = w.BlobCache
 	writer.uploaded = &w.result.Uploaded

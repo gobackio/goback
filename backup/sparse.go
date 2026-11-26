@@ -6,6 +6,8 @@ import (
 	"math"
 	"os"
 	"syscall"
+
+	"github.com/gobackio/goback/backup/chunker"
 )
 
 // contentReader reads file from its start. For a sparse local file it
@@ -34,7 +36,7 @@ func contentReader(file File, info os.FileInfo, holes func(n int64)) io.Reader {
 
 // sparseMin is the shortest hole a backup records as a hole part; a
 // shorter one is chunked as the zeros it reads as.
-const sparseMin = maxBlobSize
+const sparseMin = 4 * chunker.DefaultTarget
 
 // localFile is a file of the local disk, an *os.File or one embedding it.
 type localFile interface {

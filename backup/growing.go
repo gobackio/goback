@@ -138,7 +138,7 @@ func (w *Walker) backupGrowing(ctx context.Context, g Growing, prev *proto.TreeN
 		offset = int64(last.Offset + last.Length)
 	}
 
-	writer := newFileWriter(ctx, w.Objects, w.Key, g.Size)
+	writer := newFileWriter(ctx, w.Objects, w.Key, w.profile, g.Size)
 	writer.parts = append(writer.parts, kept...)
 	writer.offset = offset
 	writer.sent = w.sent

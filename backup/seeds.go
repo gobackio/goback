@@ -19,7 +19,8 @@ import (
 // chunks of the seeds Add and AddSeed name and of every file the restore
 // itself has written. It is safe for concurrent use.
 type SeedMap struct {
-	key *storekey.Key
+	key     *storekey.Key
+	profile chunker.Profile
 
 	mtx     sync.Mutex
 	entries map[string]seedEntry
@@ -47,10 +48,12 @@ type seedFile struct {
 }
 
 // NewSeedMap returns an empty map; key is the store key the files were
-// backed up under, nil for a plaintext store.
-func NewSeedMap(key *storekey.Key) *SeedMap {
+// backed up under, nil for a plaintext store, and profile the store's chunk
+// profile, which StoreProfile names.
+func NewSeedMap(key *storekey.Key, profile chunker.Profile) *SeedMap {
 	return &SeedMap{
 		key:     key,
+		profile: profile,
 		entries: make(map[string]seedEntry),
 		indexed: make(map[string]bool),
 		pending: make(map[string]chan struct{}),
@@ -122,8 +125,8 @@ func (s *SeedMap) addFile(path string) error {
 
 	seed := &seedFile{path: path}
 
-	var cdc chunker.FastCDC
-	buf := make([]byte, chunker.MaxSize)
+	cdc := chunker.FastCDC{Profile: s.profile}
+	buf := make([]byte, s.profile.Max())
 	filled, scanned := 0, 0
 	var offset int64
 	eof := false

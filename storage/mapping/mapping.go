@@ -12,6 +12,7 @@ import (
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/proto"
+	adminpb "github.com/gobackio/goback/proto/admin"
 )
 
 //go:generate go tool mapper .
@@ -20,6 +21,7 @@ import (
 type Mapper interface {
 	StorePolicy(in *storekey.Policy) *proto.StorePolicy
 	FromStorePolicy(in *proto.StorePolicy) *storekey.Policy
+	FromAdminPolicy(in *adminpb.StorePolicy) *storekey.Policy
 
 	// field:KeepWithin using:"Seconds"
 	RetentionPolicy(in *retention.Policy) *proto.RetentionPolicy

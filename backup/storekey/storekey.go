@@ -70,11 +70,13 @@ const (
 	ModeNone Mode = "none"
 )
 
-// Policy is the store's write policy, as the agent holds it.
+// Policy is the store's write policy, as the agent holds it. ChunkSize is
+// the target chunk size agents cut with, 0 for the default.
 type Policy struct {
 	Version       uint32 `json:"version"`
 	Mode          Mode   `json:"mode"`
 	PresenceScope string `json:"presence_scope"`
+	ChunkSize     uint32 `json:"chunk_size,omitempty"`
 }
 
 // DefaultPolicy seals everything and scopes presence to the store.

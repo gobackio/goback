@@ -11,6 +11,7 @@ import (
 	"github.com/gobackio/goback/admin/mapping/gen"
 	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
+	"github.com/gobackio/goback/backup/chunker"
 	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/index"
@@ -123,6 +124,13 @@ func (s *Server) SetStorePolicy(ctx context.Context, request *pb.SetStorePolicyR
 	if _, err := backup.ParsePresenceScope(policy.PresenceScope); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+
+	profile, err := chunker.NewProfile(policy.ChunkSize)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	policy.ChunkSize = uint32(profile)
 
 	p, err := s.Index.SetStorePolicy(ctx, policy, request.AcknowledgeKey, s.now())
 	if err != nil {
@@ -266,7 +274,7 @@ func Status(err error) error {
 	case errors.Is(err, backup.ErrNotFound):
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, backup.ErrTombstoned), errors.Is(err, backup.ErrSetClosed),
-		errors.Is(err, backup.ErrOtherKeyEscrowed):
+		errors.Is(err, backup.ErrOtherKeyEscrowed), errors.Is(err, index.ErrChunkSizeFixed):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, auth.ErrForbidden):
 		return status.Error(codes.PermissionDenied, err.Error())

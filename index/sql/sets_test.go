@@ -12,6 +12,7 @@ import (
 	"github.com/gobackio/goback/backup/presence"
 	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/backup/storekey"
+	"github.com/gobackio/goback/index"
 	"github.com/gobackio/goback/index/sql/ent"
 	"github.com/gobackio/goback/index/sql/ent/commitrow"
 	"github.com/gobackio/goback/proto"
@@ -306,6 +307,29 @@ func TestStorePolicyVersionsAndAcknowledgement(t *testing.T) {
 	stored, err = f.x.GetStorePolicy(f.ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, stored.Policy.Version)
+}
+
+func TestAStoresChunkSizeIsFixedOnceItHoldsACommit(t *testing.T) {
+	f := newFixture(t)
+
+	policy := storekey.DefaultPolicy()
+	policy.ChunkSize = 1 << 20
+	_, err := f.x.SetStorePolicy(f.ctx, policy, false, f.clock)
+	require.NoError(t, err, "an empty store takes any chunk size")
+
+	f.commit("world", f.tree(f.file("a.txt", "one")), false)
+
+	policy.Mode = storekey.ModeNone
+	_, err = f.x.SetStorePolicy(f.ctx, policy, false, f.clock)
+	require.NoError(t, err, "the rest of the policy still changes")
+
+	policy.ChunkSize = 0
+	_, err = f.x.SetStorePolicy(f.ctx, policy, false, f.clock)
+	require.ErrorIs(t, err, index.ErrChunkSizeFixed)
+
+	stored, err := f.x.StorePolicy(f.ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 1<<20, stored.ChunkSize)
 }
 
 func (f *fixture) references(ctx context.Context, ref *proto.Ref) bool {

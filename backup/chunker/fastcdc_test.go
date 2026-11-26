@@ -16,21 +16,37 @@ func randomBytes(seed int64, n int) []byte {
 }
 
 func TestSplitBounds(t *testing.T) {
-	data := randomBytes(1, 16<<20)
-	lengths := Split(data)
+	for _, target := range []uint32{0, 256 << 10, MaxTarget} {
+		p, err := NewProfile(target)
+		require.NoError(t, err)
 
-	var total int
-	for i, n := range lengths {
-		total += n
-		require.LessOrEqual(t, n, MaxSize)
-		if i < len(lengths)-1 {
-			require.GreaterOrEqual(t, n, MinSize)
+		data := randomBytes(1, 256*p.Target())
+		lengths := p.Split(data)
+
+		var total int
+		for i, n := range lengths {
+			total += n
+			require.LessOrEqual(t, n, p.Max())
+			if i < len(lengths)-1 {
+				require.GreaterOrEqual(t, n, p.Min())
+			}
 		}
-	}
-	require.Equal(t, len(data), total)
+		require.Equal(t, len(data), total)
 
-	mean := float64(len(data)) / float64(len(lengths))
-	require.InDelta(t, NormalSize, mean, NormalSize*0.4, "mean chunk size %.0f", mean)
+		mean := float64(len(data)) / float64(len(lengths))
+		require.InDelta(t, p.Target(), mean, float64(p.Target())*0.4, "mean chunk size %.0f at %d", mean, p.Target())
+	}
+}
+
+func TestAProfileTakesOnlyPowersOfTwoInRange(t *testing.T) {
+	for _, target := range []uint32{DefaultTarget / 2, 3 << 16, 2 * MaxTarget} {
+		_, err := NewProfile(target)
+		require.Error(t, err, "%d", target)
+	}
+
+	p, err := NewProfile(DefaultTarget)
+	require.NoError(t, err)
+	require.Zero(t, p, "the default target is the zero profile")
 }
 
 func TestGearTableIsFixed(t *testing.T) {
@@ -38,16 +54,16 @@ func TestGearTableIsFixed(t *testing.T) {
 	require.Equal(t, uint64(0x6e340b9cffb37a98), gear[0])
 	require.Equal(t, uint64(0x4bf5122f344554c5), gear[1])
 	require.Equal(t, uint64(0xa8100ae6aa1940d0), gear[255])
-	require.Equal(t, uint64(0x9249249249248000), maskS)
-	require.Equal(t, uint64(0x9249249249200000), maskL)
+	require.Equal(t, uint64(0x9249249249248000), masks[DefaultTarget][0])
+	require.Equal(t, uint64(0x9249249249200000), masks[DefaultTarget][1])
 }
 
 func TestSplitIsContentDefined(t *testing.T) {
 	base := randomBytes(2, 8<<20)
 	shifted := append(randomBytes(3, 1000), base...)
 
-	baseLengths := Split(base)
-	shiftedLengths := Split(shifted)
+	baseLengths := Profile(0).Split(base)
+	shiftedLengths := Profile(0).Split(shifted)
 
 	// after the inserted prefix, the boundaries realign with the original ones
 	var baseOffsets, shiftedOffsets []int
@@ -76,7 +92,7 @@ func TestSplitIsContentDefined(t *testing.T) {
 
 func TestStreamingMatchesBatch(t *testing.T) {
 	data := randomBytes(4, 4<<20)
-	batch := Split(data)
+	batch := Profile(0).Split(data)
 
 	var (
 		c        FastCDC

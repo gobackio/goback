@@ -52,7 +52,7 @@ func (r *Restorer) RestoreFiles(ctx context.Context, files []FileToRestore, done
 
 // restoreFiles is RestoreFiles leaving the staging directories in place.
 func (r *Restorer) restoreFiles(ctx context.Context, files []FileToRestore, done func(i int, outcome Outcome, err error) error) error {
-	if err := r.check(); err != nil {
+	if err := r.check(ctx); err != nil {
 		return err
 	}
 

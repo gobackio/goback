@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gobackio/goback/backup/blobcache"
+	"github.com/gobackio/goback/backup/chunker"
 	"github.com/gobackio/goback/backup/presence"
 	"github.com/gobackio/goback/backup/retention"
 	"github.com/gobackio/goback/backup/storekey"
@@ -195,6 +196,8 @@ type Walker struct {
 	// policyVersion is what the commit records, kept apart from Key
 	// because a policy without encryption drops the key for the run
 	policyVersion uint32
+	// profile is the chunk profile the grant's policy names
+	profile chunker.Profile
 	// every is the grant's Every
 	every    time.Duration
 	base     *proto.Ref
@@ -488,7 +491,7 @@ func (w *Walker) Run(ctx context.Context) (*WalkResult, error) {
 		defer stopTouching()
 	}
 
-	w.policyVersion = 0
+	w.policyVersion, w.profile = 0, 0
 	if w.Key != nil {
 		w.policyVersion = w.Key.Policy.Version
 	}
@@ -745,6 +748,13 @@ func (w *Walker) adoptPolicy(policy *storekey.Policy) error {
 	if policy == nil || policy.Version == 0 {
 		return nil
 	}
+
+	profile, err := policyProfile(policy)
+	if err != nil {
+		return err
+	}
+
+	w.profile = profile
 
 	if w.Key == nil {
 		if policy.Mode == storekey.ModeNone {
@@ -1499,7 +1509,7 @@ func (w *Walker) readFile(ctx context.Context, path, rel string, parent, listed 
 		current = info
 	}
 
-	writer := newFileWriter(ctx, w.Objects, w.Key, info.Size())
+	writer := newFileWriter(ctx, w.Objects, w.Key, w.profile, info.Size())
 	writer.sent = w.sent
 	writer.source, _ = file.(io.ReaderAt)
 	writer.cache = w.BlobCache
@@ -1584,7 +1594,7 @@ func (w *Walker) hashListed(ctx context.Context, path, rel string, parent os.Fil
 	}
 	defer file.Close()
 
-	return hashOpened(ctx, file, info, w.Key)
+	return hashOpened(ctx, file, info, w.Key, w.profile)
 }
 
 // entryFailed classes a failure to open or read one file: errVanished when
@@ -1826,15 +1836,15 @@ func streamsEqual(a, b []*proto.Stream) bool {
 	})
 }
 
-// HashFile computes the File ref a backup of path on the local disk would
-// produce without storing anything.
-func HashFile(path string, key *storekey.Key) (*proto.Ref, error) {
-	return HashFileFS(context.Background(), LocalFS{}, path, key)
+// HashFile computes the File ref a backup of path on the local disk, cut
+// with profile, would produce without storing anything.
+func HashFile(path string, key *storekey.Key, profile chunker.Profile) (*proto.Ref, error) {
+	return HashFileFS(context.Background(), LocalFS{}, path, key, profile)
 }
 
-// HashFileFS computes the File ref a backup of path on fsys would produce
-// without storing anything.
-func HashFileFS(ctx context.Context, fsys FS, path string, key *storekey.Key) (*proto.Ref, error) {
+// HashFileFS computes the File ref a backup of path on fsys, cut with
+// profile, would produce without storing anything.
+func HashFileFS(ctx context.Context, fsys FS, path string, key *storekey.Key, profile chunker.Profile) (*proto.Ref, error) {
 	file, err := fsys.Open(ctx, path)
 	if err != nil {
 		return nil, err
@@ -1846,12 +1856,12 @@ func HashFileFS(ctx context.Context, fsys FS, path string, key *storekey.Key) (*
 		return nil, err
 	}
 
-	return hashOpened(ctx, file, info, key)
+	return hashOpened(ctx, file, info, key, profile)
 }
 
 // hashOpened is HashFileFS for a file already open, whose stat is info.
-func hashOpened(ctx context.Context, file File, info os.FileInfo, key *storekey.Key) (*proto.Ref, error) {
-	writer := newFileWriter(ctx, discardStore{}, key, info.Size())
+func hashOpened(ctx context.Context, file File, info os.FileInfo, key *storekey.Key, profile chunker.Profile) (*proto.Ref, error) {
+	writer := newFileWriter(ctx, discardStore{}, key, profile, info.Size())
 
 	if _, err := io.Copy(writer, contentReader(file, info, writer.hole)); err != nil {
 		return nil, err

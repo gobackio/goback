@@ -99,7 +99,7 @@ type streamed struct {
 
 func (r *Restorer) newPartStream(ctx context.Context, reader *fileReader) *partStream {
 	s := &partStream{r: r, reader: reader, ctx: ctx}
-	s.ahead = newPrefetch(ctx, 0, len(reader.parts), s.fetch)
+	s.ahead = newPrefetch(ctx, 0, len(reader.parts), func(i int) int64 { return partBytes(reader.parts[i]) }, s.fetch)
 
 	return s
 }
