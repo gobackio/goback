@@ -1666,6 +1666,8 @@ func fromStatus(err error) error {
 		return backup.ErrNotFound
 	case codes.ResourceExhausted:
 		return fmt.Errorf("%w: %s", backup.ErrQuotaExceeded, status.Convert(err).Message())
+	case codes.PermissionDenied:
+		return fmt.Errorf("%w: %w", auth.ErrForbidden, err)
 	}
 
 	return err

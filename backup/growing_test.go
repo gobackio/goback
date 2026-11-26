@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup/chunker"
 	"github.com/gobackio/goback/backup/storekey"
 	"github.com/gobackio/goback/proto"
@@ -212,4 +213,27 @@ func TestAGrowingFileGoesIntoTheSubdirWithItsModTime(t *testing.T) {
 	require.EqualValues(t, 1<<10, nodes["open.partial"].Stat.Size)
 	require.Equal(t, at.UnixNano(), nodes["open.partial"].Stat.MtimeNs)
 	require.Contains(t, nodes, "whole")
+}
+
+// fileReadRefused is a store that refuses the caller every file, as a
+// store refuses a write-only key a file stored inline.
+type fileReadRefused struct{ ObjectStore }
+
+func (s fileReadRefused) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
+	obj, err := s.ObjectStore.Get(ctx, ref)
+	if err == nil && obj.GetFile() != nil {
+		return nil, auth.ErrForbidden
+	}
+
+	return obj, err
+}
+
+func TestAGrowingFileWhosePreviousVersionTheKeyMayNotReadGoesUpWhole(t *testing.T) {
+	f := newGrowingFixture(t, 300)
+	f.grow("open.partial", "", 100)
+
+	f.walker.Objects = fileReadRefused{f.walker.Objects}
+	result := f.grow("open.partial", "", 300)
+
+	require.Equal(t, f.content, f.restored(result, "open.partial"))
 }

@@ -2,12 +2,14 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sync/atomic"
 	"time"
 
+	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/proto"
 )
 
@@ -110,29 +112,24 @@ func (w *Walker) backupGrowing(ctx context.Context, g Growing, prev *proto.TreeN
 		return &proto.TreeNode{Stat: stat, Ref: prev.Ref}, nil
 	}
 
-	var kept []*proto.FilePart
+	var parts, kept []*proto.FilePart
 	known := map[string]struct{}{}
 
 	if usable {
-		obj, err := w.Objects.Get(ctx, prev.Ref)
+		parts, err = w.previousParts(ctx, prev.Ref)
 		if err != nil {
 			return nil, fmt.Errorf("loading the previous version of %s: %w", g.Name, err)
 		}
+	}
 
-		parts, err := FileParts(ctx, w.Objects, obj.GetFile())
-		if err != nil {
-			return nil, fmt.Errorf("loading the previous version of %s: %w", g.Name, err)
+	for _, part := range parts {
+		if part.Ref != nil {
+			known[string(part.Ref.Hash)] = struct{}{}
 		}
+	}
 
-		for _, part := range parts {
-			if part.Ref != nil {
-				known[string(part.Ref.Hash)] = struct{}{}
-			}
-		}
-
-		if len(parts) > 1 && parts[0].Ref != nil {
-			kept = parts[:len(parts)-1]
-		}
+	if len(parts) > 1 && parts[0].Ref != nil {
+		kept = parts[:len(parts)-1]
 	}
 
 	var offset int64
@@ -168,4 +165,25 @@ func (w *Walker) backupGrowing(ctx context.Context, g Growing, prev *proto.TreeN
 	atomic.AddInt64(&w.result.Repaired, int64(writer.repaired))
 
 	return &proto.TreeNode{Stat: stat, Ref: writer.Ref()}, nil
+}
+
+// previousParts returns the parts of the file at ref, or none when the key
+// may not read it, as a write-only key may not read a file stored inline,
+// so the file goes up whole.
+func (w *Walker) previousParts(ctx context.Context, ref *proto.Ref) ([]*proto.FilePart, error) {
+	obj, err := w.Objects.Get(ctx, ref)
+	if errors.Is(err, auth.ErrForbidden) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	parts, err := FileParts(ctx, w.Objects, obj.GetFile())
+	if errors.Is(err, auth.ErrForbidden) {
+		return nil, nil
+	}
+
+	return parts, err
 }

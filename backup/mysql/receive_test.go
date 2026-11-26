@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobackio/goback/auth"
 	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/index/sql"
 	"github.com/gobackio/goback/proto"
@@ -705,4 +706,56 @@ func TestAReceiversSteadyCommitsReadNoMetadataWhateverCacheItsCallerSetUp(t *tes
 			require.EqualValues(t, 4+100+5*50, rf.node(1, "binlog.000001.partial").GetSize())
 		})
 	}
+}
+
+// filesRefused refuses the caller every file, as a store refuses a
+// write-only key a file stored inline.
+type filesRefused struct{ backup.ObjectStore }
+
+func (s filesRefused) Get(ctx context.Context, ref *proto.Ref) (*proto.Object, error) {
+	obj, err := s.ObjectStore.Get(ctx, ref)
+	if err == nil && obj.GetFile() != nil {
+		return nil, auth.ErrForbidden
+	}
+
+	return obj, err
+}
+
+func TestARestartedReceiverThatMayNotReadItsPartialBinlogCommitsItWhole(t *testing.T) {
+	rf := newReceiverFixture(t)
+	rf.mustDump()
+
+	s := &binlogScript{serverID: 1}
+	s.open("binlog.000001", ts(0)).event(2, ts(time.Second), 50).event(2, ts(2*time.Second), 50)
+	rf.script(s)
+	rf.stopAfter(90 * time.Second)
+	require.NoError(t, rf.run())
+
+	s = &binlogScript{serverID: 1, name: "binlog.000001", end: 204}
+	s.event(2, ts(100*time.Second), 50).rotate(ts(101 * time.Second))
+	s.open("binlog.000002", ts(101*time.Second)).event(2, ts(102*time.Second), 30)
+	s.events = append([]any{&streamEvent{header: eventHeader{kind: rotateEvent, flags: artificialEvent}, next: "binlog.000001", pos: 204},
+		streamed(eventBytes(formatDescriptionEvent, 1, ts(0), 0, 100, 0))}, s.events...)
+
+	rf.dump.now = t0.Add(100 * time.Second)
+	rf.dump.scripts = [][]any{s.events}
+	rf.stop = make(chan struct{})
+	rf.stopped = sync.Once{}
+	rf.stopAfter(110 * time.Second)
+
+	r := rf.receiver()
+	walker := r.Walker
+	r.Walker = func() *backup.Walker {
+		w := walker()
+		w.Objects = filesRefused{w.Objects}
+
+		return w
+	}
+
+	require.NoError(t, r.Run(context.Background(), rf.stop))
+	require.Equal(t, map[int][]string{1: {"binlog.000001", "binlog.000002.partial"}}, rf.chains())
+
+	files, err := rf.spool.Files()
+	require.NoError(t, err)
+	require.Empty(t, files)
 }
