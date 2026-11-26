@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gobackio/goback/backup"
 	"github.com/gobackio/goback/proto"
 
 	"github.com/stretchr/testify/require"
@@ -21,7 +22,7 @@ var reader = func() *metric.ManualReader {
 	return reader
 }()
 
-func counter(t *testing.T, name string) int64 {
+func counter(t *testing.T, name string, caller backup.Lookup) int64 {
 	t.Helper()
 
 	var rm metricdata.ResourceMetrics
@@ -35,7 +36,9 @@ func counter(t *testing.T, name string) int64 {
 
 			var total int64
 			for _, dp := range m.Data.(metricdata.Sum[int64]).DataPoints {
-				total += dp.Value
+				if v, _ := dp.Attributes.Value(keyCaller); v.AsString() == string(caller) {
+					total += dp.Value
+				}
 			}
 
 			return total
@@ -45,11 +48,11 @@ func counter(t *testing.T, name string) int64 {
 	return 0
 }
 
-func TestHasAllCountsTheRefsAskedAndHeld(t *testing.T) {
+func TestHasAllCountsTheRefsAskedAndHeldByCaller(t *testing.T) {
 	store := newTestStore(t, t.TempDir())
 	t.Cleanup(func() { _ = store.Close() })
 
-	ctx := context.Background()
+	ctx := backup.WithLookup(context.Background(), backup.LookupMissing)
 	objs := makeTestData(t, 3)
 
 	for _, obj := range objs[:2] {
@@ -57,11 +60,11 @@ func TestHasAllCountsTheRefsAskedAndHeld(t *testing.T) {
 	}
 	require.NoError(t, store.Flush())
 
-	asked, held := counter(t, "goback.storage.pack.has.asked"), counter(t, "goback.storage.pack.has.held")
+	asked, held := counter(t, "goback.storage.pack.has.asked", backup.LookupMissing), counter(t, "goback.storage.pack.has.held", backup.LookupMissing)
 
 	_, err := store.HasAll(ctx, []*proto.Ref{objs[0].Ref(), objs[1].Ref(), objs[2].Ref()})
 	require.NoError(t, err)
 
-	require.Equal(t, asked+3, counter(t, "goback.storage.pack.has.asked"))
-	require.Equal(t, held+2, counter(t, "goback.storage.pack.has.held"))
+	require.Equal(t, asked+3, counter(t, "goback.storage.pack.has.asked", backup.LookupMissing))
+	require.Equal(t, held+2, counter(t, "goback.storage.pack.has.held", backup.LookupMissing))
 }

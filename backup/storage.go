@@ -208,6 +208,8 @@ func References(obj *proto.Object) []*proto.Ref {
 // the given one references. Indexes call it before accepting a Put so a
 // stored tree always has its children.
 func CheckReferences(ctx context.Context, store ObjectStore, obj *proto.Object) error {
+	ctx = WithLookup(ctx, LookupReferences)
+
 	for _, ref := range References(obj) {
 		ok, err := store.Has(ctx, ref)
 		if err != nil {
@@ -252,7 +254,7 @@ func CheckAllReferences(ctx context.Context, store ObjectStore, objects []*proto
 		return nil
 	}
 
-	held, err := HasAll(ctx, store, refs)
+	held, err := HasAll(WithLookup(ctx, LookupReferences), store, refs)
 	if err != nil {
 		return err
 	}

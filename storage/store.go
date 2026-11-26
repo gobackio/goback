@@ -132,7 +132,7 @@ func (s *Store) Put(ctx context.Context, up Upload) (*Receipt, error) {
 			return nil, fmt.Errorf("%w: assumed refs are only accepted for file and tree objects", ErrInvalidRequest)
 		}
 
-		missing, err := backup.Missing(ctx, s.Index, up.Assumed)
+		missing, err := backup.Missing(backup.WithLookup(ctx, backup.LookupAssumed), s.Index, up.Assumed)
 		if err != nil {
 			return nil, err
 		}
@@ -280,7 +280,7 @@ func (s *Store) Missing(ctx context.Context, refs []*proto.Ref) ([]*proto.Ref, e
 		}
 	}
 
-	return backup.Missing(ctx, s.Index, refs)
+	return backup.Missing(backup.WithLookup(ctx, backup.LookupMissing), s.Index, refs)
 }
 
 // putObjectsWorkers bounds the objects one PutObjects call stores at once.

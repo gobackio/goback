@@ -25,6 +25,7 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
@@ -254,8 +255,9 @@ func (ps *PackStorage) HasAll(ctx context.Context, refs []*proto.Ref) ([]bool, e
 		}
 	}
 
-	hasAsked.Add(ctx, int64(len(refs)))
-	hasHeld.Add(ctx, int64(held))
+	caller := metric.WithAttributes(keyCaller.String(string(backup.LookupOf(ctx))))
+	hasAsked.Add(ctx, int64(len(refs)), caller)
+	hasHeld.Add(ctx, int64(held), caller)
 
 	return has, nil
 }

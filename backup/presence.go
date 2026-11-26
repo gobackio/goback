@@ -95,6 +95,37 @@ type HasAller interface {
 	HasAll(ctx context.Context, refs []*proto.Ref) ([]bool, error)
 }
 
+// Lookup names what asks a store whether it holds refs, as the store's
+// telemetry counts the lookup.
+type Lookup string
+
+const (
+	// LookupMissing is a client asking which refs the store lacks.
+	LookupMissing Lookup = "missing"
+	// LookupAssumed is a put checking the refs its client assumed.
+	LookupAssumed Lookup = "assumed"
+	// LookupReferences is a put checking what its object references.
+	LookupReferences Lookup = "references"
+	// LookupOther is every other lookup.
+	LookupOther Lookup = "other"
+)
+
+type lookupKey struct{}
+
+// WithLookup returns ctx with the lookups made under it counted as l.
+func WithLookup(ctx context.Context, l Lookup) context.Context {
+	return context.WithValue(ctx, lookupKey{}, l)
+}
+
+// LookupOf returns what the lookups made under ctx count as.
+func LookupOf(ctx context.Context) Lookup {
+	if l, ok := ctx.Value(lookupKey{}).(Lookup); ok {
+		return l
+	}
+
+	return LookupOther
+}
+
 // HasAll reports Has for each of refs, in their order, through the store's
 // HasAller when it is one.
 func HasAll(ctx context.Context, store ObjectStore, refs []*proto.Ref) ([]bool, error) {
