@@ -749,6 +749,42 @@ func TestASetWhoseRecentFilterWasRetiredGetsANewOne(t *testing.T) {
 	require.NotEmpty(t, f.commitRow(head).Presence)
 }
 
+func TestATombstonedCommitsFilterIsNotServedButSeedsTheNextBuild(t *testing.T) {
+	f := newFixture(t)
+
+	gone, goneRefs := f.chunked("a.bin", "one", 20)
+	old := f.commit("a", f.tree(gone), false)
+	f.advance(time.Hour)
+	kept, keptRefs := f.chunked("a.bin", "two", 1)
+	head := f.commit("a", f.tree(kept), false)
+	require.Empty(t, f.commitRow(head).Presence, "the old filter is recent")
+
+	require.NoError(t, f.x.SetPolicy(f.ctx, "a", &retention.Policy{KeepLast: 1}))
+	_, err := f.x.Retire(f.ctx, f.clock.Add(15*24*time.Hour))
+	require.NoError(t, err)
+	require.NotNil(t, f.commitRow(old).TombstonedAt)
+
+	served, err := f.x.PresenceOf(f.ctx, "a")
+	require.NoError(t, err)
+	require.Empty(t, served)
+
+	built, err := f.x.BuildPendingPresence(f.ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, built)
+	require.Empty(t, f.commitRow(old).Presence)
+
+	served, err = f.x.PresenceOf(f.ctx, "a")
+	require.NoError(t, err)
+	require.Len(t, served, 1)
+
+	filter, err := presence.FromProto(served[0])
+	require.NoError(t, err)
+
+	for _, ref := range append(goneRefs, keptRefs...) {
+		require.True(t, filter.Test(ref.Hash), "the build starts from the old filter")
+	}
+}
+
 // chunked stores a file of count blobs, each made from seed.
 func (f *fixture) chunked(name, seed string, count int) (*proto.TreeNode, []*proto.Ref) {
 	var parts []*proto.FilePart

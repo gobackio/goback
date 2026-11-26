@@ -1696,7 +1696,7 @@ func (x *Index) applyTombstones(ctx context.Context, found []foundTombstone) (ma
 
 		var gone [][]byte
 		for _, row := range rows {
-			if err := c.CommitRow.UpdateOneID(row.ID).SetTombstonedAt(at[string(row.Ref)]).ClearPresence().Exec(ctx); err != nil {
+			if err := c.CommitRow.UpdateOneID(row.ID).SetTombstonedAt(at[string(row.Ref)]).Exec(ctx); err != nil {
 				return err
 			}
 

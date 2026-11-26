@@ -18,7 +18,7 @@ import (
 
 // storePresence records a commit's filter and drops the filters of the
 // set's other commits, so only the head carries one; a filter of a commit
-// older than the one that carries a filter is dropped instead.
+// older than a live one that carries a filter is dropped instead.
 func storePresence(ctx context.Context, x *Index, setID int64, ref *proto.Ref, filter *proto.PresenceFilter) error {
 	data, err := pb.Marshal(filter)
 	if err != nil {
@@ -39,7 +39,7 @@ func storePresence(ctx context.Context, x *Index, setID int64, ref *proto.Ref, f
 			return err
 		}
 
-		newer, err := tx.CommitRow.Query().Where(commitrow.SetID(setID), commitrow.PresenceNotNil(), commitrow.ReceivedAtGT(row.ReceivedAt)).Exist(ctx)
+		newer, err := tx.CommitRow.Query().Where(commitrow.SetID(setID), commitrow.PresenceNotNil(), commitrow.ReceivedAtGT(row.ReceivedAt), liveCommit()).Exist(ctx)
 		if err != nil || newer {
 			return err
 		}
@@ -53,9 +53,10 @@ func storePresence(ctx context.Context, x *Index, setID int64, ref *proto.Ref, f
 	})
 }
 
-// loadPresence returns the stored filters of every set in the scope.
+// loadPresence returns the filters of the untombstoned commits of every set
+// in the scope.
 func loadPresence(ctx context.Context, c *ent.Client, scope backup.PresenceScope, name string) ([]*proto.PresenceFilter, error) {
-	query := c.CommitRow.Query().Where(commitrow.PresenceNotNil())
+	query := c.CommitRow.Query().Where(commitrow.PresenceNotNil(), commitrow.TombstonedAtIsNil())
 
 	switch scope {
 	case backup.PresenceSet:
@@ -68,9 +69,11 @@ func loadPresence(ctx context.Context, c *ent.Client, scope backup.PresenceScope
 	return decodePresence(ctx, query)
 }
 
-// PresenceOf returns the stored filters of the named sets.
+// PresenceOf returns the filters of the untombstoned commits of the named
+// sets.
 func (x *Index) PresenceOf(ctx context.Context, sets ...string) ([]*proto.PresenceFilter, error) {
-	return decodePresence(ctx, x.client.CommitRow.Query().Where(commitrow.PresenceNotNil(), commitrow.HasSetWith(set.NameIn(sets...))))
+	return decodePresence(ctx, x.client.CommitRow.Query().Where(commitrow.PresenceNotNil(), commitrow.TombstonedAtIsNil(),
+		commitrow.HasSetWith(set.NameIn(sets...))))
 }
 
 func decodePresence(ctx context.Context, query *ent.CommitRowQuery) ([]*proto.PresenceFilter, error) {
@@ -192,7 +195,7 @@ func (x *Index) BuildPendingPresence(ctx context.Context) (int, error) {
 func (x *Index) buildPresence(ctx context.Context, setID int64, name string, commit, tree *proto.Ref) error {
 	start := time.Now()
 
-	filter, read, err := x.updatePresence(ctx, setID, tree)
+	filter, read, full, err := x.updatePresence(ctx, setID, tree)
 	if err != nil {
 		return fmt.Errorf("updating the filter of commit %x: %w", commit.Hash, err)
 	}
@@ -217,50 +220,63 @@ func (x *Index) buildPresence(ctx context.Context, setID int64, name string, com
 		return fmt.Errorf("storing the filter of commit %x: %w", commit.Hash, err)
 	}
 
-	x.logger().Info("built presence filter", "set", name, "refs", filter.Entries(), "bytes", filter.Size(),
-		"incremental", incremental, "objects", read, "took", time.Since(start).Round(time.Millisecond))
+	attrs := []any{"set", name, "refs", filter.Entries(), "bytes", filter.Size(), "incremental", incremental}
+	if !incremental {
+		attrs = append(attrs, "full", full)
+	}
+
+	x.logger().Info("built presence filter", append(attrs, "objects", read, "took", time.Since(start).Round(time.Millisecond))...)
 
 	return nil
 }
 
+// Why a presence build reads the whole tree.
+const (
+	fullNoFilter   = "no filter"
+	fullUnreadable = "unreadable"
+	fullFailed     = "update failed"
+	fullOutgrown   = "outgrown"
+)
+
 // updatePresence builds the filter of tree from the filter the set holds,
-// reading only what changed since the tree that filter was built for. It
-// returns no filter when the set holds none it can start from, or when the
+// even one of a tombstoned commit, reading only what changed since the tree
+// that filter was built for. It returns no filter, and why, when the set
+// holds none it can start from, when reading the change fails, or when the
 // result would hold more refs than it was sized for.
-func (x *Index) updatePresence(ctx context.Context, setID int64, tree *proto.Ref) (*presence.Filter, int, error) {
+func (x *Index) updatePresence(ctx context.Context, setID int64, tree *proto.Ref) (*presence.Filter, int, string, error) {
 	row, err := x.client.CommitRow.Query().Where(commitrow.SetID(setID), commitrow.PresenceNotNil()).
 		Select(commitrow.FieldPresence, commitrow.FieldTree).First(ctx)
 	if ent.IsNotFound(err) {
-		return nil, 0, nil
+		return nil, 0, fullNoFilter, nil
 	}
 
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 
 	stored := &proto.PresenceFilter{}
 	if err := pb.Unmarshal(row.Presence, stored); err != nil {
-		return nil, 0, nil
+		return nil, 0, fullUnreadable, nil
 	}
 
 	old, err := presence.FromProto(stored)
 	if err != nil {
-		return nil, 0, nil
+		return nil, 0, fullUnreadable, nil
 	}
 
 	filter, read, err := backup.UpdatePresence(ctx, x.ObjectStore, old, &proto.Ref{Hash: row.Tree}, tree)
 	if ctx.Err() != nil {
-		return nil, read, ctx.Err()
+		return nil, read, "", ctx.Err()
 	}
 
 	if err != nil {
 		x.logger().Warn("building presence filter in full", "error", err)
-		return nil, read, nil
+		return nil, read, fullFailed, nil
 	}
 
 	if filter.Entries() > filter.Capacity() {
-		return nil, read, nil
+		return nil, read, fullOutgrown, nil
 	}
 
-	return filter, read, nil
+	return filter, read, "", nil
 }

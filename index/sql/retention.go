@@ -1352,7 +1352,7 @@ func (x *Index) markTombstoned(ctx context.Context, setID int64, refs [][]byte, 
 			marked[i] = row.Ref
 		}
 
-		err = tx.CommitRow.Update().Where(commitrow.RefIn(marked...)).SetTombstonedAt(now).ClearPresence().Exec(ctx)
+		err = tx.CommitRow.Update().Where(commitrow.RefIn(marked...)).SetTombstonedAt(now).Exec(ctx)
 		if err != nil {
 			return err
 		}
@@ -1601,6 +1601,10 @@ func (x *Index) closeEmptySets(ctx context.Context) error {
 			}
 
 			if _, err := tx.SetRef.Delete().Where(setref.SetID(id)).Exec(ctx); err != nil {
+				return err
+			}
+
+			if err := tx.CommitRow.Update().Where(commitrow.SetID(id), commitrow.PresenceNotNil()).ClearPresence().Exec(ctx); err != nil {
 				return err
 			}
 
