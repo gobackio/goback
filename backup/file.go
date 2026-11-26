@@ -274,7 +274,7 @@ func (bfw *fileWriter) check() {
 
 	missing, err := bfw.checker.Missing(bfw.ctx, refs)
 	if err != nil {
-		bfw.storageErr.Store(&err)
+		bfw.storageErr.CompareAndSwap(nil, &err)
 		return
 	}
 
@@ -365,7 +365,7 @@ func (bfw *fileWriter) upload(ref *proto.Ref, blob *proto.Object, length int) {
 
 		if err != nil {
 			// store the error here so future calls to write can exit early
-			bfw.storageErr.Store(&err)
+			bfw.storageErr.CompareAndSwap(nil, &err)
 		}
 		return err
 	})
