@@ -42,7 +42,7 @@ func newFileWriter(ctx context.Context, store ObjectStore, key *storekey.Key, si
 		size:             size,
 		parts:            make([]*proto.FilePart, 0),
 		assumed:          make(map[string]*proto.FilePart),
-		storageErr:       new(atomic.Value),
+		storageErr:       new(atomic.Pointer[error]),
 		storageSemaphore: syncutil.NewGate(inFlightChunks),
 		ctx:              ctx,
 	}
@@ -73,7 +73,7 @@ type fileWriter struct {
 	offset           int64
 	chunker          chunker.FastCDC
 	parts            []*proto.FilePart
-	storageErr       *atomic.Value
+	storageErr       *atomic.Pointer[error]
 	storageGroup     syncutil.Group
 	storageSemaphore *syncutil.Gate
 	ref              *proto.Ref
@@ -274,7 +274,7 @@ func (bfw *fileWriter) check() {
 
 	missing, err := bfw.checker.Missing(bfw.ctx, refs)
 	if err != nil {
-		bfw.storageErr.Store(err)
+		bfw.storageErr.Store(&err)
 		return
 	}
 
@@ -365,7 +365,7 @@ func (bfw *fileWriter) upload(ref *proto.Ref, blob *proto.Object, length int) {
 
 		if err != nil {
 			// store the error here so future calls to write can exit early
-			bfw.storageErr.Store(err)
+			bfw.storageErr.Store(&err)
 		}
 		return err
 	})
@@ -502,7 +502,7 @@ func (bfw *fileWriter) Write(p []byte) (int, error) {
 	deferred := bfw.storageErr.Load()
 
 	if deferred != nil {
-		return 0, deferred.(error)
+		return 0, *deferred
 	}
 
 	written := len(p)
@@ -591,7 +591,7 @@ func (bfw *fileWriter) Close() (err error) {
 	}
 
 	if deferred := bfw.storageErr.Load(); deferred != nil {
-		return deferred.(error)
+		return *deferred
 	}
 
 	return bfw.putParts()
