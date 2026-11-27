@@ -38,6 +38,8 @@ func TestAnAddressThatFailsTooOftenIsRefusedUntilItsAllowanceReturns(t *testing.
 
 	_, err := authenticate(callFrom("192.0.2.1", "s3cret"))
 	require.Equal(t, codes.ResourceExhausted, status.Code(err), "even the right key is not checked")
+	require.True(t, LockedOut(err))
+	require.False(t, LockedOut(status.Error(codes.ResourceExhausted, "read quota")))
 
 	_, err = authenticate(callFrom("192.0.2.2", "s3cret"))
 	require.NoError(t, err, "another address is not held back")

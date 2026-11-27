@@ -1703,6 +1703,10 @@ func fromStatus(err error) error {
 	case codes.NotFound:
 		return backup.ErrNotFound
 	case codes.ResourceExhausted:
+		if auth.LockedOut(err) {
+			return fmt.Errorf("%w: %w", auth.ErrTooManyFailures, err)
+		}
+
 		return fmt.Errorf("%w: %s", backup.ErrQuotaExceeded, status.Convert(err).Message())
 	case codes.PermissionDenied:
 		return fmt.Errorf("%w: %w", auth.ErrForbidden, err)

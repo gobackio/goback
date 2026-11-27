@@ -452,6 +452,10 @@ func TestAServerHoldsBackAnAddressThatGuessesKeys(t *testing.T) {
 	agent, _ := clientWith(t, addr, "backup")
 	_, err := agent.LatestCommit(ctx, "world")
 	require.Equal(t, codes.ResourceExhausted, status.Code(err))
+
+	_, err = agent.Get(ctx, &proto.Ref{Hash: make([]byte, proto.HashSize)})
+	require.ErrorIs(t, err, auth.ErrTooManyFailures)
+	require.NotErrorIs(t, err, backup.ErrQuotaExceeded, "a held back address is no used up quota")
 }
 
 // streamCalled is a server stream of a call whose context is ctx.

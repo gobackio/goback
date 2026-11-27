@@ -2,11 +2,13 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"sync"
 	"time"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
@@ -22,6 +24,42 @@ type FailureLimit struct {
 	// carries, which is the one a proxy in front appended, rather than by
 	// the proxy's own address.
 	Forwarded bool
+}
+
+// ErrTooManyFailures is returned when a store refuses every call from the
+// caller's address for a while, because calls from it presented too many
+// wrong keys.
+var ErrTooManyFailures = errors.New("too many failed keys from this address")
+
+// failuresReason is the ErrorInfo reason of a refusal LimitFailures makes.
+const failuresReason = "TOO_MANY_FAILED_KEYS"
+
+// LockedOut reports whether err is the refusal LimitFailures makes, locally
+// or over gRPC.
+func LockedOut(err error) bool {
+	if errors.Is(err, ErrTooManyFailures) {
+		return true
+	}
+
+	for _, detail := range status.Convert(err).Details() {
+		if info, ok := detail.(*errdetails.ErrorInfo); ok && info.GetReason() == failuresReason {
+			return true
+		}
+	}
+
+	return false
+}
+
+// lockedOut is the refusal of an address that failed too often.
+func lockedOut() error {
+	refusal := status.New(codes.ResourceExhausted, ErrTooManyFailures.Error()+"; try again later")
+
+	detailed, err := refusal.WithDetails(&errdetails.ErrorInfo{Reason: failuresReason, Domain: "goback.io"})
+	if err != nil {
+		return refusal.Err()
+	}
+
+	return detailed.Err()
 }
 
 // limitedPeers bounds the addresses a FailureLimit tracks at once.
@@ -43,7 +81,7 @@ func (l *limiter) wrap(authenticate Authenticator) Authenticator {
 	return func(ctx context.Context) (context.Context, error) {
 		addr := l.address(ctx)
 		if !l.allows(addr) {
-			return nil, status.Error(codes.ResourceExhausted, "too many failed keys from this address; try again later")
+			return nil, lockedOut()
 		}
 
 		authenticated, err := authenticate(ctx)
