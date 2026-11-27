@@ -34,7 +34,7 @@ var ErrTooManyFailures = errors.New("too many failed keys from this address")
 // failuresReason is the ErrorInfo reason of a refusal LimitFailures makes.
 const failuresReason = "TOO_MANY_FAILED_KEYS"
 
-// LockedOut reports whether err is the refusal LimitFailures makes, locally
+// LockedOut reports whether err is the refusal LockoutStatus makes, locally
 // or over gRPC.
 func LockedOut(err error) bool {
 	if errors.Is(err, ErrTooManyFailures) {
@@ -50,8 +50,10 @@ func LockedOut(err error) bool {
 	return false
 }
 
-// lockedOut is the refusal of an address that failed too often.
-func lockedOut() error {
+// LockoutStatus is the gRPC refusal of an address that presented too many
+// wrong keys, as LimitFailures makes it; a server with a limiter of its own
+// answers with it so clients report ErrTooManyFailures.
+func LockoutStatus() error {
 	refusal := status.New(codes.ResourceExhausted, ErrTooManyFailures.Error()+"; try again later")
 
 	detailed, err := refusal.WithDetails(&errdetails.ErrorInfo{Reason: failuresReason, Domain: "goback.io"})
@@ -81,7 +83,7 @@ func (l *limiter) wrap(authenticate Authenticator) Authenticator {
 	return func(ctx context.Context) (context.Context, error) {
 		addr := l.address(ctx)
 		if !l.allows(addr) {
-			return nil, lockedOut()
+			return nil, LockoutStatus()
 		}
 
 		authenticated, err := authenticate(ctx)
